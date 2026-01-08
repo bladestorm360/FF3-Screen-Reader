@@ -1,0 +1,356 @@
+[01/07/2026 Wed 14:13:14.90] Starting Ghidra analysis 
+Script: magic 
+Mode: import 
+ 
+INFO  Using log config file: jar:file:/D:/Games/Dev/ghidra/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\application.log (LoggingInitialization)  
+INFO  Loading user preferences: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (1766 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (SSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: SHA1PRNG (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (ApplicationTrustManagerFactory)  
+INFO  Starting cache cleanup: C:\Users\pmoen\AppData\Local\ghidra\fscache2 (FileCacheMaintenanceDaemon)  
+INFO  Finished cache cleanup, estimated storage used: 0 (FileCacheMaintenanceDaemon)  
+INFO  Headless startup complete (9766 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 57 extension points (18 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    D:\Games\Dev\ghidra\Ghidra\Features\Base\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Debug\Debugger\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Debug\Debugger-rmi-trace\ghidra_scripts
+    D:\Games\Dev\Unity\FFPR\ff3\ff3-screen-reader\docs\scripts
+    D:\Games\Dev\ghidra\Ghidra\Processors\DATA\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\WildcardAssembler\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\VersionTracking\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Processors\Atmel\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\MicrosoftCodeAnalyzer\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Processors\JVM\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Processors\8051\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Processors\PIC\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Debug\Debugger-agent-dbgmodel-traceloader\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\SwiftDemangler\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\BSim\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\SystemEmulation\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\PDB\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\BytePatterns\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\FileFormats\ghidra_scripts
+    C:\Users\pmoen\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\FunctionID\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Debug\Debugger-agent-frida\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\GnuDemangler\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\Jython\ghidra_scripts
+    D:\Games\Dev\ghidra\Ghidra\Features\Decompiler\ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: D:\Games\Dev\ghidra\projects\FF3_Analysis (HeadlessAnalyzer)  
+INFO  Opening project: D:\Games\Dev\ghidra\projects\FF3_Analysis (HeadlessProject)  
+INFO  REPORT: Processing input files:  (HeadlessAnalyzer)  
+INFO       project: D:\Games\Dev\ghidra\projects\FF3_Analysis (HeadlessAnalyzer)  
+INFO  IMPORTING: file:///D:/Games/SteamLibrary/steamapps/common/FINAL FANTASY III PR/GameAssembly.dll (HeadlessAnalyzer)  
+INFO  Using Loader: Portable Executable (PE) (AutoImporter)  
+INFO  Using Language/Compiler: x86:LE:64:default:windows (AutoImporter)  
+INFO  Using Library Search Path: [., C:\WINDOWS\SysWOW64, C:\Program Files\Java\jdk-21\bin, C:\WINDOWS\Sun\Java\bin, C:\WINDOWS\system32, C:\WINDOWS, C:\Program Files\Common Files\Oracle\Java\javapath, C:\Python314\Scripts\, C:\Python314\, C:\Program Files (x86)\VMware\VMware Workstation\bin\, C:\Program Files (x86)\Razer Chroma SDK\bin, C:\Program Files\Razer Chroma SDK\bin, C:\Program Files (x86)\Razer\ChromaBroadcast\bin, C:\Program Files\Razer\ChromaBroadcast\bin, C:\Windows\system32, C:\Windows, C:\Windows\System32\Wbem, C:\Windows\System32\WindowsPowerShell\v1.0\, C:\Windows\System32\OpenSSH\, C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common, C:\Program Files\dotnet\, C:\WINDOWS\System32\Wbem, C:\WINDOWS\System32\WindowsPowerShell\v1.0\, C:\WINDOWS\System32\OpenSSH\, C:\Users\pmoen\AppData\Local\Microsoft\WindowsApps, C:\Users\pmoen\.dotnet\tools, C:\WINDOWS\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps, C:\Users\pmoen\AppData\Local\Programs\Microsoft VS Code\bin, C:\Program Files\Git\cmd, C:\Program Files\nodejs\, C:\ProgramData\chocolatey\bin, C:\Program Files\Microsoft SQL Server\170\Tools\Binn\, C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\, C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\, C:\Users\pmoen\.cargo\bin, C:\Users\pmoen\AppData\Local\Programs\Python\Python313\Scripts\, C:\Users\pmoen\AppData\Local\Programs\Python\Python313\, C:\Users\pmoen\AppData\Roaming\npm, C:\Users\pmoen\AppData\Local\Programs\Antigravity\bin, C:\Users\pmoen\.local\bin, C:\Users\pmoen\AppData\roaming\\Python\Python314\Scripts\] (AutoImporter)  
+INFO  TLS callbacks at 1815da8d8 (TLSDirectory)  
+INFO  TLS callbacks at 1800e2880 (TLSDirectory)  
+INFO  TLS callbacks at 1800ac9c8 (TLSDirectory)  
+WARN  Invalid or missing function at 1800c0348 (ExportDataDirectory)  
+INFO  TLS callbacks at 1805fae20 (TLSDirectory)  
+WARN  Invalid or missing function at 1806d8e38 (ExportDataDirectory)  
+WARN  Invalid or missing function at 1800be6a8 (ExportDataDirectory)  
+WARN  Invalid or missing function at 180056554 (ExportDataDirectory)  
+INFO  Additional info:
+Loading file:///D:/Games/SteamLibrary/steamapps/common/FINAL FANTASY III PR/GameAssembly.dll?MD5=5417b98c517227db78cf3ed3518c814d...
+------------------------------------------------
+
+Searching 34 paths for library ADVAPI32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/advapi32.dll
+Loading file:///C:/Windows/System32/advapi32.dll?MD5=e0778151cdd89e9fdb9f63d3c5bba4ea...
+Using existing exports file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\advapi32.exports
+WARNING: Existing exports file may not be an exact match.
+------------------------------------------------
+
+Searching 34 paths for library IPHLPAPI.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/IPHLPAPI.DLL
+Loading file:///C:/Windows/System32/IPHLPAPI.DLL?MD5=83e32f427f3f9d175179988bef3cda8c...
+Using existing exports file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\iphlpapi.exports
+WARNING: Existing exports file may not be an exact match.
+------------------------------------------------
+
+Searching 34 paths for library KERNEL32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/kernel32.dll
+Loading file:///C:/Windows/System32/kernel32.dll?MD5=8302602f5925ee9a3316e40a1d364e0e...
+Using existing exports file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\kernel32.exports
+WARNING: Existing exports file may not be an exact match.
+------------------------------------------------
+
+Searching 34 paths for library OLE32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/ole32.dll
+Loading file:///C:/Windows/System32/ole32.dll?MD5=7f1b04de0b0645eb11edd3f7a6754a94...
+[ole32.dll]: failed to create WEVTResource at 180181740: Failed to resolve data length for WEVTResource
+Using existing exports file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\ole32.exports
+WARNING: Existing exports file may not be an exact match.
+------------------------------------------------
+
+Searching 34 paths for library OLEAUT32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/oleaut32.dll
+Loading file:///C:/Windows/System32/oleaut32.dll?MD5=d047be70dae6c14bc48c4b20133928cb...
+Using existing exports file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\oleaut32.exports
+WARNING: Existing exports file may not be an exact match.
+------------------------------------------------
+
+Searching 34 paths for library SHELL32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/shell32.dll
+Loading file:///C:/Windows/System32/shell32.dll?MD5=4bba7b15055780f7155499023c4b3c12...
+Using existing exports file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\shell32.exports
+WARNING: Existing exports file may not be an exact match.
+------------------------------------------------
+
+Searching 34 paths for library USER32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/user32.dll
+Loading file:///C:/Windows/System32/user32.dll?MD5=a391b8970f50628c6f900fcd9eca26ce...
+[user32.dll]: failed to create WEVTResource at 1800dda70: Failed to resolve data length for WEVTResource
+Using existing exports file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\user32.exports
+WARNING: Existing exports file may not be an exact match.
+------------------------------------------------
+
+Searching 34 paths for library WS2_32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/ws2_32.dll
+Loading file:///C:/Windows/System32/ws2_32.dll?MD5=a32cf2f0e79082da833845ce0c8a6f1a...
+[ws2_32.dll]: failed to create WEVTResource at 18005f4b8: Failed to resolve data length for WEVTResource
+Using existing exports file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\ws2_32.exports
+------------------------------------------------
+
+Applying C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\kernel32.exports
+Applying C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\user32.exports
+Applying C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\advapi32.exports
+Applying C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\ole32.exports
+Applying C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\oleaut32.exports
+Applying C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\shell32.exports
+Applying C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\ws2_32.exports
+Applying C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\symbols\win64\iphlpapi.exports
+Linking the External Programs of 'GameAssembly.dll' to imported libraries...
+  [KERNEL32.DLL] -> not found in project
+  [USER32.DLL] -> not found in project
+  [ADVAPI32.DLL] -> not found in project
+  [OLE32.DLL] -> not found in project
+  [OLEAUT32.DLL] -> not found in project
+  [SHELL32.DLL] -> not found in project
+  [WS2_32.DLL] -> not found in project
+  [IPHLPAPI.DLL] -> not found in project
+------------------------------------------------
+
+ (AutoImporter)  
+INFO  IMPORTING: Loaded 0 additional files (HeadlessAnalyzer)  
+INFO  /GameAssembly.dll: file deleted (pmoen) (LocalFileSystem)  
+INFO  Deleted local file GameAssembly.dll (GhidraFileData)  
+WARN  REPORT: Removed conflicting program file from project: /GameAssembly.dll (HeadlessAnalyzer)  
+INFO  ANALYZING all memory and code: file:///D:/Games/SteamLibrary/steamapps/common/FINAL FANTASY III PR/GameAssembly.dll (HeadlessAnalyzer)  
+INFO  Skipping PDB processing: failed to locate PDB file in configured locations (PdbUniversalAnalyzer)  
+INFO  Use a script to set the PDB file location. I.e.,
+    PdbAnalyzer.setPdbFileOption(currentProgram, new File("/path/to/pdb/file.pdb")); or
+    PdbUniversalAnalyzer.setPdbFileOption(currentProgram, new File("/path/to/pdb/file.pdb"));
+Or set the symbol server search configuration using:    PdbPlugin.saveSymbolServerServiceConfig(...);
+ This must be done using a pre-script (prior to analysis). (PdbUniversalAnalyzer)  
+INFO  Packed database cache: C:\Users\pmoen\AppData\Local\ghidra\packed-db-cache (PackedDatabaseCache)  
+WARN  Decompiling 1801fd330, pcode error at 1801fd5ba: Unable to resolve constructor at 1801fd5ba (DecompileCallback)  
+INFO  Evicting 29 filesystems from cache (FileSystemInstanceManager)  
+INFO  Applied data type archive: windows_vs12_64 (ApplyDataArchiveAnalyzer)  
+INFO  Applied data type archive: windows_vs12_64 (ApplyDataArchiveAnalyzer)  
+INFO  -----------------------------------------------------
+    ASCII Strings                              2.834 secs
+    Apply Data Archives                        0.636 secs
+    Call Convention ID                         1.190 secs
+    Call-Fixup Installer                      21.859 secs
+    Create Address Tables                     11.036 secs
+    Create Address Tables - One Time          51.715 secs
+    Create Function                           21.482 secs
+    Data Reference                            37.480 secs
+    Decompiler Switch Analysis               177.015 secs
+    Demangler Microsoft                        0.268 secs
+    Disassemble                               79.494 secs
+    Disassemble Entry Points                   3.409 secs
+    Disassemble Entry Points - One Time        0.079 secs
+    Embedded Media                             0.256 secs
+    External Entry References                  0.002 secs
+    Function ID                               40.005 secs
+    Function Start Search                      0.897 secs
+    Non-Returning Functions - Discovered      27.156 secs
+    Non-Returning Functions - Known            0.022 secs
+    PDB Universal                              0.020 secs
+    Reference                                 47.628 secs
+    Scalar Operand References                 44.256 secs
+    Shared Return Calls                       24.597 secs
+    Stack                                    216.459 secs
+    Subroutine References                     37.924 secs
+    Subroutine References - One Time           0.013 secs
+    Windows x86 PE Exception Handling          2.783 secs
+    Windows x86 PE RTTI Analyzer               5.424 secs
+    Windows x86 Thread Environment Block (TEB) Analyzer     0.029 secs
+    WindowsResourceReference                   0.995 secs
+    x86 Constant Reference Analyzer          245.764 secs
+-----------------------------------------------------
+     Total Time   1102 secs
+-----------------------------------------------------
+ (AutoAnalysisManager)  
+INFO  REPORT: Analysis succeeded for file: file:///D:/Games/SteamLibrary/steamapps/common/FINAL FANTASY III PR/GameAssembly.dll (HeadlessAnalyzer)  
+INFO  SCRIPT: D:\Games\Dev\Unity\FFPR\ff3\ff3-screen-reader\docs\scripts\decompile_magic.py (HeadlessAnalyzer)  
+======================================================================
+FF3 Magic/Ability Menu Decompiler
+======================================================================
+Program: GameAssembly.dll
+Image Base: 0x180000000
+Output: D:\Games\Dev\Unity\FFPR\ff3\ff3-screen-reader\docs\scripts\decompiled_magic.c
+
+----------------------------------------------------------------------
+STEP 1: Parsing IL2CPP type definitions
+----------------------------------------------------------------------
+Parsing IL2CPP header: D:\Games\Dev\Unity\FFPR\ff3\il2cpp_ghidra.h
+This may take a few minutes for large headers...
+Reading header file...
+Header size: 30259394 bytes
+Starting C parser...
+Parsing completed, applying types to program...
+Data type manager now has 650 types
+Type parsing completed successfully
+
+----------------------------------------------------------------------
+STEP 2: Applying IL2CPP symbol names
+----------------------------------------------------------------------
+Loading IL2CPP symbols from: D:\Games\Dev\Unity\FFPR\ff3\script.json
+Applied 0 IL2CPP symbols
+
+----------------------------------------------------------------------
+STEP 3: Decompiling target functions
+----------------------------------------------------------------------
+Initializing decompiler...
+
+Decompiling: Ability$$get_AbilityLv
+  RVA: 0xF54780 -> Absolute: 0x180F54780
+    Creating function at 0x180F54780...
+  FAILED: Could not create function at 0x180F54780
+
+Decompiling: Ability$$get_TypeId
+  RVA: 0xF54790 -> Absolute: 0x180F54790
+    Creating function at 0x180F54790...
+  SUCCESS
+
+Decompiling: AbilityCommandContentData$$get_Id
+  RVA: 0x6BDF30 -> Absolute: 0x1806BDF30
+    Creating function at 0x1806BDF30...
+  SUCCESS
+
+Decompiling: AbilityCommandController$$GetCurrentAbilityCommandId
+  RVA: 0x681BA0 -> Absolute: 0x180681BA0
+  SUCCESS
+
+Decompiling: AbilityCommandController$$SelectCommandByIndex
+  RVA: 0x6821F0 -> Absolute: 0x1806821F0
+  SUCCESS
+
+Decompiling: AbilityCommandController$$SetAbilityData
+  RVA: 0x6823B0 -> Absolute: 0x1806823B0
+    Creating function at 0x1806823B0...
+  SUCCESS
+
+Decompiling: AbilityCommandController$$SetFocus_CommandId
+  RVA: 0x682800 -> Absolute: 0x180682800
+  SUCCESS
+
+Decompiling: AbilityCommandController$$SetFocus_bool
+  RVA: 0x682B90 -> Absolute: 0x180682B90
+  SUCCESS
+
+Decompiling: AbilityCommandController$$UpdateController
+  RVA: 0x6836C0 -> Absolute: 0x1806836C0
+    Creating function at 0x1806836C0...
+  SUCCESS
+
+Decompiling: AbilityCommandController$$UpdateFocus
+  RVA: 0x6836D0 -> Absolute: 0x1806836D0
+  SUCCESS
+
+Decompiling: AbilityContentListController$$SelectContent
+  RVA: 0x6856B0 -> Absolute: 0x1806856B0
+  SUCCESS
+
+Decompiling: AbilityContentListController$$SelectContentByIndex
+  RVA: 0x6854B0 -> Absolute: 0x1806854B0
+  SUCCESS
+
+Decompiling: AbilityContentListController$$SetCursor
+  RVA: 0x685750 -> Absolute: 0x180685750
+  SUCCESS
+
+Decompiling: AbilityContentListController$$SetDescriptionText
+  RVA: 0x685930 -> Absolute: 0x180685930
+  SUCCESS
+
+Decompiling: AbilityContentListController$$SetFocus
+  RVA: 0x685E90 -> Absolute: 0x180685E90
+  SUCCESS
+
+Decompiling: AbilityContentListController$$UpdateFocus
+  RVA: 0x686950 -> Absolute: 0x180686950
+  SUCCESS
+
+Decompiling: AbilityContentListController$$UpdateOwnsAbilityList
+  RVA: 0x686D20 -> Absolute: 0x180686D20
+  SUCCESS
+
+Decompiling: AbilityContentListController$$UpdateView
+  RVA: 0x687190 -> Absolute: 0x180687190
+  SUCCESS
+
+Decompiling: AbilityWindowController$$SelectContent
+  RVA: 0x689120 -> Absolute: 0x180689120
+    Creating function at 0x180689120...
+  SUCCESS
+
+Decompiling: AbilityWindowController$$UpdateView
+  RVA: 0x688450 -> Absolute: 0x180688450
+    Creating function at 0x180688450...
+  FAILED: Could not create function at 0x180688450
+
+Decompiling: BattleAbilityInfomationContentController$$Initalize
+  RVA: 0x3BB7C0 -> Absolute: 0x1803BB7C0
+  SUCCESS
+
+Decompiling: BattleAbilityInfomationContentController$$SetFocus
+  RVA: 0x3BB980 -> Absolute: 0x1803BB980
+  SUCCESS
+
+Decompiling: BattleAbilityInfomationContentController$$UpdateAbilitySkillLevel
+  RVA: 0x3BBAF0 -> Absolute: 0x1803BBAF0
+    Creating function at 0x1803BBAF0...
+  SUCCESS
+
+Decompiling: BattleAbilityInfomationContentController$$UpdateView_OwnedAbility
+  RVA: 0x3BBC30 -> Absolute: 0x1803BBC30
+  SUCCESS
+
+Decompiling: OwnedAbility$$get_Ability
+  RVA: 0x276F50 -> Absolute: 0x180276F50
+  SUCCESS
+
+Decompiling: OwnedAbility$$get_MesIdDescription
+  RVA: 0x664300 -> Absolute: 0x180664300
+  SUCCESS
+
+Decompiling: OwnedAbility$$get_MesIdName
+  RVA: 0x664350 -> Absolute: 0x180664350
+  SUCCESS
+
+Decompiling: OwnedAbility$$get_SkillLevel
+  RVA: 0x6643A0 -> Absolute: 0x1806643A0
+  SUCCESS
+
+======================================================================
+Decompilation complete!
+  Success: 26
+  Failed:  2
+  Output:  D:\Games\Dev\Unity\FFPR\ff3\ff3-screen-reader\docs\scripts\decompiled_magic.c
+======================================================================
+INFO  ANALYZING changes made by post scripts: file:///D:/Games/SteamLibrary/steamapps/common/FINAL FANTASY III PR/GameAssembly.dll (HeadlessAnalyzer)  
+INFO  REPORT: Post-analysis succeeded for file: file:///D:/Games/SteamLibrary/steamapps/common/FINAL FANTASY III PR/GameAssembly.dll (HeadlessAnalyzer)  
+INFO  REPORT: Save succeeded for: /GameAssembly.dll (FF3_Analysis:/GameAssembly.dll) (HeadlessAnalyzer)  
+INFO  REPORT: Import succeeded (HeadlessAnalyzer)  
