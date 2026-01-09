@@ -284,8 +284,8 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                // Set active state - this postfix firing means job menu is active
-                JobMenuState.IsActive = true;
+                // NOTE: Don't set IsActive here - wait until after validation
+                // Setting it early causes suppression during menu transitions
 
                 if (characterData == null || targetJob == null)
                     return;
@@ -307,6 +307,11 @@ namespace FFIII_ScreenReader.Patches
                 // Skip duplicates
                 if (!JobMenuState.ShouldAnnounce(announcement))
                     return;
+
+                // Set active state AFTER validation - menu is confirmed open and we have valid data
+                // Also clear other menu states to prevent conflicts
+                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Job");
+                JobMenuState.IsActive = true;
 
                 MelonLogger.Msg($"[Job Menu] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);

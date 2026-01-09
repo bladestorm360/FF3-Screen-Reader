@@ -293,8 +293,8 @@ namespace FFIII_ScreenReader.Patches
                 if (targets == null)
                     return;
 
-                // Mark item menu as active for suppression
-                ItemMenuState.IsItemMenuActive = true;
+                // NOTE: Don't set IsItemMenuActive here - wait until after validation
+                // Setting it early causes suppression during menu transitions
 
                 // Convert IEnumerable to List for indexed access
                 var targetList = new Il2CppSystem.Collections.Generic.List<ItemListContentData>(targets);
@@ -340,6 +340,11 @@ namespace FFIII_ScreenReader.Patches
                 if (!ItemMenuState.ShouldAnnounce(announcement))
                     return;
 
+                // Set active state AFTER validation - menu is confirmed open and we have valid data
+                // Also clear other menu states to prevent conflicts
+                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Item");
+                ItemMenuState.IsItemMenuActive = true;
+
                 MelonLogger.Msg($"[Item Menu] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
@@ -372,8 +377,8 @@ namespace FFIII_ScreenReader.Patches
                 if (targetCursor == null || targetContents == null)
                     return;
 
-                // Mark item menu as active for suppression
-                ItemMenuState.IsItemMenuActive = true;
+                // NOTE: Don't set IsItemMenuActive here - wait until after validation
+                // Setting it early causes suppression during menu transitions
 
                 int index = targetCursor.Index;
 
@@ -450,6 +455,11 @@ namespace FFIII_ScreenReader.Patches
                 // Skip duplicates
                 if (!ItemMenuState.ShouldAnnounce(announcement))
                     return;
+
+                // Set active state AFTER validation - menu is confirmed open and we have valid data
+                // Also clear other menu states to prevent conflicts
+                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Item");
+                ItemMenuState.IsItemMenuActive = true;
 
                 MelonLogger.Msg($"[Item Target] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);

@@ -48,6 +48,19 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
+        /// Clear all battle menu state flags when battle ends.
+        /// Called from ShowPointsInit when victory screen appears.
+        /// </summary>
+        public static void ClearAllBattleMenuFlags()
+        {
+            BattleCommandState.ClearState();
+            BattleTargetPatches.SetTargetSelectionActive(false);
+            BattleItemMenuState.Reset();
+            BattleMagicMenuState.Reset();
+            MelonLogger.Msg("[Battle Result] Cleared all battle menu flags");
+        }
+
+        /// <summary>
         /// Announce experience and gil gained - per character like FF5
         /// </summary>
         public static void AnnouncePointsGained(BattleResultData data)
@@ -357,6 +370,9 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
+                // Clear all battle menu flags when victory screen appears
+                BattleResultPatches.ClearAllBattleMenuFlags();
+
                 var data = __instance.targetData;
                 if (data != null)
                 {
@@ -378,6 +394,9 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
+                // Clear all battle menu flags when victory screen appears
+                BattleResultPatches.ClearAllBattleMenuFlags();
+
                 var data = __instance.targetData;
                 if (data != null)
                 {

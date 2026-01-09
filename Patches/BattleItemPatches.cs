@@ -9,6 +9,7 @@ using FFIII_ScreenReader.Utils;
 // Type aliases for IL2CPP types
 using BattleItemInfomationController = Il2CppLast.UI.KeyInput.BattleItemInfomationController;
 using BattleItemInfomationContentController = Il2CppLast.UI.KeyInput.BattleItemInfomationContentController;
+using BattleCommandSelectController = Il2CppLast.UI.KeyInput.BattleCommandSelectController;
 using ItemListContentData = Il2CppLast.UI.ItemListContentData;
 using OwnedItemData = Il2CppLast.Data.User.OwnedItemData;
 using GameCursor = Il2CppLast.UI.Cursor;
@@ -73,33 +74,82 @@ namespace FFIII_ScreenReader.Patches
     public static class BattleItemMenuState
     {
         /// <summary>
-        /// True when battle item/magic menu is active and handling announcements.
+        /// True when battle item menu is active and handling announcements.
         /// </summary>
         public static bool IsActive { get; set; } = false;
 
+        // State machine offsets for BattleCommandSelectController
+        private const int OFFSET_STATE_MACHINE = 0x48;
+        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
+        private const int OFFSET_STATE_TAG = 0x10;
+
+        // BattleCommandSelectController.State values
+        private const int STATE_NORMAL = 1;  // Command menu active
+        private const int STATE_EXTRA = 2;   // Sub-command menu active
+
         /// <summary>
-        /// Check if GenericCursor should be suppressed. Validates controller is still active.
+        /// Check if GenericCursor should be suppressed.
+        /// Validates controller is active AND we're not back at command selection.
         /// </summary>
         public static bool ShouldSuppress()
         {
             if (!IsActive) return false;
 
-            // Validate battle item controller is still active
             try
             {
-                var controller = UnityEngine.Object.FindObjectOfType<BattleItemInfomationController>();
-                if (controller == null || !controller.gameObject.activeInHierarchy)
+                // First check if battle item controller is still active
+                var itemController = UnityEngine.Object.FindObjectOfType<BattleItemInfomationController>();
+                if (itemController == null || !itemController.gameObject.activeInHierarchy)
                 {
-                    IsActive = false;
+                    Reset();
                     return false;
                 }
+
+                // Also check if command select controller is active and in command state
+                // If so, we've returned to command menu - clear item state
+                var cmdController = UnityEngine.Object.FindObjectOfType<BattleCommandSelectController>();
+                if (cmdController != null && cmdController.gameObject.activeInHierarchy)
+                {
+                    int state = GetCommandState(cmdController);
+                    if (state == STATE_NORMAL || state == STATE_EXTRA)
+                    {
+                        // Command menu is active, we're no longer in item selection
+                        Reset();
+                        return false;
+                    }
+                }
+
                 return true;
             }
             catch
             {
-                IsActive = false;
+                Reset();
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Read current state from BattleCommandSelectController's state machine.
+        /// </summary>
+        private static int GetCommandState(BattleCommandSelectController controller)
+        {
+            try
+            {
+                IntPtr ptr = controller.Pointer;
+                if (ptr == IntPtr.Zero) return -1;
+
+                unsafe
+                {
+                    IntPtr smPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_STATE_MACHINE);
+                    if (smPtr == IntPtr.Zero) return -1;
+
+                    IntPtr currentPtr = *(IntPtr*)((byte*)smPtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
+                    if (currentPtr == IntPtr.Zero) return -1;
+
+                    return *(int*)((byte*)currentPtr.ToPointer() + OFFSET_STATE_TAG);
+                }
+            }
+            catch { return -1; }
         }
 
         private static string lastAnnouncement = "";
@@ -135,8 +185,8 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                // Set active state - this postfix firing means battle item menu is active
-                BattleItemMenuState.IsActive = true;
+                // NOTE: Don't set IsActive here - wait until after validation
+                // Setting it early causes suppression during menu transitions
 
                 if (__instance == null || targetCursor == null)
                     return;
@@ -160,6 +210,11 @@ namespace FFIII_ScreenReader.Patches
                 // Skip duplicates
                 if (!BattleItemMenuState.ShouldAnnounce(announcement))
                     return;
+
+                // Set active state AFTER validation - menu is confirmed open and we have valid data
+                // Also clear other menu states to prevent conflicts
+                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("BattleItem");
+                BattleItemMenuState.IsActive = true;
 
                 // Immediate speech - no delay needed
                 MelonLogger.Msg($"[Battle Item] Announcing: {announcement}");

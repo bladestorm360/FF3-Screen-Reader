@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using MelonLoader;
 using FFIII_ScreenReader.Patches;
+using FFIII_ScreenReader.Menus;
 using ConfigActualDetailsControllerBase_KeyInput = Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase;
 using ConfigActualDetailsControllerBase_Touch = Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase;
 
@@ -139,6 +140,12 @@ namespace FFIII_ScreenReader.Core
         /// </summary>
         private void HandleGlobalInput()
         {
+            // Check for status details navigation (takes priority when active)
+            if (HandleStatusDetailsInput())
+            {
+                return; // Status navigation consumed the input
+            }
+
             // Hotkey: Ctrl+Arrow to teleport in the direction of the arrow
             if (IsCtrlHeld())
             {
@@ -208,6 +215,12 @@ namespace FFIII_ScreenReader.Core
             if (Input.GetKeyDown(KeyCode.Minus))
             {
                 mod.CyclePreviousCategory();
+            }
+
+            // Hotkey: V to announce current vehicle/movement mode
+            if (Input.GetKeyDown(KeyCode.V))
+            {
+                AnnounceCurrentVehicle();
             }
 
             // Hotkey: I to announce item/option description (config menu, shop, or item menu)
@@ -352,6 +365,24 @@ namespace FFIII_ScreenReader.Core
         }
 
         /// <summary>
+        /// Announces the current vehicle/movement mode.
+        /// </summary>
+        private void AnnounceCurrentVehicle()
+        {
+            try
+            {
+                int moveState = Utils.MoveStateHelper.GetCurrentMoveState();
+                string stateName = Utils.MoveStateHelper.GetMoveStateName(moveState);
+                MelonLogger.Msg($"[Vehicle] Current movement mode: {stateName}");
+                FFIII_ScreenReaderMod.SpeakText(stateName);
+            }
+            catch (System.Exception ex)
+            {
+                MelonLogger.Warning($"Error announcing vehicle state: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Checks if either Shift key is held.
         /// </summary>
         private bool IsShiftHeld()
@@ -365,6 +396,71 @@ namespace FFIII_ScreenReader.Core
         private bool IsCtrlHeld()
         {
             return Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+        }
+
+        /// <summary>
+        /// Handles input for status details screen navigation.
+        /// Returns true if input was consumed (status navigation is active and arrow was pressed).
+        /// </summary>
+        private bool HandleStatusDetailsInput()
+        {
+            var tracker = StatusNavigationTracker.Instance;
+
+            // Check if status navigation is active
+            if (!tracker.IsNavigationActive || !tracker.ValidateState())
+            {
+                return false;
+            }
+
+            // Handle arrow key navigation through stats
+            if (Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                if (IsCtrlHeld())
+                {
+                    // Ctrl+Up: Jump to first stat
+                    StatusNavigationReader.JumpToTop();
+                }
+                else if (IsShiftHeld())
+                {
+                    // Shift+Up: Jump to previous stat group
+                    StatusNavigationReader.JumpToPreviousGroup();
+                }
+                else
+                {
+                    // Up: Navigate to previous stat
+                    StatusNavigationReader.NavigatePrevious();
+                }
+                return true;
+            }
+
+            if (Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                if (IsCtrlHeld())
+                {
+                    // Ctrl+Down: Jump to last stat
+                    StatusNavigationReader.JumpToBottom();
+                }
+                else if (IsShiftHeld())
+                {
+                    // Shift+Down: Jump to next stat group
+                    StatusNavigationReader.JumpToNextGroup();
+                }
+                else
+                {
+                    // Down: Navigate to next stat
+                    StatusNavigationReader.NavigateNext();
+                }
+                return true;
+            }
+
+            // R: Repeat current stat
+            if (Input.GetKeyDown(KeyCode.R))
+            {
+                StatusNavigationReader.ReadCurrentStat();
+                return true;
+            }
+
+            return false;
         }
     }
 }

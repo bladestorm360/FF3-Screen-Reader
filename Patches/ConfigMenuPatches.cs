@@ -69,6 +69,8 @@ namespace FFIII_ScreenReader.Patches
                 // Set active state when config menu is in use
                 if (isFocus)
                 {
+                    // Clear other menu states to prevent conflicts
+                    FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Config");
                     ConfigMenuState.IsActive = true;
                 }
 

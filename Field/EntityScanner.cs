@@ -33,6 +33,11 @@ namespace FFIII_ScreenReader.Field
         private List<NavigableEntity> filteredEntities = new List<NavigableEntity>();
         private PathfindingFilter pathfindingFilter = new PathfindingFilter();
 
+        // Track selected entity by identifier to maintain focus across re-sorts
+        private Vector3? selectedEntityPosition = null;
+        private EntityCategory? selectedEntityCategory = null;
+        private string selectedEntityName = null;
+
         /// <summary>
         /// Whether to filter entities by pathfinding accessibility.
         /// When enabled, only entities with a valid path from the player are shown.
@@ -54,7 +59,72 @@ namespace FFIII_ScreenReader.Field
         public int CurrentIndex
         {
             get => currentIndex;
-            set => currentIndex = value;
+            set
+            {
+                currentIndex = value;
+                SaveSelectedEntityIdentifier();
+            }
+        }
+
+        /// <summary>
+        /// Saves the current entity's identifier for focus restoration after re-sorting.
+        /// </summary>
+        private void SaveSelectedEntityIdentifier()
+        {
+            var entity = CurrentEntity;
+            if (entity != null)
+            {
+                selectedEntityPosition = entity.Position;
+                selectedEntityCategory = entity.Category;
+                selectedEntityName = entity.Name;
+            }
+        }
+
+        /// <summary>
+        /// Clears the saved entity identifier (used when explicitly resetting selection).
+        /// </summary>
+        public void ClearSelectedEntityIdentifier()
+        {
+            selectedEntityPosition = null;
+            selectedEntityCategory = null;
+            selectedEntityName = null;
+        }
+
+        /// <summary>
+        /// Finds the index of an entity matching the saved identifier.
+        /// Returns -1 if not found.
+        /// </summary>
+        private int FindEntityByIdentifier()
+        {
+            if (!selectedEntityPosition.HasValue || !selectedEntityCategory.HasValue)
+                return -1;
+
+            for (int i = 0; i < filteredEntities.Count; i++)
+            {
+                var entity = filteredEntities[i];
+                // Match by position (with small tolerance) and category
+                if (entity.Category == selectedEntityCategory.Value &&
+                    Vector3.Distance(entity.Position, selectedEntityPosition.Value) < 0.5f)
+                {
+                    return i;
+                }
+            }
+
+            // Fallback: try matching by name if position changed slightly
+            if (!string.IsNullOrEmpty(selectedEntityName))
+            {
+                for (int i = 0; i < filteredEntities.Count; i++)
+                {
+                    var entity = filteredEntities[i];
+                    if (entity.Category == selectedEntityCategory.Value &&
+                        entity.Name == selectedEntityName)
+                    {
+                        return i;
+                    }
+                }
+            }
+
+            return -1;
         }
 
         /// <summary>
@@ -68,6 +138,7 @@ namespace FFIII_ScreenReader.Field
                 if (currentCategory != value)
                 {
                     currentCategory = value;
+                    ClearSelectedEntityIdentifier(); // Clear since we're changing category
                     ApplyFilter();
                     currentIndex = 0;
                 }
@@ -150,6 +221,13 @@ namespace FFIII_ScreenReader.Field
             {
                 filteredEntities = filteredEntities.OrderBy(e => Vector3.Distance(e.Position, playerPos.Value)).ToList();
             }
+
+            // Restore focus to previously selected entity after re-sorting
+            int restoredIndex = FindEntityByIdentifier();
+            if (restoredIndex >= 0)
+            {
+                currentIndex = restoredIndex;
+            }
         }
 
         /// <summary>
@@ -211,6 +289,7 @@ namespace FFIII_ScreenReader.Field
             if (!pathfindingFilter.IsEnabled)
             {
                 currentIndex = (currentIndex + 1) % filteredEntities.Count;
+                SaveSelectedEntityIdentifier();
                 return;
             }
 
@@ -227,6 +306,7 @@ namespace FFIII_ScreenReader.Field
                 var entity = filteredEntities[currentIndex];
                 if (pathfindingFilter.PassesFilter(entity, context))
                 {
+                    SaveSelectedEntityIdentifier();
                     return; // Found a valid entity
                 }
             }
@@ -252,6 +332,7 @@ namespace FFIII_ScreenReader.Field
             if (!pathfindingFilter.IsEnabled)
             {
                 currentIndex = (currentIndex - 1 + filteredEntities.Count) % filteredEntities.Count;
+                SaveSelectedEntityIdentifier();
                 return;
             }
 
@@ -268,6 +349,7 @@ namespace FFIII_ScreenReader.Field
                 var entity = filteredEntities[currentIndex];
                 if (pathfindingFilter.PassesFilter(entity, context))
                 {
+                    SaveSelectedEntityIdentifier();
                     return; // Found a valid entity
                 }
             }

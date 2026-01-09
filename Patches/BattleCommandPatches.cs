@@ -38,53 +38,12 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// Check if GenericCursor should be suppressed.
-        /// Uses state machine to verify battle command controller is active.
-        /// Also checks BattleMenuWindowController to ensure we're actually in battle.
+        /// Simply returns IsActive - flag is cleared explicitly at battle end via BattleResultPatches.
+        /// This prevents false clears during state transitions within battle.
         /// </summary>
         public static bool ShouldSuppress()
         {
-            if (!IsActive) return false;
-
-            try
-            {
-                // First check if BattleMenuWindowController exists - if not, battle has ended
-                var battleMenu = UnityEngine.Object.FindObjectOfType<BattleMenuWindowController>();
-                if (battleMenu == null)
-                {
-                    MelonLogger.Msg("[BattleCommandState] ShouldSuppress: BattleMenuWindowController gone, clearing state");
-                    ClearState();
-                    return false;
-                }
-
-                var controller = UnityEngine.Object.FindObjectOfType<BattleCommandSelectController>();
-                if (controller == null || !controller.gameObject.activeInHierarchy)
-                {
-                    ClearState();
-                    return false;
-                }
-
-                int currentState = GetCurrentState(controller);
-
-                // If we're in an active command state, suppress generic cursor
-                if (currentState == STATE_NORMAL || currentState == STATE_EXTRA || currentState == STATE_MANIPULATE)
-                {
-                    return true;
-                }
-
-                // STATE_NONE means menu closed
-                if (currentState == STATE_NONE)
-                {
-                    ClearState();
-                    return false;
-                }
-
-                return true;
-            }
-            catch
-            {
-                ClearState();
-                return false;
-            }
+            return IsActive;
         }
 
         /// <summary>
@@ -191,6 +150,8 @@ namespace FFIII_ScreenReader.Patches
                 if (__instance == null) return;
 
                 // Mark battle command menu as active for suppression
+                // Also clear other menu states to prevent conflicts
+                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("BattleCommand");
                 BattleCommandState.IsActive = true;
 
                 // Actively check target selection state (more reliable than just reading the flag)

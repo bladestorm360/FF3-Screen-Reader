@@ -22,6 +22,7 @@ using AbilityLevelType = Il2CppLast.Defaine.Master.AbilityLevelType;
 using PlayerCharacterParameter = Il2CppLast.Data.PlayerCharacterParameter;
 using GameCursor = Il2CppLast.UI.Cursor;
 using WithinRangeType = Il2CppLast.UI.CustomScrollView.WithinRangeType;
+using OwnedItemData = Il2CppLast.Data.User.OwnedItemData;
 
 namespace FFIII_ScreenReader.Patches
 {
@@ -53,6 +54,8 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void OnSpellListFocused()
         {
+            // Clear other menu states to prevent conflicts
+            FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Magic");
             _isSpellListFocused = true;
             lastSpellId = -1; // Reset to announce first spell
         }
@@ -312,7 +315,10 @@ namespace FFIII_ScreenReader.Patches
         private static bool isPatched = false;
 
         // Memory offsets from dump.cs (Serial.FF3.UI.KeyInput.AbilityContentListController)
-        private const int OFFSET_CONTENT_LIST = 0x60;  // List<BattleAbilityInfomationContentController> contentList
+        private const int OFFSET_DATA_LIST = 0x38;         // List<OwnedAbility> dataList (spells for Use/Remove)
+        private const int OFFSET_ABILITY_ITEM_LIST = 0x40; // List<OwnedItemData> abilityItemList (spell tomes for Learn)
+        private const int OFFSET_CONTENT_LIST = 0x60;      // List<BattleAbilityInfomationContentController> contentList
+        private const int OFFSET_IS_ITEM_LIST_CHECK = 0x29; // bool IsItemListCheck (true = Learn mode)
         private const int OFFSET_TARGET_CHARACTER = 0x98;  // OwnedCharacterData targetCharacterData
 
         // AbilityWindowController.State enum values (from dump.cs line 281758)
@@ -512,9 +518,10 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// Postfix for SetCursor - fires during navigation.
-        /// Only announces if spell list has focus (SetFocus(true) was called).
+        /// Uses cursor index to get correct spell/item from content list.
+        /// Handles both Use/Remove (spells) and Learn (spell tomes) modes.
         /// </summary>
-        public static void SetCursor_Postfix(object __instance, object targetCursor)
+        public static void SetCursor_Postfix(object __instance, GameCursor targetCursor)
         {
             try
             {
@@ -522,36 +529,51 @@ namespace FFIII_ScreenReader.Patches
                 if (!MagicMenuState.IsSpellListActive)
                     return;
 
-                if (__instance == null)
+                if (__instance == null || targetCursor == null)
                     return;
 
                 var controller = __instance as AbilityContentListController;
                 if (controller == null || !controller.gameObject.activeInHierarchy)
                     return;
 
-                // Find the focused content by iterating through contentList
-                OwnedAbility focusedAbility = FindFocusedAbility(controller);
+                int cursorIndex = targetCursor.Index;
+                MelonLogger.Msg($"[Magic Menu] SetCursor called, index: {cursorIndex}");
 
-                if (focusedAbility != null)
+                IntPtr controllerPtr = controller.Pointer;
+                if (controllerPtr == IntPtr.Zero)
+                    return;
+
+                // Check if we're in Learn mode (spell tomes) or Use/Remove mode (spells)
+                bool isLearnMode = false;
+                unsafe
                 {
-                    AnnounceSpell(focusedAbility);
+                    isLearnMode = *(bool*)((byte*)controllerPtr.ToPointer() + OFFSET_IS_ITEM_LIST_CHECK);
+                }
+
+                if (isLearnMode)
+                {
+                    // Learn mode - read from abilityItemList (spell tomes)
+                    AnnounceSpellTome(controllerPtr, cursorIndex);
+                }
+                else
+                {
+                    // Use/Remove mode - read from contentList (spells)
+                    AnnounceSpellAtIndex(controllerPtr, cursorIndex);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic Menu] Error in SetCursor_Postfix: {ex.Message}");
+            }
         }
 
         /// <summary>
-        /// Finds the focused ability by iterating through contentList.
-        /// Checks FocusCursorParent.activeInHierarchy to determine which item has focus.
+        /// Announces spell at the given index from contentList (Use/Remove mode).
         /// </summary>
-        private static OwnedAbility FindFocusedAbility(AbilityContentListController controller)
+        private static void AnnounceSpellAtIndex(IntPtr controllerPtr, int index)
         {
             try
             {
-                IntPtr controllerPtr = controller.Pointer;
-                if (controllerPtr == IntPtr.Zero)
-                    return null;
-
                 // Read contentList pointer at offset 0x60
                 IntPtr contentListPtr;
                 unsafe
@@ -560,63 +582,135 @@ namespace FFIII_ScreenReader.Patches
                 }
 
                 if (contentListPtr == IntPtr.Zero)
-                    return null;
+                {
+                    MelonLogger.Msg("[Magic Menu] contentList is null");
+                    return;
+                }
 
-                // Create IL2CPP List wrapper
                 var contentList = new Il2CppSystem.Collections.Generic.List<BattleAbilityInfomationContentController>(contentListPtr);
 
-                // Iterate to find the item with active focus cursor
-                for (int i = 0; i < contentList.Count; i++)
+                if (index < 0 || index >= contentList.Count)
                 {
-                    var content = contentList[i];
-                    if (content == null)
-                        continue;
-
-                    // Check if this content has the focus cursor active
-                    try
-                    {
-                        var focusCursorParent = content.FocusCursorParent;
-                        if (focusCursorParent != null && focusCursorParent.activeInHierarchy)
-                        {
-                            var ability = content.Data;
-                            if (ability != null)
-                                return ability;
-                        }
-                    }
-                    catch { }
+                    MelonLogger.Msg($"[Magic Menu] Index {index} out of range (count={contentList.Count})");
+                    return;
                 }
 
-                // Fallback: try to find any content with Data that's active
-                // DefaultCursor inactive might mean this is the focused one
-                for (int i = 0; i < contentList.Count; i++)
+                var contentController = contentList[index];
+                if (contentController == null)
                 {
-                    var content = contentList[i];
-                    if (content == null)
-                        continue;
-
-                    try
-                    {
-                        if (content.gameObject.activeInHierarchy)
-                        {
-                            var ability = content.Data;
-                            if (ability != null)
-                            {
-                                var defaultCursor = content.DefaultCursorParent;
-                                if (defaultCursor != null && !defaultCursor.activeInHierarchy)
-                                {
-                                    return ability;
-                                }
-                            }
-                        }
-                    }
-                    catch { }
+                    // Empty slot
+                    AnnounceEmpty();
+                    return;
                 }
 
-                return null;
+                var ability = contentController.Data;
+                if (ability == null)
+                {
+                    // Empty slot
+                    AnnounceEmpty();
+                    return;
+                }
+
+                AnnounceSpell(ability);
             }
-            catch
+            catch (Exception ex)
             {
-                return null;
+                MelonLogger.Warning($"[Magic Menu] Error in AnnounceSpellAtIndex: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Announces spell tome at the given index from abilityItemList (Learn mode).
+        /// Format: "Spell Name: Description" (like items menu)
+        /// </summary>
+        private static void AnnounceSpellTome(IntPtr controllerPtr, int index)
+        {
+            try
+            {
+                // Read abilityItemList pointer at offset 0x40
+                IntPtr itemListPtr;
+                unsafe
+                {
+                    itemListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_ABILITY_ITEM_LIST);
+                }
+
+                if (itemListPtr == IntPtr.Zero)
+                {
+                    MelonLogger.Msg("[Magic Menu] abilityItemList is null");
+                    return;
+                }
+
+                var itemList = new Il2CppSystem.Collections.Generic.List<OwnedItemData>(itemListPtr);
+
+                if (index < 0 || index >= itemList.Count)
+                {
+                    MelonLogger.Msg($"[Magic Menu] Learn index {index} out of range (count={itemList.Count})");
+                    return;
+                }
+
+                var itemData = itemList[index];
+                if (itemData == null)
+                {
+                    AnnounceEmpty();
+                    return;
+                }
+
+                // Get item name and description directly from OwnedItemData
+                // Note: "Deiscription" is a typo in the game code
+                string itemName = null;
+                string description = null;
+
+                try
+                {
+                    itemName = itemData.Name;
+                    if (!string.IsNullOrEmpty(itemName))
+                    {
+                        itemName = TextUtils.StripIconMarkup(itemName);
+                    }
+
+                    description = itemData.Deiscription; // Game code typo
+                    if (!string.IsNullOrEmpty(description))
+                    {
+                        description = TextUtils.StripIconMarkup(description);
+                    }
+                }
+                catch { }
+
+                if (string.IsNullOrEmpty(itemName))
+                {
+                    AnnounceEmpty();
+                    return;
+                }
+
+                // Build announcement: "Spell Tome Name: Description"
+                string announcement = itemName;
+                if (!string.IsNullOrEmpty(description))
+                {
+                    announcement += ": " + description;
+                }
+
+                // Check for duplicate
+                if (!MagicMenuState.ShouldAnnounceSpell(itemName.GetHashCode()))
+                    return;
+
+                MelonLogger.Msg($"[Magic Menu] Learn announcing: {announcement}");
+                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic Menu] Error in AnnounceSpellTome: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Announces "Empty" for empty spell slots.
+        /// </summary>
+        private static void AnnounceEmpty()
+        {
+            if (MagicMenuState.ShouldAnnounceSpell(-1)) // -1 as ID for empty
+            {
+                MelonLogger.Msg("[Magic Menu] Announcing: Empty");
+                FFIII_ScreenReaderMod.SpeakText("Empty", interrupt: true);
             }
         }
 

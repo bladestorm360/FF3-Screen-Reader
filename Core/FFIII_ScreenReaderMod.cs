@@ -120,6 +120,9 @@ namespace FFIII_ScreenReader.Core
             // Patch battle item menu
             BattleItemPatchesApplier.ApplyPatches(harmony);
 
+            // Patch battle magic menu
+            BattleMagicPatchesApplier.ApplyPatches(harmony);
+
             // Patch battle target ShowWindow (attribute-based patch doesn't work reliably in FF3)
             TryPatchBattleTargetShowWindow(harmony);
 
@@ -134,6 +137,18 @@ namespace FFIII_ScreenReader.Core
 
             // Patch magic menu (command selection and spell list)
             MagicMenuPatches.ApplyPatches(harmony);
+
+            // Patch status menu (character selection)
+            StatusMenuPatches.ApplyPatches(harmony);
+
+            // Patch status details (stat navigation with arrow keys)
+            StatusDetailsPatches.ApplyPatches(harmony);
+
+            // Patch movement state changes (vehicle announcements)
+            MovementSpeechPatches.ApplyPatches(harmony);
+
+            // Patch landing zone detection ("Can land" announcements)
+            VehicleLandingPatches.ApplyPatches(harmony);
 
             // NOTE: Popup patches disabled - CommonPopup.Open causes crashes in FF3
             // due to string property access issues. Need alternative approach.
@@ -561,23 +576,18 @@ namespace FFIII_ScreenReader.Core
         }
 
         /// <summary>
-        /// Gets the FieldPlayer from the FieldController using reflection.
-        /// The player field is private in the main game's FieldController.
+        /// Gets the FieldPlayer from the FieldPlayerController.
+        /// Uses direct IL2CPP access (not reflection, which doesn't work on IL2CPP types).
         /// </summary>
         private Il2CppLast.Entity.Field.FieldPlayer GetFieldPlayer()
         {
             try
             {
-                var fieldMap = GameObjectCache.Get<FieldMap>();
-                if (fieldMap?.fieldController == null)
-                    return null;
-
-                // Access private 'player' field using reflection
-                var fieldType = fieldMap.fieldController.GetType();
-                var playerField = fieldType.GetField("player", BindingFlags.NonPublic | BindingFlags.Instance);
-                if (playerField != null)
+                // Use FieldPlayerController - same pattern used in GetPlayerPosition() and pathfinding
+                var playerController = GameObjectCache.Get<FieldPlayerController>();
+                if (playerController?.fieldPlayer != null)
                 {
-                    return playerField.GetValue(fieldMap.fieldController) as Il2CppLast.Entity.Field.FieldPlayer;
+                    return playerController.fieldPlayer;
                 }
             }
             catch (Exception ex)
@@ -684,13 +694,25 @@ namespace FFIII_ScreenReader.Core
                     return;
                 }
 
-                Vector3 currentPos = player.transform.localPosition;
-                Vector3 newPos = currentPos + new Vector3(offset.x, offset.y, 0);
+                // Get the currently selected entity
+                var entity = entityScanner.CurrentEntity;
+                if (entity == null)
+                {
+                    SpeakText("No entity selected");
+                    return;
+                }
 
-                player.transform.localPosition = newPos;
+                // Calculate target position: entity position + offset
+                Vector3 entityPos = entity.Position;
+                Vector3 targetPos = entityPos + new Vector3(offset.x, offset.y, 0);
 
-                string direction = GetDirectionName(currentPos, newPos);
-                SpeakText($"Teleported {direction}");
+                // Teleport player to target position
+                player.transform.localPosition = targetPos;
+
+                // Announce with direction relative to entity and entity name
+                string direction = GetDirectionFromOffset(offset);
+                string entityName = entity.Name;
+                SpeakText($"Teleported to {direction} of {entityName}");
             }
             catch (Exception ex)
             {
@@ -699,18 +721,15 @@ namespace FFIII_ScreenReader.Core
             }
         }
 
-        private string GetDirectionName(Vector3 from, Vector3 to)
+        private string GetDirectionFromOffset(Vector2 offset)
         {
-            float dx = to.x - from.x;
-            float dy = to.y - from.y;
-
-            if (Math.Abs(dx) > Math.Abs(dy))
+            if (Math.Abs(offset.x) > Math.Abs(offset.y))
             {
-                return dx > 0 ? "East" : "West";
+                return offset.x > 0 ? "east" : "west";
             }
             else
             {
-                return dy > 0 ? "North" : "South";
+                return offset.y > 0 ? "north" : "south";
             }
         }
 
@@ -812,6 +831,15 @@ namespace FFIII_ScreenReader.Core
         }
 
         /// <summary>
+        /// Clears all menu states except the specified one.
+        /// Called by patches when a menu activates to ensure only one menu is active at a time.
+        /// </summary>
+        public static void ClearOtherMenuStates(string exceptMenu)
+        {
+            ManualPatches.ClearOtherMenuStates(exceptMenu);
+        }
+
+        /// <summary>
         /// Speak text through the screen reader.
         /// Thread-safe: TolkWrapper uses locking to prevent concurrent native calls.
         /// </summary>
@@ -837,6 +865,7 @@ namespace FFIII_ScreenReader.Core
     {
         private static string lastDialogueMessage = "";
         private static string lastSpeaker = "";
+        private static string pendingDialogueText = "";  // Stores dialogue until speaker is announced
 
         /// <summary>
         /// Postfix for cursor navigation methods (NextIndex, PrevIndex, etc.)
@@ -849,6 +878,15 @@ namespace FFIII_ScreenReader.Core
             {
                 var cursor = __instance as GameCursor;
                 if (cursor == null) return;
+
+                // === MAIN MENU FALLBACK ===
+                // If any menu state flag is set AND we're at main menu level, clear all flags
+                // This prevents stuck flags from suppressing main menu speech
+                // Short-circuit: only do expensive IsAtMainMenuLevel check if a flag is actually set
+                if (AnyMenuStateActive() && IsAtMainMenuLevel())
+                {
+                    ClearAllMenuStates();
+                }
 
                 // === ACTIVE STATE CHECKS ===
                 // Only suppress when specific patches are actively handling announcements
@@ -864,25 +902,27 @@ namespace FFIII_ScreenReader.Core
                 if (Patches.BattleCommandState.ShouldSuppress()) return;
 
                 // Battle target selection - needs target HP/status
-                // ShouldSuppress() validates controller is active (auto-clears when battle ends)
                 if (Patches.BattleTargetPatches.ShouldSuppress()) return;
 
                 // Job menu (job list) - needs job level data
                 if (Patches.JobMenuState.ShouldSuppress()) return;
 
-                // NOTE: StatusMenuState removed - CharacterSelectionReader handles character selection
+                // Status menu character selection - SelectContent_Postfix handles announcements
+                if (Patches.StatusMenuState.ShouldSuppress()) return;
 
                 // Equipment menus (slot and item list) - needs stat comparison
                 if (Patches.EquipMenuState.ShouldSuppress()) return;
 
-                // Battle item/magic menus - needs item data in battle
+                // Battle item menu - needs item data in battle
                 if (Patches.BattleItemMenuState.ShouldSuppress()) return;
+
+                // Battle magic menu - needs spell data with charges in battle
+                if (Patches.BattleMagicMenuState.ShouldSuppress()) return;
 
                 // Config menu - needs current setting values
                 if (Patches.ConfigMenuState.ShouldSuppress()) return;
 
                 // Magic menu spell list - needs spell data with charges
-                // ShouldSuppress() validates controller is active and auto-resets if not
                 if (Patches.MagicMenuState.ShouldSuppress()) return;
 
                 // === DEFAULT: Read via MenuTextDiscovery ===
@@ -894,6 +934,128 @@ namespace FFIII_ScreenReader.Core
             {
                 MelonLogger.Warning($"Error in CursorNavigation_Postfix: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Fast check if any menu state flag is currently set.
+        /// Used to short-circuit the expensive IsAtMainMenuLevel check.
+        /// </summary>
+        private static bool AnyMenuStateActive()
+        {
+            return Patches.EquipMenuState.IsActive ||
+                   Patches.StatusMenuState.IsActive ||
+                   Patches.ItemMenuState.IsItemMenuActive ||
+                   Patches.JobMenuState.IsActive ||
+                   Patches.MagicMenuState.IsSpellListActive ||
+                   Patches.ShopMenuTracker.IsShopMenuActive ||
+                   Patches.ConfigMenuState.IsActive ||
+                   Patches.BattleCommandState.IsActive ||
+                   Patches.BattleTargetPatches.IsTargetSelectionActive ||
+                   Patches.BattleItemMenuState.IsActive ||
+                   Patches.BattleMagicMenuState.IsActive;
+        }
+
+        /// <summary>
+        /// Checks if we're at the main menu level (no specialized list controllers active).
+        /// Returns true for main menu and command bars (Item/Magic/Equip selection, pre-item menu, etc.)
+        /// </summary>
+        private static bool IsAtMainMenuLevel()
+        {
+            try
+            {
+                // Check if menu is open at all
+                Il2CppLast.UI.MenuManager menuManager = null;
+                try { menuManager = Il2CppLast.UI.MenuManager.Instance; }
+                catch { return false; }
+
+                if (menuManager == null || !menuManager.IsOpen)
+                    return false;
+
+                // Check if any specialized list controllers are active
+                // If any are active, we're NOT at main menu level
+
+                // Equipment lists
+                var equipInfo = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.EquipmentInfoWindowController>();
+                if (equipInfo != null && equipInfo.gameObject.activeInHierarchy)
+                    return false;
+
+                var equipSelect = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.EquipmentSelectWindowController>();
+                if (equipSelect != null && equipSelect.gameObject.activeInHierarchy)
+                    return false;
+
+                // Item list
+                var itemList = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.ItemListController>();
+                if (itemList != null && itemList.gameObject.activeInHierarchy)
+                    return false;
+
+                // Job list
+                var jobList = UnityEngine.Object.FindObjectOfType<Il2CppSerial.FF3.UI.KeyInput.JobChangeWindowController>();
+                if (jobList != null && jobList.gameObject.activeInHierarchy)
+                    return false;
+
+                // Status character selection
+                var statusCharSelect = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.StatusWindowController>();
+                if (statusCharSelect != null && statusCharSelect.gameObject.activeInHierarchy)
+                    return false;
+
+                // Magic spell list
+                var magicList = UnityEngine.Object.FindObjectOfType<Il2CppSerial.FF3.UI.KeyInput.AbilityContentListController>();
+                if (magicList != null && magicList.gameObject.activeInHierarchy)
+                    return false;
+
+                // Shop item list
+                var shopList = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.ShopListItemContentController>();
+                if (shopList != null && shopList.gameObject.activeInHierarchy)
+                    return false;
+
+                // Config menu
+                var configMenu = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.ConfigController>();
+                if (configMenu != null && configMenu.gameObject.activeInHierarchy)
+                    return false;
+
+                // No specialized controllers active - we're at main menu level
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Clears all menu state flags. Called when returning to main menu level.
+        /// </summary>
+        public static void ClearAllMenuStates()
+        {
+            Patches.EquipMenuState.ClearState();
+            Patches.StatusMenuState.ResetState();
+            Patches.ItemMenuState.ClearState();
+            Patches.JobMenuState.ResetState();
+            Patches.MagicMenuState.ResetState();
+            Patches.ShopMenuTracker.ClearState();
+            Patches.ConfigMenuState.ResetState();
+            Patches.BattleCommandState.ClearState();
+            Patches.BattleTargetPatches.ResetState();
+            Patches.BattleItemMenuState.Reset();
+            Patches.BattleMagicMenuState.Reset();
+        }
+
+        /// <summary>
+        /// Clears all menu states except the specified one. Called when a menu activates.
+        /// </summary>
+        public static void ClearOtherMenuStates(string exceptMenu)
+        {
+            if (exceptMenu != "Equip") Patches.EquipMenuState.ClearState();
+            if (exceptMenu != "Status") Patches.StatusMenuState.ResetState();
+            if (exceptMenu != "Item") Patches.ItemMenuState.ClearState();
+            if (exceptMenu != "Job") Patches.JobMenuState.ResetState();
+            if (exceptMenu != "Magic") Patches.MagicMenuState.ResetState();
+            if (exceptMenu != "Shop") Patches.ShopMenuTracker.ClearState();
+            if (exceptMenu != "Config") Patches.ConfigMenuState.ResetState();
+            if (exceptMenu != "BattleCommand") Patches.BattleCommandState.ClearState();
+            if (exceptMenu != "BattleTarget") Patches.BattleTargetPatches.ResetState();
+            if (exceptMenu != "BattleItem") Patches.BattleItemMenuState.Reset();
+            if (exceptMenu != "BattleMagic") Patches.BattleMagicMenuState.Reset();
         }
 
         /// <summary>
@@ -973,7 +1135,8 @@ namespace FFIII_ScreenReader.Core
                     if (!string.IsNullOrWhiteSpace(cleanMessage))
                     {
                         MelonLogger.Msg($"[Dialogue] {cleanMessage}");
-                        FFIII_ScreenReaderMod.SpeakText(cleanMessage, interrupt: false);
+                        // Store pending dialogue - will be spoken after speaker name in Play_Postfix
+                        pendingDialogueText = cleanMessage;
                     }
                 }
             }
@@ -1018,10 +1181,12 @@ namespace FFIII_ScreenReader.Core
         }
 
         /// <summary>
-        /// Announces a speaker name if it's new.
+        /// Announces a speaker name if it's new, then announces any pending dialogue.
+        /// This ensures speaker name is always spoken before dialogue text.
         /// </summary>
         private static void AnnounceSpeaker(string spekerValue)
         {
+            // First, announce speaker if it's new
             if (!string.IsNullOrWhiteSpace(spekerValue) && spekerValue != lastSpeaker)
             {
                 lastSpeaker = spekerValue;
@@ -1031,6 +1196,13 @@ namespace FFIII_ScreenReader.Core
                     MelonLogger.Msg($"[Speaker] {cleanSpeaker}");
                     FFIII_ScreenReaderMod.SpeakText(cleanSpeaker, interrupt: false);
                 }
+            }
+
+            // Then, announce any pending dialogue text
+            if (!string.IsNullOrWhiteSpace(pendingDialogueText))
+            {
+                FFIII_ScreenReaderMod.SpeakText(pendingDialogueText, interrupt: false);
+                pendingDialogueText = "";  // Clear after speaking
             }
         }
     }

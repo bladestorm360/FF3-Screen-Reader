@@ -41,8 +41,10 @@ namespace FFIII_ScreenReader.Patches
         private const int STATE_SELECT = 3;    // Equipment item selection
 
         /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// Uses state machine to determine if we're in command bar vs slot/item selection.
+        /// Validates that equipment menu is active and should suppress generic cursor.
+        /// Uses dual validation like MagicMenuPatches:
+        /// 1. Check state machine - if COMMAND, don't suppress
+        /// 2. Check if actual list controllers are active
         /// </summary>
         public static bool ShouldSuppress()
         {
@@ -50,40 +52,54 @@ namespace FFIII_ScreenReader.Patches
 
             try
             {
-                // Check the EquipmentWindowController's state machine
-                var windowController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentWindowController>();
-                if (windowController != null)
+                // Check state machine first - if in COMMAND state, don't suppress
+                var equipmentController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentWindowController>();
+                if (equipmentController != null)
                 {
-                    int currentState = GetCurrentState(windowController);
+                    int currentState = GetCurrentState(equipmentController);
+                    MelonLogger.Msg($"[DEBUG EquipMenu] State={currentState}");
 
-                    // If we're in Command state, don't suppress - let MenuTextDiscovery handle it
-                    if (currentState == STATE_COMMAND || currentState == STATE_NONE)
+                    // STATE_COMMAND means we're in command bar - let MenuTextDiscovery handle
+                    if (currentState == STATE_COMMAND)
                     {
+                        MelonLogger.Msg("[DEBUG EquipMenu] STATE_COMMAND, clearing and not suppressing");
                         ClearState();
                         return false;
                     }
 
-                    // We're in Info (slot) or Select (item) state - suppress
-                    if (currentState == STATE_INFO || currentState == STATE_SELECT)
+                    // STATE_NONE means menu closing
+                    if (currentState == STATE_NONE)
                     {
-                        return true;
+                        MelonLogger.Msg("[DEBUG EquipMenu] STATE_NONE, clearing");
+                        ClearState();
+                        return false;
                     }
                 }
 
-                // Fallback: Validate equipment menu controllers are still active
-                var slotController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentInfoWindowController>();
-                if (slotController != null && slotController.gameObject.activeInHierarchy)
-                    return true;
-
+                // Validate the actual list controllers are active (not just parent)
+                var infoController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentInfoWindowController>();
                 var selectController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentSelectWindowController>();
-                if (selectController != null && selectController.gameObject.activeInHierarchy)
-                    return true;
 
-                ClearState();
-                return false;
+                bool infoActive = infoController != null && infoController.gameObject.activeInHierarchy;
+                bool selectActive = selectController != null && selectController.gameObject.activeInHierarchy;
+
+                MelonLogger.Msg($"[DEBUG EquipMenu] InfoActive={infoActive}, SelectActive={selectActive}");
+
+                if (!infoActive && !selectActive)
+                {
+                    // Neither list controller is active - we've left the equipment submenu
+                    MelonLogger.Msg("[DEBUG EquipMenu] No list controllers active, clearing");
+                    ClearState();
+                    return false;
+                }
+
+                // At least one list is active - suppress
+                MelonLogger.Msg("[DEBUG EquipMenu] List controller active, suppressing");
+                return true;
             }
-            catch
+            catch (Exception ex)
             {
+                MelonLogger.Msg($"[DEBUG EquipMenu] Exception: {ex.Message}, clearing");
                 ClearState();
                 return false;
             }
@@ -196,8 +212,8 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                // Set active state - this postfix firing means equipment slot menu is active
-                EquipMenuState.IsActive = true;
+                // NOTE: Don't set IsActive here - wait until after validation
+                // Setting it early causes suppression during menu transitions
 
                 if (targetCursor == null) return;
 
@@ -292,6 +308,11 @@ namespace FFIII_ScreenReader.Patches
                 if (!EquipMenuState.ShouldAnnounce(announcement))
                     return;
 
+                // Set active state AFTER validation - menu is confirmed open and we have valid data
+                // Also clear other menu states to prevent conflicts
+                FFIII_ScreenReaderMod.ClearOtherMenuStates("Equip");
+                EquipMenuState.IsActive = true;
+
                 MelonLogger.Msg($"[Equipment Slot] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
@@ -315,8 +336,8 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                // Set active state - this postfix firing means equipment item list is active
-                EquipMenuState.IsActive = true;
+                // NOTE: Don't set IsActive here - wait until after validation
+                // Setting it early causes suppression during menu transitions
 
                 if (targetCursor == null) return;
 
@@ -381,6 +402,11 @@ namespace FFIII_ScreenReader.Patches
                 // Skip duplicates
                 if (!EquipMenuState.ShouldAnnounce(announcement))
                     return;
+
+                // Set active state AFTER validation - menu is confirmed open and we have valid data
+                // Also clear other menu states to prevent conflicts
+                FFIII_ScreenReaderMod.ClearOtherMenuStates("Equip");
+                EquipMenuState.IsActive = true;
 
                 MelonLogger.Msg($"[Equipment Item] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);

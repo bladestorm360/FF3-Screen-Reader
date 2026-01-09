@@ -320,7 +320,8 @@ namespace FFIII_ScreenReader.Patches
                 if (!isFocus || __instance == null)
                     return;
 
-                // Mark shop as active
+                // Mark shop as active and clear other menu states
+                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Shop");
                 ShopMenuTracker.IsShopMenuActive = true;
 
                 // Get item name from iconTextView

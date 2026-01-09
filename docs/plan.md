@@ -26,7 +26,8 @@ Port screen reader accessibility features to FF3 (Final Fantasy III Pixel Remast
 | 5 | Field Navigation | DONE |
 | 6 | Input System | DONE |
 | 7.1 | Shop System | DONE |
-| 7.2-7.3 | Timer/Vehicles | Not started |
+| 7.2 | Vehicles | DONE |
+| 7.3 | Status Details Navigation | DONE |
 
 ---
 
@@ -93,6 +94,11 @@ Level 2: 5/8 charges (shared by Cura, Fira, etc.)
 | M | Announce map name |
 | G | Announce gil |
 | I | Announce details (config tooltip, shop stats, equipment job requirements) |
+| V | Announce current vehicle/movement mode |
+| Up/Down | Navigate stats (in status details screen) |
+| Shift+Up/Down | Jump to next/previous stat group |
+| Ctrl+Up/Down | Jump to first/last stat |
+| R | Repeat current stat (in status details screen) |
 
 ---
 
@@ -127,7 +133,6 @@ public static bool ShouldSuppress()
 ## Not Yet Implemented
 
 - Confirmation popup announcements (crashes with string access)
-- Timer system
 - Vehicle/Airship navigation
 
 ---
