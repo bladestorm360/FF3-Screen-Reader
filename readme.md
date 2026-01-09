@@ -8,6 +8,7 @@ Adds NVDA output, pathfinding, sound queues and other accessibility aides to Fin
 Shop menus are reading the first highlighted item on both entry and exit.
 Secret passages, even when opened, do not show properly on the pathfinder. Can use wall bumps and estimation to find, usually near the opening mechanism.
 H in battle announces statistics for all characters, not active character.
+Pop-ups are not reading, usually context-sensative yes or no dialogues such as load game or learn spell. Yes or no options read but not the pop-up text.
 
 ## Install
 
@@ -35,3 +36,9 @@ G: Announce current Gil
 M: Announce current map.
 H: In battle, announce character hp, mp, status effects.
 I: In configuration  menu accessible from tab menu and jobs menu, read description of highlighted setting or job. In shop menus, reads description of highlighted item. In item menu with equipment highlighted, announces jobs that can equip.
+
+When on a character's status screen:
+
+up and down arrows read through statistics.
+Shift plus arrows: jumps between groups, character info, vitals, statistics, combat statistics, progression.
+control plus arrows: jump to beginning or end of statistics screen.
