@@ -75,102 +75,31 @@ namespace FFIII_ScreenReader.Patches
     {
         /// <summary>
         /// True when battle item menu is active and handling announcements.
+        /// Delegates to MenuStateRegistry for centralized state tracking.
         /// </summary>
-        public static bool IsActive { get; set; } = false;
-
-        // State machine offsets for BattleCommandSelectController
-        private const int OFFSET_STATE_MACHINE = 0x48;
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
-        private const int OFFSET_STATE_TAG = 0x10;
-
-        // BattleCommandSelectController.State values
-        private const int STATE_NORMAL = 1;  // Command menu active
-        private const int STATE_EXTRA = 2;   // Sub-command menu active
-
-        /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// Validates controller is active AND we're not back at command selection.
-        /// </summary>
-        public static bool ShouldSuppress()
+        public static bool IsActive
         {
-            if (!IsActive) return false;
-
-            try
-            {
-                // First check if battle item controller is still active
-                var itemController = UnityEngine.Object.FindObjectOfType<BattleItemInfomationController>();
-                if (itemController == null || !itemController.gameObject.activeInHierarchy)
-                {
-                    Reset();
-                    return false;
-                }
-
-                // Also check if command select controller is active and in command state
-                // If so, we've returned to command menu - clear item state
-                var cmdController = UnityEngine.Object.FindObjectOfType<BattleCommandSelectController>();
-                if (cmdController != null && cmdController.gameObject.activeInHierarchy)
-                {
-                    int state = GetCommandState(cmdController);
-                    if (state == STATE_NORMAL || state == STATE_EXTRA)
-                    {
-                        // Command menu is active, we're no longer in item selection
-                        Reset();
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-            catch
-            {
-                Reset();
-                return false;
-            }
+            get => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_ITEM);
+            set => MenuStateRegistry.SetActive(MenuStateRegistry.BATTLE_ITEM, value);
         }
 
         /// <summary>
-        /// Read current state from BattleCommandSelectController's state machine.
+        /// Returns true if generic cursor reading should be suppressed.
+        /// State is cleared by BattleResultPatches when battle ends.
         /// </summary>
-        private static int GetCommandState(BattleCommandSelectController controller)
-        {
-            try
-            {
-                IntPtr ptr = controller.Pointer;
-                if (ptr == IntPtr.Zero) return -1;
+        public static bool ShouldSuppress() => IsActive;
 
-                unsafe
-                {
-                    IntPtr smPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_STATE_MACHINE);
-                    if (smPtr == IntPtr.Zero) return -1;
-
-                    IntPtr currentPtr = *(IntPtr*)((byte*)smPtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
-                    if (currentPtr == IntPtr.Zero) return -1;
-
-                    return *(int*)((byte*)currentPtr.ToPointer() + OFFSET_STATE_TAG);
-                }
-            }
-            catch { return -1; }
-        }
-
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
+        private const string CONTEXT = "BattleItem.Select";
 
         public static bool ShouldAnnounce(string announcement)
         {
-            float currentTime = UnityEngine.Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.15f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
+            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT, announcement);
         }
 
         public static void Reset()
         {
             IsActive = false;
-            lastAnnouncement = "";
-            lastAnnouncementTime = 0f;
+            AnnouncementDeduplicator.Reset(CONTEXT);
         }
     }
 
@@ -325,35 +254,17 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                string name = data.Name;
-                if (string.IsNullOrEmpty(name))
-                    return null;
-
-                name = TextUtils.StripIconMarkup(name);
-                if (string.IsNullOrEmpty(name))
-                    return null;
-
-                string announcement = name;
-
-                // Try to get description
+                string description = null;
                 try
                 {
-                    string description = data.Description;
-                    if (!string.IsNullOrWhiteSpace(description))
-                    {
-                        description = TextUtils.StripIconMarkup(description);
-                        if (!string.IsNullOrWhiteSpace(description))
-                        {
-                            announcement += ": " + description;
-                        }
-                    }
+                    description = data.Description;
                 }
                 catch
                 {
-                    // Description not available, just use name
+                    // Description not available
                 }
 
-                return announcement;
+                return AnnouncementBuilder.FormatWithDescription(data.Name, description);
             }
             catch (Exception ex)
             {

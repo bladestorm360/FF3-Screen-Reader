@@ -4,6 +4,7 @@ using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
 using FFIII_ScreenReader.Core;
+using FFIII_ScreenReader.Utils;
 
 // Type aliases for FF3
 using BattleResultData = Il2CppLast.Data.BattleResultData;
@@ -27,8 +28,9 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     public static class BattleResultPatches
     {
+        private const string CONTEXT_DATA = "BattleResult.Data";
+
         // Track what we've announced to prevent duplicates
-        private static BattleResultData lastAnnouncedData = null;
         private static bool announcedPoints = false;
         private static bool announcedItems = false;
         private static HashSet<string> announcedLevelUps = new HashSet<string>();
@@ -38,9 +40,9 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void ResetTracking(BattleResultData data)
         {
-            if (data != lastAnnouncedData)
+            // ShouldAnnounce returns true if this is a different object (new battle result)
+            if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_DATA, data))
             {
-                lastAnnouncedData = data;
                 announcedPoints = false;
                 announcedItems = false;
                 announcedLevelUps.Clear();
@@ -57,6 +59,7 @@ namespace FFIII_ScreenReader.Patches
             BattleTargetPatches.SetTargetSelectionActive(false);
             BattleItemMenuState.Reset();
             BattleMagicMenuState.Reset();
+            BattlePausePatches.Reset();
             MelonLogger.Msg("[Battle Result] Cleared all battle menu flags");
         }
 
@@ -242,30 +245,7 @@ namespace FFIII_ScreenReader.Patches
                 if (ownedJob != null)
                 {
                     jobLevel = ownedJob.Level;
-                    int jobId = ownedJob.Id;
-
-                    // Look up the Job master data using MasterManager
-                    var masterManager = MasterManager.Instance;
-                    if (masterManager != null)
-                    {
-                        var jobList = masterManager.GetList<Job>();
-                        if (jobList != null && jobList.ContainsKey(jobId))
-                        {
-                            var job = jobList[jobId];
-                            if (job != null)
-                            {
-                                var messageManager = MessageManager.Instance;
-                                if (messageManager != null)
-                                {
-                                    string mesId = job.MesIdName;
-                                    if (!string.IsNullOrEmpty(mesId))
-                                    {
-                                        jobName = messageManager.GetMessage(mesId, false);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    jobName = LocalizationHelper.GetJobName(ownedJob.Id) ?? "";
                 }
             }
             catch (Exception ex)

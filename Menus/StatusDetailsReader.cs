@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
 using MelonLoader;
+using UnityEngine;
 using UnityEngine.UI;
 using Il2CppLast.Data.User;
+using Il2CppLast.UI.KeyInput;
+using Il2CppLast.Battle;
 using Il2CppSerial.FF3.UI.KeyInput;
+using Il2CppSerial.Template.UI.KeyInput;
 using FFIII_ScreenReader.Core;
 
 namespace FFIII_ScreenReader.Menus
@@ -61,7 +65,7 @@ namespace FFIII_ScreenReader.Menus
                     var param = currentCharacterData.Parameter;
                     if (param != null)
                     {
-                        parts.Add($"Level {param.BaseLevel}");
+                        parts.Add($"Level {param.ConfirmedLevel()}");
 
                         // HP
                         int currentHp = param.currentHP;
@@ -254,8 +258,8 @@ namespace FFIII_ScreenReader.Menus
     public static class StatusNavigationReader
     {
         private static List<StatusStatDefinition> statList = null;
-        // Group start indices: CharacterInfo=0, Vitals=5, Attributes=15, CombatStats=20
-        private static readonly int[] GroupStartIndices = new int[] { 0, 5, 15, 20 };
+        // Group start indices: CharacterInfo=0, Vitals=6, Attributes=16, CombatStats=21
+        private static readonly int[] GroupStartIndices = new int[] { 0, 6, 16, 21 };
 
         /// <summary>
         /// Initialize the stat list with all visible stats in UI order.
@@ -267,14 +271,15 @@ namespace FFIII_ScreenReader.Menus
 
             statList = new List<StatusStatDefinition>();
 
-            // Character Info Group (indices 0-4)
+            // Character Info Group (indices 0-5): includes Job Level with progression stats
             statList.Add(new StatusStatDefinition("Name", StatGroup.CharacterInfo, ReadName));
             statList.Add(new StatusStatDefinition("Job", StatGroup.CharacterInfo, ReadJobName));
             statList.Add(new StatusStatDefinition("Level", StatGroup.CharacterInfo, ReadCharacterLevel));
             statList.Add(new StatusStatDefinition("Experience", StatGroup.CharacterInfo, ReadExperience));
             statList.Add(new StatusStatDefinition("Next Level", StatGroup.CharacterInfo, ReadNextLevel));
+            statList.Add(new StatusStatDefinition("Job Level", StatGroup.CharacterInfo, ReadJobLevel));
 
-            // Vitals Group (indices 5-14): HP, 8 MP levels, Job Level
+            // Vitals Group (indices 6-15): HP and 8 MP levels
             statList.Add(new StatusStatDefinition("HP", StatGroup.Vitals, ReadHP));
             statList.Add(new StatusStatDefinition("LV1", StatGroup.Vitals, ReadMPLevel1));
             statList.Add(new StatusStatDefinition("LV2", StatGroup.Vitals, ReadMPLevel2));
@@ -284,16 +289,15 @@ namespace FFIII_ScreenReader.Menus
             statList.Add(new StatusStatDefinition("LV6", StatGroup.Vitals, ReadMPLevel6));
             statList.Add(new StatusStatDefinition("LV7", StatGroup.Vitals, ReadMPLevel7));
             statList.Add(new StatusStatDefinition("LV8", StatGroup.Vitals, ReadMPLevel8));
-            statList.Add(new StatusStatDefinition("Job Level", StatGroup.Vitals, ReadJobLevel));
 
-            // Attributes Group (indices 15-19)
+            // Attributes Group (indices 16-20)
             statList.Add(new StatusStatDefinition("Strength", StatGroup.Attributes, ReadStrength));
             statList.Add(new StatusStatDefinition("Agility", StatGroup.Attributes, ReadAgility));
             statList.Add(new StatusStatDefinition("Stamina", StatGroup.Attributes, ReadStamina));
             statList.Add(new StatusStatDefinition("Intellect", StatGroup.Attributes, ReadIntellect));
             statList.Add(new StatusStatDefinition("Spirit", StatGroup.Attributes, ReadSpirit));
 
-            // Combat Stats Group (indices 20-25)
+            // Combat Stats Group (indices 21-26)
             statList.Add(new StatusStatDefinition("Attack", StatGroup.CombatStats, ReadAttack));
             statList.Add(new StatusStatDefinition("Accuracy", StatGroup.CombatStats, ReadAccuracy));
             statList.Add(new StatusStatDefinition("Defense", StatGroup.CombatStats, ReadDefense));
@@ -518,7 +522,7 @@ namespace FFIII_ScreenReader.Menus
             try
             {
                 if (data?.Parameter == null) return "N/A";
-                return $"Level: {data.Parameter.BaseLevel}";
+                return $"Level: {data.Parameter.ConfirmedLevel()}";
             }
             catch (Exception ex)
             {
@@ -586,7 +590,7 @@ namespace FFIII_ScreenReader.Menus
                 {
                     current = currentCharges[level];
                 }
-                return $"LV{level}: {current}";
+                return $"MP LV{level}: {current}";
             }
             catch (Exception ex)
             {
@@ -610,17 +614,20 @@ namespace FFIII_ScreenReader.Menus
             {
                 if (data == null) return "N/A";
 
-                // Get job level from owned job data
-                var ownedJobList = data.OwnedJobDataList;
-                if (ownedJobList != null)
+                // Use BattleUtility.GetJobLevel - the game's own calculation method
+                int jobLevel = BattleUtility.GetJobLevel(data);
+                MelonLogger.Msg($"[Status Job Debug] BattleUtility.GetJobLevel returned: {jobLevel}");
+
+                if (jobLevel > 0)
                 {
-                    foreach (var jobData in ownedJobList)
-                    {
-                        if (jobData != null && jobData.Id == data.JobId)
-                        {
-                            return $"Job Level: {jobData.Level}";
-                        }
-                    }
+                    return $"Job Level: {jobLevel}";
+                }
+
+                // Fallback to data accessor
+                var ownedJob = data.OwnedJob;
+                if (ownedJob != null)
+                {
+                    return $"Job Level: {(ownedJob.Level > 0 ? ownedJob.Level : 1)}";
                 }
 
                 return "Job Level: N/A";
@@ -704,13 +711,87 @@ namespace FFIII_ScreenReader.Menus
         }
 
         // Combat stat readers
-        // Job IDs: Monk and BlackBelt always get 2 attacks (bare-hand counts even with weapon)
-        private const int JOB_MONK = 4;
-        private const int JOB_BLACKBELT = 10;
+        // Memory offsets for UI reading
+        private const int OFFSET_CONTENT_LIST = 0x48;        // StatusDetailsControllerBase.contentList
+        private const int OFFSET_PARAM_TYPE = 0x18;          // ParameterContentController.type
+        private const int OFFSET_PARAM_VIEW = 0x20;          // ParameterContentController.view
+        private const int OFFSET_MULTIPLIED_VALUE_TEXT = 0x28; // ParameterContentView.multipliedValueText
+        private const int PARAMETER_TYPE_ATTACK = 10;        // ParameterType.Attack
 
-        // Equipment slot types for hands only
-        private const int SLOT_RIGHT_HAND = 1;  // EquipSlotType.Slot1
-        private const int SLOT_LEFT_HAND = 2;   // EquipSlotType.Slot2
+        /// <summary>
+        /// Try to read attack count from the UI view.
+        /// Returns -1 if unable to read from UI.
+        /// </summary>
+        private static int TryReadAttackCountFromUI()
+        {
+            try
+            {
+                // Find all ParameterContentController objects in scene
+                var controllers = UnityEngine.Object.FindObjectsOfType<Il2CppLast.UI.KeyInput.ParameterContentController>();
+                if (controllers == null || controllers.Length == 0)
+                    return -1;
+
+                foreach (var controller in controllers)
+                {
+                    if (controller == null) continue;
+
+                    // Check if this is the Attack parameter (type == 10)
+                    IntPtr controllerPtr = controller.Pointer;
+                    if (controllerPtr == IntPtr.Zero) continue;
+
+                    int paramType;
+                    unsafe
+                    {
+                        paramType = *(int*)((byte*)controllerPtr + OFFSET_PARAM_TYPE);
+                    }
+
+                    if (paramType != PARAMETER_TYPE_ATTACK)
+                        continue;
+
+                    // Found Attack parameter - read the view at offset 0x20
+                    IntPtr viewPtr;
+                    unsafe
+                    {
+                        viewPtr = *(IntPtr*)((byte*)controllerPtr + OFFSET_PARAM_VIEW);
+                    }
+                    if (viewPtr == IntPtr.Zero)
+                        return -1;
+
+                    // Read multipliedValueText at offset 0x28
+                    IntPtr textPtr;
+                    unsafe
+                    {
+                        textPtr = *(IntPtr*)((byte*)viewPtr + OFFSET_MULTIPLIED_VALUE_TEXT);
+                    }
+                    if (textPtr == IntPtr.Zero)
+                        return -1;
+
+                    // Cast to Text component and read value
+                    var textComponent = new UnityEngine.UI.Text(textPtr);
+                    if (textComponent == null)
+                        return -1;
+
+                    string textValue = textComponent.text;
+                    if (string.IsNullOrEmpty(textValue))
+                        return -1;
+
+                    // Parse the attack count from the text
+                    if (int.TryParse(textValue.Trim(), out int attackCount))
+                    {
+                        return attackCount;
+                    }
+
+                    return -1;
+                }
+
+                return -1;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error reading attack count from UI: {ex.Message}");
+                return -1;
+            }
+        }
 
         private static string ReadAttack(OwnedCharacterData data)
         {
@@ -718,46 +799,19 @@ namespace FFIII_ScreenReader.Menus
             {
                 if (data?.Parameter == null) return "N/A";
 
-                int jobId = data.JobId;
-                int attackCount;
-
-                // Monk/BlackBelt always get 2 attacks (each hand attacks whether weapon or bare)
-                if (jobId == JOB_MONK || jobId == JOB_BLACKBELT)
-                {
-                    attackCount = 2;
-                }
-                else
-                {
-                    // Other jobs: need 2 real weapons in hand slots for 2 attacks, otherwise 1
-                    int weaponCount = 0;
-                    var equipmentData = data.EquipmentData;
-                    if (equipmentData != null)
-                    {
-                        foreach (var kvp in equipmentData)
-                        {
-                            // Only count weapons in hand slots (Slot1=right hand, Slot2=left hand)
-                            int slotType = (int)kvp.Key;
-                            if (slotType != SLOT_RIGHT_HAND && slotType != SLOT_LEFT_HAND)
-                                continue;
-
-                            var item = kvp.Value;
-                            if (item?.Weapon != null)
-                            {
-                                // Check item name to filter out "Empty" pseudo-weapons (bare hand slots)
-                                // The game uses an "Empty" item with Weapon property set for bare hands
-                                string itemName = item.Name ?? "";
-                                if (!string.IsNullOrEmpty(itemName) && !itemName.Contains("Empty"))
-                                {
-                                    weaponCount++;
-                                }
-                            }
-                        }
-                    }
-
-                    attackCount = (weaponCount >= 2) ? 2 : 1;
-                }
-
                 int attackPower = data.Parameter.ConfirmedAttack();
+
+                // Try to read attack count from UI first
+                int attackCount = TryReadAttackCountFromUI();
+
+                // Fallback to simple calculation if UI read fails
+                if (attackCount <= 0)
+                {
+                    // Simple fallback: 1 attack (most common case)
+                    // The accurate count requires weapon skill levels which we can't easily access
+                    attackCount = 1;
+                }
+
                 return $"Attack: {attackCount} x {attackPower}";
             }
             catch (Exception ex)

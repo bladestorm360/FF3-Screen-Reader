@@ -77,102 +77,31 @@ namespace FFIII_ScreenReader.Patches
     {
         /// <summary>
         /// True when battle magic menu is active and handling announcements.
+        /// Delegates to MenuStateRegistry for centralized state tracking.
         /// </summary>
-        public static bool IsActive { get; set; } = false;
-
-        // State machine offsets for BattleCommandSelectController
-        private const int OFFSET_STATE_MACHINE = 0x48;
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
-        private const int OFFSET_STATE_TAG = 0x10;
-
-        // BattleCommandSelectController.State values
-        private const int STATE_NORMAL = 1;  // Command menu active
-        private const int STATE_EXTRA = 2;   // Sub-command menu active
-
-        /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// Validates controller is active AND we're not back at command selection.
-        /// </summary>
-        public static bool ShouldSuppress()
+        public static bool IsActive
         {
-            if (!IsActive) return false;
-
-            try
-            {
-                // First check if battle magic controller is still active
-                var magicController = UnityEngine.Object.FindObjectOfType<BattleFrequencyAbilityInfomationController>();
-                if (magicController == null || !magicController.gameObject.activeInHierarchy)
-                {
-                    Reset();
-                    return false;
-                }
-
-                // Also check if command select controller is active and in command state
-                // If so, we've returned to command menu - clear magic state
-                var cmdController = UnityEngine.Object.FindObjectOfType<BattleCommandSelectController>();
-                if (cmdController != null && cmdController.gameObject.activeInHierarchy)
-                {
-                    int state = GetCommandState(cmdController);
-                    if (state == STATE_NORMAL || state == STATE_EXTRA)
-                    {
-                        // Command menu is active, we're no longer in magic selection
-                        Reset();
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-            catch
-            {
-                Reset();
-                return false;
-            }
+            get => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_MAGIC);
+            set => MenuStateRegistry.SetActive(MenuStateRegistry.BATTLE_MAGIC, value);
         }
 
         /// <summary>
-        /// Read current state from BattleCommandSelectController's state machine.
+        /// Returns true if generic cursor reading should be suppressed.
+        /// State is cleared by BattleResultPatches when battle ends.
         /// </summary>
-        private static int GetCommandState(BattleCommandSelectController controller)
-        {
-            try
-            {
-                IntPtr ptr = controller.Pointer;
-                if (ptr == IntPtr.Zero) return -1;
+        public static bool ShouldSuppress() => IsActive;
 
-                unsafe
-                {
-                    IntPtr smPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_STATE_MACHINE);
-                    if (smPtr == IntPtr.Zero) return -1;
-
-                    IntPtr currentPtr = *(IntPtr*)((byte*)smPtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
-                    if (currentPtr == IntPtr.Zero) return -1;
-
-                    return *(int*)((byte*)currentPtr.ToPointer() + OFFSET_STATE_TAG);
-                }
-            }
-            catch { return -1; }
-        }
-
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
+        private const string CONTEXT = "BattleMagic.Select";
 
         public static bool ShouldAnnounce(string announcement)
         {
-            float currentTime = UnityEngine.Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.15f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
+            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT, announcement);
         }
 
         public static void Reset()
         {
             IsActive = false;
-            lastAnnouncement = "";
-            lastAnnouncementTime = 0f;
+            AnnouncementDeduplicator.Reset(CONTEXT);
             CurrentPlayer = null;
         }
 
@@ -265,28 +194,14 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// Format ability data into announcement string.
-        /// Format: "Spell Name: X/Y charges. Description"
+        /// Format: "Spell Name: MP: X/Y. Description"
         /// </summary>
         private static string FormatAbilityAnnouncement(OwnedAbility ability)
         {
             try
             {
                 // Get spell name
-                string name = null;
-                string mesIdName = ability.MesIdName;
-                if (!string.IsNullOrEmpty(mesIdName))
-                {
-                    var messageManager = MessageManager.Instance;
-                    if (messageManager != null)
-                    {
-                        name = messageManager.GetMessage(mesIdName, false);
-                    }
-                }
-
-                if (string.IsNullOrEmpty(name))
-                    return null;
-
-                name = TextUtils.StripIconMarkup(name);
+                string name = LocalizationHelper.GetText(ability.MesIdName);
                 if (string.IsNullOrEmpty(name))
                     return null;
 
@@ -304,7 +219,7 @@ namespace FFIII_ScreenReader.Patches
                             var charges = GetChargesForLevel(spellLevel);
                             if (charges.max > 0)
                             {
-                                announcement += $": {charges.current}/{charges.max} charges";
+                                announcement += $": MP: {charges.current}/{charges.max}";
                             }
                         }
                     }
@@ -314,23 +229,8 @@ namespace FFIII_ScreenReader.Patches
                 // Try to get description
                 try
                 {
-                    string mesIdDesc = ability.MesIdDescription;
-                    if (!string.IsNullOrEmpty(mesIdDesc))
-                    {
-                        var messageManager = MessageManager.Instance;
-                        if (messageManager != null)
-                        {
-                            string description = messageManager.GetMessage(mesIdDesc, false);
-                            if (!string.IsNullOrWhiteSpace(description))
-                            {
-                                description = TextUtils.StripIconMarkup(description);
-                                if (!string.IsNullOrWhiteSpace(description))
-                                {
-                                    announcement += ". " + description;
-                                }
-                            }
-                        }
-                    }
+                    string description = LocalizationHelper.GetText(ability.MesIdDescription, stripMarkup: false);
+                    announcement = AnnouncementBuilder.AppendDescription(announcement, description);
                 }
                 catch { }
 

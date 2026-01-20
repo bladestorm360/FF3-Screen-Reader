@@ -142,6 +142,9 @@ namespace FFIII_ScreenReader.Field
                 // Combine area name and map title
                 if (!string.IsNullOrEmpty(areaName) && !string.IsNullOrEmpty(mapTitle))
                 {
+                    // Skip redundant mapTitle if it equals areaName (e.g., vehicle interiors)
+                    if (mapTitle == areaName)
+                        return areaName;
                     return $"{areaName} {mapTitle}";
                 }
                 else if (!string.IsNullOrEmpty(areaName))

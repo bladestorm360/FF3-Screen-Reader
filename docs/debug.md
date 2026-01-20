@@ -1,43 +1,55 @@
-# FF3 Screen Reader - Debug Log
+# FF3 Screen Reader - Architecture & Reference
 
-## Summary
+## Critical Constraints
 
-Porting screen reader accessibility features to FF3 (Final Fantasy III Pixel Remaster).
-Primary reference: `ff5-screen-reader` (FF5 shares more similarities with FF3 than FFVI_MOD).
+### Harmony Patching (FF3-Specific)
+| Approach | Result |
+|----------|--------|
+| `[HarmonyPatch]` attributes | Crashes on startup |
+| Manual Harmony patches | Works |
+| Methods with string params | Crashes (IL2CPP marshaling) |
 
-**Current Phase:** Polish & Bug Fixes - All core features verified working
+**Solution:** Use manual `HarmonyLib.Harmony` patching only. Patch methods WITHOUT string parameters. Read data from instance fields in postfixes using `object __instance` cast to IL2CPP type.
 
-## CRITICAL: FF3 Harmony Patching Constraints
-
-| Approach | FF4/FF5/FF6 | FF3 |
-|----------|-------------|-----|
-| `[HarmonyPatch]` attributes | Works | Crashes on startup |
-| Manual Harmony patches | Works | Works (with caveats) |
-| Methods with string params | Works | Crashes even with manual patches |
-
-**Root Cause:** Methods with string parameters cause IL2CPP marshaling crashes in FF3.
-
-**Solution:**
-1. Use manual `HarmonyLib.Harmony` patching (not attributes)
-2. Only patch methods WITHOUT string parameters
-3. Read data from instance fields/properties in postfixes
-4. Use `object __instance` and cast to IL2CPP type
-
-**Safe:** `SetFocus(bool)`, `SetCursor(int)`, `SelectContent(...)`, `SetContent(List<BaseContent>)`
-**Crashes:** `SetMessage(string)`, `SetSpeker(string)`
-
-## CRITICAL: IL2CPP Reflection Rules
-
-**NEVER use .NET reflection on IL2CPP types.** Always use:
+### IL2CPP Rules
 ```csharp
 // WRONG - .NET reflection doesn't work
-var prop = gotoMapEvent.GetType().GetProperty("Property");
-var obj = prop.GetValue(gotoMapEvent);  // Always null!
+var prop = obj.GetType().GetProperty("Prop");
+var value = prop.GetValue(obj);  // Always null!
 
 // CORRECT - Direct IL2CPP access
-var fieldEntity = gotoMapEvent.TryCast<FieldEntity>();
-PropertyEntity property = fieldEntity.Property;  // Works!
+var cast = obj.TryCast<TargetType>();
+var value = cast.Property;  // Works
 ```
+
+- Use `TryCast<T>()` for type conversions
+- **ALWAYS** use `AccessTools.Method()` for patching methods (not `Type.GetMethod()`) - standard reflection fails on private IL2CPP methods
+- Read fields via pointer offsets when properties don't work
+
+---
+
+## Utility Classes
+
+Use the appropriate utility for each scenario to avoid code duplication:
+
+| Class | Purpose | When to Use |
+|-------|---------|-------------|
+| `AnnouncementDeduplicator` | Exact-match deduplication | Menu items, battle commands, any case where the exact same text shouldn't repeat |
+| `LocationMessageTracker` | Containment-based deduplication | Map transitions only - checks if "Altar Cave" is in "Entering Altar Cave" |
+| `TextUtils` | Text manipulation | Stripping icon markup, formatting text |
+| `MoveStateHelper` | Vehicle/movement state | Tracking on-foot vs ship/airship/chocobo state |
+| `GameObjectCache` | Component caching | Avoiding expensive FindObjectOfType calls |
+| `CoroutineManager` | Managed coroutines | Frame-delayed operations with cleanup |
+
+### Deduplication Guidelines
+
+1. **Exact-match (same text twice)** → Use `AnnouncementDeduplicator.ShouldAnnounce(context, text)`
+2. **Map transition ("Entering X" followed by "X")** → Use `LocationMessageTracker`
+3. **Cross-type deduplication** → Use local `lastX` variable (e.g., `lastScrollMessage` in ScrollMessagePatches dedupes across fade/line fade/scroll)
+
+**Never add new `lastAnnounced*` variables** - use `AnnouncementDeduplicator` with a unique context key instead.
+
+---
 
 ## Key Namespaces
 
@@ -45,75 +57,102 @@ PropertyEntity property = fieldEntity.Property;  // Works!
 |-----------|---------|
 | `Last.Message` | Dialogue/message windows |
 | `Last.UI.KeyInput` | Keyboard/gamepad UI controllers |
-| `Last.UI.Touch` | Touch UI controllers |
-| `Last.Entity` | Game data entities |
-| `Last.Battle` | Battle system |
 | `Last.Data.User` | Player/character data |
 | `Last.Data.Master` | Master data (items, jobs, etc.) |
+| `Last.Battle` | Battle utilities (includes `BattleUtility.GetJobLevel()`) |
 | `Serial.FF3.UI.KeyInput` | FF3-specific UI (jobs, abilities) |
 
-## Architecture: GenericCursor + Specific Patches
+---
 
-### Default Behavior
-- `CursorNavigation_Postfix` handles ALL cursor navigation
-- `MenuTextDiscovery` reads menu text via multiple strategies
-- Built-in readers: `SaveSlotReader`, `CharacterSelectionReader`, `ShopCommandReader`
+## Memory Offsets
 
-### When to Add Specific Patches
-Only when MenuTextDiscovery cannot get required data:
-- Item/Equipment lists (needs description/stats)
-- Shop items (needs price), Job (needs job level)
-- Battle items, Shop quantity, Config settings
-
-### Suppression Pattern (CRITICAL)
-Each state class needs `ShouldSuppress()` that validates controller is active:
-
-```csharp
-public static bool ShouldSuppress()
-{
-    if (!IsActive) return false;  // Fast path
-    try {
-        var controller = FindObjectOfType<ControllerType>();
-        if (controller == null || !controller.gameObject.activeInHierarchy) {
-            IsActive = false;  // Auto-reset stuck flag
-            return false;
-        }
-        return true;
-    } catch { IsActive = false; return false; }
-}
+### State Machines
+```
+ItemWindowController.stateMachine: 0x70
+EquipmentWindowController.stateMachine: 0x60
+BattleCommandSelectController.stateMachine: 0x48
+AbilityWindowController.stateMachine: 0x88
+ShopController.stateMachine: 0x98
+StateMachine<T>.current: 0x10
+State<T>.Tag: 0x10
 ```
 
-### State Machine Validation (BEST PRACTICE)
-For menus with sub-menus, validate state machine instead of relying on flags alone:
-
-```csharp
-public static bool ShouldSuppress()
-{
-    if (!IsActive) return false;
-    var windowController = FindObjectOfType<WindowController>();
-    int currentState = GetCurrentState(windowController);
-
-    if (currentState == STATE_COMMAND) { ClearState(); return false; }
-    if (currentState == STATE_LIST) return true;
-
-    ClearState();
-    return false;
-}
+### Shop
+```
+ShopTradeWindowController.view: 0x30
+ShopTradeWindowController.selectedCount: 0x3C
+ShopTradeWindowView.totarlPriceText: 0x70
 ```
 
-**Why State Machine > Event-Based:** IL2CPP postfixes sometimes don't fire. State machine validates actual game state at point of use.
+### Magic
+```
+AbilityContentListController.dataList: 0x38
+AbilityContentListController.targetCharacterData: 0x98
+```
+
+### Popups
+| Type | commandList Offset |
+|------|-------------------|
+| CommonPopup | 0x70 |
+| JobChangePopup | 0x50 |
+| ChangeMagicStonePopup | 0x58 |
+| GameOverSelectPopup | 0x40 |
+| SavePopup (message) | 0x40 |
+| SavePopup (commandList) | 0x60 |
+
+### Save/Load Controllers
+| Controller | savePopup/commonPopup Offset |
+|------------|------------------------------|
+| LoadGameWindowController | 0x58 |
+| LoadWindowController | 0x28 |
+| SaveWindowController | 0x28 (commonPopup: 0x38) |
+
+---
+
+## State Machine Values
+
+### ItemWindowController.State
+```
+None=0, CommandSelect=1, UseSelect=2, ImportantSelect=3
+OrganizeSelect=4, TargetSelect=5, InterChangeSelect=6, Equipment=7
+```
+
+### EquipmentWindowController.State
+```
+None=0, Command=1, Info=2, Select=3
+```
+
+### BattleCommandSelectController.State
+```
+None=0, Normal=1, Extra=2, Manipulate=3
+```
+
+### AbilityWindowController.State
+```
+Command=7
+```
+
+### ShopController.State
+```
+None=0, SelectCommand=1, SelectProduct=2, SelectSellItem=3
+SelectAbilityTarget=4, SelectEquipment=5, ConfirmationBuyItem=6
+```
+
+---
 
 ## Key Types Reference
 
 ### Menus
-| Menu | Controller | Key Method |
-|------|------------|------------|
+| Menu | Controller | Patch Method |
+|------|------------|--------------|
 | Items | `ItemListController` | `SelectContent(...)` |
 | Equipment | `EquipContentListController` | `SelectContent(...)` |
 | Job | `JobChangeWindowController` | `UpdateJobInfo(...)` |
 | Shop Items | `ShopListItemContentController` | `SetFocus(bool)` |
 | Shop Quantity | `ShopTradeWindowController` | `UpdateCotroller(bool)` |
 | Magic | `AbilityContentListController` | `SetCursor`, state machine |
+| Magic Target | `AbilityUseContentListController` | `SetCursor(Cursor)` |
+| Item Target | `ItemUseController` | `SelectContent(...)` |
 
 ### Battle
 | Feature | Controller | Method |
@@ -128,276 +167,445 @@ public static bool ShouldSuppress()
 ```csharp
 OwnedCharacterData.Parameter.currentHP
 OwnedCharacterData.Parameter.ConfirmedMaxHp()
+OwnedCharacterData.Parameter.ConfirmedLevel()  // NOT BaseLevel
 OwnedCharacterData.Parameter.CurrentConditionList
 OwnedCharacterData.OwnedJobDataList
-
-// Row detection
-UserDataManager.Instance().GetCorpsListClone()
-corps.Id == CorpsId.Front  // Front=1, Back=2
+BattleUtility.GetJobLevel(OwnedCharacterData)  // For job level calculation
 ```
 
 ### FF3 Spell System
-FF3 uses spell charges per level (not MP):
 ```csharp
 int spellLevel = ability.Ability.AbilityLv;  // 1-8
 int current = param.CurrentMpCountList[spellLevel];
 int max = param.ConfirmedMaxMpCount((AbilityLevelType)spellLevel);
 ```
 
-## Memory Offsets
+---
 
-```
-// State Machines
-KeyInput.ItemWindowController.stateMachine: 0x70
-KeyInput.EquipmentWindowController.stateMachine: 0x60
-KeyInput.BattleCommandSelectController.stateMachine: 0x48
-AbilityWindowController.stateMachine: 0x88
-ShopController.stateMachine: 0x98
-StateMachine<T>.current: 0x10
-State<T>.Tag: 0x10
+## Architecture Patterns
 
-// Shop
-ShopTradeWindowController.view: 0x30
-ShopTradeWindowController.selectedCount: 0x3C
-ShopTradeWindowView.totarlPriceText: 0x70
-
-// Magic
-AbilityContentListController.dataList: 0x38
-AbilityContentListController.targetCharacterData: 0x98
-```
-
-## State Machine Values
-
+### Suppression Pattern
+Each menu state class has `ShouldSuppress()` returning the flag. State clearing via `SetActive(bool)` transition patches:
 ```csharp
-// ItemWindowController
-STATE_COMMAND_SELECT = 1, STATE_USE_SELECT = 2, STATE_IMPORTANT_SELECT = 3
-STATE_ORGANIZE_SELECT = 4, STATE_TARGET_SELECT = 5
+public static bool ShouldSuppress() => IsActive;
 
-// EquipmentWindowController
-STATE_NONE = 0, STATE_COMMAND = 1, STATE_INFO = 2, STATE_SELECT = 3
-
-// BattleCommandSelectController
-STATE_NONE = 0, STATE_NORMAL = 1, STATE_EXTRA = 2, STATE_MANIPULATE = 3
-
-// AbilityWindowController
-STATE_COMMAND = 7
+public static void SetActive_Postfix(bool isActive) {
+    if (!isActive) MyMenuState.ClearState();
+}
 ```
 
-## Working Features
+Add `activeInHierarchy` validation when state might persist after menu closes.
 
-- [x] Menu cursor navigation (title, battle, main menu)
-- [x] Dialogue text and speaker reading
-- [x] Battle damage/result announcements
-- [x] Field entity navigation (NPCs, chests, exits, events)
-- [x] Pathfinding directions
-- [x] Map name announcements
-- [x] Item menu (list, commands, target selection, 'I' key job requirements)
-- [x] Equipment menu (command bar, slot/item selection)
-- [x] Job menu with job level
-- [x] Config menu
-- [x] Shop menu (commands, items with 'I' key stats, quantity)
-- [x] Battle item menu
-- [x] Magic menu spell list with charges
-- [x] Character row status (Front/Back Row)
-- [x] Save/Load slot reading
+### Popup Detection
+Patch base `Popup.Open()`, use `TryCast<T>()` for type detection (GetType().Name returns "Popup" in IL2CPP).
 
-## Not Yet Implemented
+### Battle State Clearing
+Battle menu flags cleared centrally via `BattleResultPatches.ClearAllBattleMenuFlags()` at victory screen. Submenu states validate `BattleCommandSelectController` state machine to detect return to command menu.
 
-- [ ] Confirmation popup announcements (crashes with string access)
+---
 
-## Known Game Code Typos
+## Working Solutions
 
-`SetSpeker`, `Deiscription`, `FieldTresureBox`, `totarlPriceText`, `UpdateCotroller`, `Genelate`, `Infomation`
+### Title Screen "Press Any Button"
+`SplashController.InitializeTitle()` stores text, `SystemIndicator.Hide()` speaks it when loading indicator hides.
 
-## Key Implementation Notes
+### Save/Load Popups
+Patch `SetPopupActive(bool)` on `LoadGameWindowController`, `LoadWindowController`, `SaveWindowController`. Enum parameters crash like strings.
+
+### Config Menu State
+Validate UI visibility via `activeInHierarchy` - title screen uses different controller than main menu.
+
+**Value Change Announcements:** Two patches handle config menu:
+- `SetFocus` - announces "Setting: Value" on up/down navigation (setting selection)
+- `SwitchArrowSelectTypeProcess` - announces just "Value" on left/right (value change)
+
+When left/right changes a value, `SetFocus` also fires (same setting re-focused). To prevent duplicate announcements, `SetFocus` tracks the last setting name and returns early if unchanged - letting `SwitchArrowSelectTypeProcess` handle value-only announcements. (Fixed 2026-01-19)
 
 ### Equipment Job Requirements ('I' Key)
-- Uses `UserDataManager.ReleasedJobs` for unlocked jobs only (no spoilers)
-- Flow: `ItemListContentData.ItemType` → `Weapon/Armor.EquipJobGroupId` → `JobGroup.Job{N}Accept` → `Job.MesIdName`
+`UserDataManager.ReleasedJobs` → `Weapon/Armor.EquipJobGroupId` → `JobGroup.Job{N}Accept` → `Job.MesIdName`
 
 ### Shop Content System
-- `ContentId` is NOT master data ID - it's a content system ID
-- `Content.TypeId` = ContentType (1=Item, 2=Weapon, 3=Armor)
-- `Content.TypeValue` = actual ID for master data lookup
+`Content.TypeId` = ContentType (1=Item, 2=Weapon, 3=Armor), `Content.TypeValue` = master data ID.
 
-### Battle State Suppression
-Battle menu flags are cleared centrally via `BattleResultPatches.ClearAllBattleMenuFlags()` when victory screen appears.
-
-State classes use state machine validation to detect return to command menu:
-- `BattleItemMenuState.ShouldSuppress()` checks `BattleCommandSelectController` state
-- `BattleMagicMenuState.ShouldSuppress()` checks `BattleCommandSelectController` state
-- If state is `STATE_NORMAL` or `STATE_EXTRA`, we're back at command menu - reset flag
+### Vehicle Transitions
+Patch `FieldPlayer.GetOn(int typeId, ...)` and `GetOff(int typeId, ...)`. Parameter is `MapConstants.TransportationType` enum.
 
 ### NPC Detection
 Use `TryCast<FieldNonPlayer>()` - NPCs don't contain "Chara" in type name.
 
----
-
-## Version History
-
-### 2026-01-09 (Part 11)
-- **Fix: EquipMenuState suppression when backing to main menu** - Was suppressing after leaving equip menu
-  - Root cause: `ShouldSuppress()` found controller but didn't check `activeInHierarchy`
-  - Controller exists in scene but isn't visible at main menu
-  - Fix: Added `activeInHierarchy` check before state machine validation
-  - File: `Patches/EquipMenuPatches.cs`
-- **Fix: Attack count (simplified)** - Previous weapon ID check wasn't working
-  - "Empty" pseudo-weapon has valid ID > 0, so weapon ID check failed
-  - Fix: Removed weapon ID check, now only checks item name for "Empty"
-  - File: `Menus/StatusDetailsReader.cs`
-
-### 2026-01-09 (Part 10)
-- **Debug: Attack count logging** - Added debug logs to identify equipment slot contents
-  - Revealed: `Slot 2: Empty, Weapon=True` - "Empty" item has Weapon property set
-  - File: `Menus/StatusDetailsReader.cs`
-- **Cleanup: Removed suppression debug logging** - Bug was fixed in Part 9
-  - File: `Core/FFIII_ScreenReaderMod.cs`
-
-### 2026-01-09 (Part 9)
-- **Fix: StatusMenuState suppression at game load** - Main menu not read after game load
-  - Root cause: `SelectContent_Postfix` set `IsActive = true` BEFORE validation checks
-  - During game load, `SelectContent` fires but menu isn't open → IsActive set, then early return
-  - Fix: Moved `StatusMenuState.IsActive = true` to AFTER all validation passes
-  - File: `Patches/StatusMenuPatches.cs` line 352
-
-### 2026-01-09 (Part 7)
-- **Fix: StatusMenuState suppression flag stuck** - Main menu cursor was being suppressed after leaving Status
-  - Root cause: `IsActive` set when entering character selection, only cleared when exiting details view
-  - If user backs out before entering details, flag stayed true forever
-  - Added state machine validation to `ShouldSuppress()`:
-    - Finds `StatusWindowController` and checks `activeInHierarchy`
-    - Reads state machine at offset 0x20, current state at 0x10, tag at 0x10
-    - If state is None (0) or controller gone, auto-resets `IsActive`
-  - File: `Patches/StatusMenuPatches.cs`
-- **Fix: Attack count calculation (again)** - Simplified based on user research
-  - Monk (JobId=4) and BlackBelt (JobId=10): Always 2 attacks (bare-hand counts even with weapon)
-  - Other jobs: 2 attacks only if 2 weapons equipped, otherwise 1 attack
-  - Weapon + shield = 1 attack, weapon + empty hand = 1 attack
-  - File: `Menus/StatusDetailsReader.cs`
-
-### 2026-01-09 (Part 6)
-- **Fix: Evasion stat reading 0** - Changed from wrong method to correct one
-  - Previous: `ConfirmedDefenseCount()` (number of defense attempts, not evasion rate)
-  - Now: `ConfirmedEvasionRate(false)` (actual evasion percentage)
-- **Fix: Magic Evasion stat reading 0** - Changed from wrong method to correct one
-  - Previous: `ConfirmedMagicDefenseCount()` (wrong stat)
-  - Now: `ConfirmedAbilityEvasionRate(false)` (actual magic evasion percentage)
-- File: `Menus/StatusDetailsReader.cs`
-
-### 2026-01-09 (Part 5)
-- **Fix: Character selection double-reading** - Status menu character selection was being read twice
-  - `StatusMenuPatches.SelectContent_Postfix` spoke the character
-  - `MenuTextDiscovery.WaitAndReadCursor` also spoke (no suppression in place)
-  - Added `StatusMenuState.ShouldSuppress()` method
-  - Added suppression check in `CursorNavigation_Postfix` at line ~893
-  - Files: `Patches/StatusMenuPatches.cs`, `Core/FFIII_ScreenReaderMod.cs`
-- **Fix: Attack count calculation** - Now uses `HasTwoSwordStyle` instead of `ConfirmedAccuracyCount()`
-  - `ConfirmedAccuracyCount()` is accuracy/hit chance, NOT attack count
-  - `HasTwoSwordStyle` property indicates dual-wielding (2 attacks) vs single weapon (1 attack)
-  - TODO: Investigate if Monks get bonus attacks when fighting bare-handed
-  - File: `Menus/StatusDetailsReader.cs`
-
-### 2026-01-09 (Part 4)
-- **Change: MP as navigable section** - Each spell level is now a separate navigable stat
-  - 8 entries: LV1, LV2, LV3, LV4, LV5, LV6, LV7, LV8
-  - Format: "LV1: 0", "LV2: 3", etc. (current charges only, matching visual)
-  - All characters show all 8 levels regardless of magic capability
-  - 26 total stats in 4 groups now
-- **Fix: Intellect stat** - Changed from `ConfirmedMagic()` to `ConfirmedIntelligence()`
-- **Fix: Attack count** - Changed to `1 + ConfirmedAccuracyCount()` (base 1 + bonus attacks)
-  - `ConfirmedAdditionalAttack()` only exists on EnemyCharacterParameter
-- **Group indices updated:** CharacterInfo=0, Vitals=5, Attributes=15, CombatStats=20
-
-### 2026-01-09 (Part 3)
-- **New: MP stat in Status Details** - Added spell charge display to status screen navigation
-  - Shows all 8 spell levels with current charges only (matching visual display)
-- **Change: Status navigation hotkeys** - Changed first/last stat navigation to match FF5
-  - Ctrl+Up: Jump to first stat (was Home)
-  - Ctrl+Down: Jump to last stat (was End)
-  - Home/End bindings removed
-- **Files modified:** `Menus/StatusDetailsReader.cs`, `Core/InputManager.cs`
-
-### 2026-01-09 (Part 2)
-- **New: MoveStateHelper** - Vehicle/movement state tracking and announcements
-  - Tracks player movement state (Walk, Ship, Chocobo, Airship, etc.)
-  - Announces state changes ("On ship", "On foot", etc.)
-  - Press V key to announce current movement mode
-  - File: `Utils/MoveStateHelper.cs`
-- **New: MovementSpeechPatches** - Patches `FieldPlayer.ChangeMoveState` for vehicle announcements
-  - Manual Harmony patching (FF3 requirement)
-  - Includes `MoveStateMonitor` coroutine for proactive state monitoring
-  - File: `Patches/MovementSpeechPatches.cs`
-- **New: VehicleLandingPatches** - "Can land" announcements for airship/ship
-  - Patches `MapUIManager.SwitchLandable(bool)`
-  - Announces when entering landable terrain (false → true transition)
-  - Only announces when in vehicle (not on foot)
-  - File: `Patches/VehicleLandingPatches.cs`
-- **New: StatusDetailsReader** - Full status screen stat navigation
-  - 18 stats organized in 4 groups: Character Info, Vitals, Attributes, Combat Stats
-  - Arrow key navigation (Up/Down), group jumping (Shift+Up/Down)
-  - Ctrl+Up/Down for top/bottom, R to repeat current stat
-  - Patches `StatusDetailsController.InitDisplay`/`ExitDisplay` via manual Harmony
-  - File: `Menus/StatusDetailsReader.cs`, `Patches/StatusMenuPatches.cs`
-- **Key types used:**
-  - `FieldPlayer.moveState` - movement state enum
-  - `FieldPlayer.ChangeMoveState()` - patched for announcements
-  - `MapUIManager.SwitchLandable()` - patched for landing detection
-  - `StatusDetailsController.InitDisplay/ExitDisplay` - patched for stat navigation
-  - `OwnedJobData.Id` (not JobId) - for job exp lookup
-  - `UserDataManager.GetMemberData(int index)` - for character data fallback
-
-### 2026-01-09
-- **Fix: Pathfinding focus jumping** - Entity focus no longer jumps to closer destinations when player moves
-  - **Root cause**: `ApplyFilter()` re-sorted entities by distance every 5 seconds, `currentIndex` pointed to different entity
-  - **Solution**: Track selected entity by identifier (position + category + name) instead of just index
-  - After re-sorting, `FindEntityByIdentifier()` locates the previously selected entity and restores `currentIndex`
-  - New methods: `SaveSelectedEntityIdentifier()`, `ClearSelectedEntityIdentifier()`, `FindEntityByIdentifier()`
-  - Affects `EntityScanner.cs` - `NextEntity()`, `PreviousEntity()`, `ApplyFilter()`, `CurrentIndex` setter
-- **Fix: Teleportation "Not on field map"** - Ctrl+arrow teleportation now works correctly
-  - **Root cause**: `GetFieldPlayer()` used .NET reflection which doesn't work on IL2CPP types (always returns null)
-  - **Solution**: Use `FieldPlayerController.fieldPlayer` directly (same pattern as pathfinding and `GetPlayerPosition()`)
-  - Affects `FFIII_ScreenReaderMod.cs` - `GetFieldPlayer()` method
-- **Fix: Teleportation now teleports to selected entity** - Ctrl+arrow teleports player relative to selected entity
-  - **Previous behavior**: Moved player by 16 units in arrow direction from current position
-  - **New behavior**: Teleports player to arrow direction side of the currently selected entity
-  - Ctrl+Up = north of entity, Ctrl+Down = south, Ctrl+Left = west, Ctrl+Right = east
-  - Announces "Teleported to [direction] of [entity name]"
-  - Says "No entity selected" if no entity is focused
-  - Affects `FFIII_ScreenReaderMod.cs` - `TeleportInDirection()` method
-- **Fix: Magic menu spell navigation** - Both battle and menu magic now correctly announce focused spell
-  - **Root cause**: Previous code iterated looking for `FocusCursorParent.activeInHierarchy` which always found first spell
-  - **Battle Magic**: Now uses `contents` list parameter directly (passed to SelectContent method), uses `index` to get correct spell
-  - **Menu Magic (Use/Remove)**: Now uses `targetCursor.Index` to get correct spell from `contentList` (offset 0x60)
-  - Empty slots now announce "Empty" properly
-- **New: Learn menu support** - Magic menu Learn mode now announces spell tomes
-  - Detects Learn mode via `IsItemListCheck` flag (offset 0x29)
-  - Reads from `abilityItemList` (offset 0x40) containing `OwnedItemData` spell tomes
-  - Format: "Spell Tome Name: Description" (matches item menu pattern)
-  - Uses `OwnedItemData.Name` and `OwnedItemData.Deiscription` (game typo) properties
-- **Fix: Battle menu double-reading** - Battle commands no longer read by both BattleCommandPatches and MenuTextDiscovery
-  - Simplified `BattleCommandState.ShouldSuppress()` to just return `IsActive` flag
-  - Flag cleared centrally via `BattleResultPatches.ClearAllBattleMenuFlags()` at victory screen
-- **Fix: Battle submenu flags not resetting** - Item/Magic menu flags now properly reset when returning to command menu
-  - Added state machine validation to `BattleItemMenuState.ShouldSuppress()`
-  - Checks `BattleCommandSelectController` state to detect return to command selection
-- **New: Battle Magic menu support** - Added `BattleMagicPatches.cs` with `BattleMagicMenuState`
-  - Patches `BattleFrequencyAbilityInfomationController.SelectContent`
-  - Announces spell name, charges, and description
-  - Same state machine validation pattern as BattleItemMenuState
-
-### 2026-01-08
-- **Fix: Dialogue speaker order** - Speaker name now announced before dialogue text
-  - Previously: `SetContent_Postfix` spoke dialogue immediately, then `Play_Postfix` spoke speaker
-  - Now: `SetContent_Postfix` stores text in `pendingDialogueText`, `Play_Postfix` speaks speaker first then pending dialogue
-  - Affects `ManualPatches` class in `FFIII_ScreenReaderMod.cs`
+### Map Transition Announcements
+`CheckMapTransition()` in main mod polls `UserDataManager.CurrentMapId` each frame. When map ID changes, announces "Entering {mapName}" using `MapNameResolver.GetCurrentMapName()`. `LocationMessageTracker` prevents duplicate announcements by checking if the subsequent `FadeMessageManager.Play()` location text (e.g., "Altar Cave") is contained in the transition message (e.g., "Entering Altar Cave"). Also suppresses location-like text (1-4 words, no punctuation) when opening menus.
 
 ---
 
-## Build Command
+## Known Game Code Typos
 
-```cmd
-cd /d D:\Games\Dev\Unity\FFPR\ff3\ff3-screen-reader
-build_and_deploy.bat
+`SetSpeker`, `Deiscription`, `FieldTresureBox`, `totarlPriceText`, `UpdateCotroller`, `Genelate`, `Infomation`, `SetCommadnMessage`
+
+---
+
+## RESOLVED: Battle System Messages (2026-01-19)
+
+### Problem
+After PerformanceIssues.md Phase 1 & 2 restructuring, battle system messages stopped being announced:
+- "The party escaped!"
+- "Back Attack!"
+- "Preemptive Attack!"
+- "Ambush!"
+
+### Solution
+**Hook:** `BattleUIManager.SetCommadnMessage(string messageId)` (note game code typo)
+
+**Implementation:** `Patches/BattleStartPatches.cs:BattleUIManager_SetCommadnMessage_Postfix`
+```csharp
+var messageManager = MessageManager.Instance;
+string message = messageManager.GetMessage(messageId);
+string clean = TextUtils.StripIconMarkup(message);
+if (AnnouncementDeduplicator.ShouldAnnounce("BattleSystemMessage", clean))
+    FFIII_ScreenReaderMod.SpeakText(clean, interrupt: false);
 ```
 
-Check `build_log.txt` for errors if build fails.
+**Key Message IDs:**
+| Message ID | Text |
+|------------|------|
+| `MSG_SYSTEM_020` | "The party escaped!" |
+| `MSG_SYSTEM_188` | Individual flee messages ("X flees") |
+
+**Why other hooks didn't work:** Battle system messages use `SetCommadnMessage`, not `FadeMessageManager`, `SystemMessageWindow*`, or other message display systems. The compile-time `typeof()` approach works correctly - the issue was that only debug logging existed, not actual announcement logic.
+
+**Runtime vs Compile-time:** No difference for this case. Both `typeof(BattleUIManager)` and runtime `FindType()` successfully patch the method. The patch runs only when battle messages display (event-driven, not per-frame).
+
+---
+
+## RESOLVED: Vehicle Interior Map Name Duplication (2026-01-19)
+
+### Problem
+Vehicle interior maps (e.g., The Invincible airship) announced doubled names: "Entering The Invincible The Invincible" on map transition and "The Invincible The Invincible" on M key press.
+
+### Cause
+`MapNameResolver.TryResolveMapNameById()` concatenates `areaName` + `mapTitle`. For vehicle interiors, both resolve to the same localized string (e.g., "The Invincible"), causing duplication.
+
+### Solution
+**File:** `Field/MapNameResolver.cs:143-149`
+
+Added check to skip redundant mapTitle when it equals areaName:
+```csharp
+if (!string.IsNullOrEmpty(areaName) && !string.IsNullOrEmpty(mapTitle))
+{
+    // Skip redundant mapTitle if it equals areaName (e.g., vehicle interiors)
+    if (mapTitle == areaName)
+        return areaName;
+    return $"{areaName} {mapTitle}";
+}
+```
+
+**Note:** Initial suspicion was MovementSpeechPatches having duplicate handlers, but the root cause was in map name resolution - a single handler calling a method that returned doubled text.
+
+### Additional Fix: Duplicate Location Announcements
+Vehicle interiors also triggered `SystemMessageController.SetMessage(MSG_LOCATION_*)` and `SystemMessageManager.SetMessage(MSG_LOCATION_*)` which announced the location name separately from `CheckMapTransition`'s "Entering X" announcement.
+
+**Solution:** In `BattleMessagePatches.cs`, added check to skip `MSG_LOCATION_*` messages in both:
+- `SystemMessageController_SetMessage_Postfix`
+- `SystemMessageManager_SetMessage_Postfix`
+
+Uses `LocationMessageTracker.ShouldAnnounceFadeMessage()` - the same tracker already used for `FadeMessageManager`.
+
+---
+
+## RESOLVED: New Game Screen Navigation (2026-01-19)
+
+### Problem
+After performance refactor to remove per-frame polling, new game character naming screen stopped reading:
+- Character slot navigation (arrow keys between slots 1-4)
+- Name cycling (up/down through suggested names)
+
+### Cause
+Code patched **Touch** controller versions, but keyboard navigation uses **KeyInput** controllers with different methods:
+
+| Controller | Touch Method (patched) | KeyInput Method (needed) |
+|------------|----------------------|----------------------|
+| CharacterContentListController | `SetFocusContent(int)` | `SetTargetSelectContent(int)` |
+| NameContentListController | `SetForcusIndex(int)` | `SetFocus(int)` |
+
+The Touch methods were successfully patched but never called during keyboard navigation.
+
+### Solution
+**File:** `Patches/NewGameNamingPatches.cs`
+
+1. Changed imports to KeyInput versions:
+```csharp
+using CharacterContentListController = Il2CppLast.UI.KeyInput.CharacterContentListController;
+using NameContentListController = Il2CppLast.UI.KeyInput.NameContentListController;
+```
+
+2. Patched correct event-driven methods (both private, use AccessTools):
+```csharp
+// Character slot navigation
+AccessTools.Method(charaListType, "SetTargetSelectContent", new[] { typeof(int) });
+
+// Name cycling
+AccessTools.Method(nameListType, "SetFocus", new[] { typeof(int) });
+```
+
+### Key Insight
+When patching IL2CPP games with Touch/KeyInput controller variants:
+- Touch controllers often have public methods for touch events
+- KeyInput controllers have different (often private) methods for keyboard events
+- Patches may succeed on Touch versions but never fire if game uses KeyInput for navigation
+
+---
+
+## RESOLVED: New Game Suggested Name Announcement (2026-01-19)
+
+### Problem
+When pressing the suggested name button on a character slot, the randomly assigned name was not announced.
+
+### Cause
+Initial attempts to patch `CharacterContentController.SetData` failed - the method wasn't being called when the name button was pressed. The name is set via `SetCharacterName(string, bool)` which has a string parameter (crashes in IL2CPP).
+
+### Solution
+**File:** `Patches/NewGameNamingPatches.cs`
+
+Hook `CharacterContentListController.UpdateView(List<NewGameSelectData>)` which fires when the view refreshes after name assignment:
+```csharp
+// Track last known name per slot
+private static string[] lastSlotNames = new string[4];
+private static int lastTargetIndex = -1;
+
+// In UpdateView_Postfix: detect name changes
+string currentName = GetCharacterSlotNameOnly(__instance, currentSlot);
+if (!string.IsNullOrEmpty(currentName) && currentName != lastSlotNames[currentSlot])
+{
+    lastSlotNames[currentSlot] = currentName;
+    FFIII_ScreenReaderMod.SpeakText(currentName);
+}
+```
+
+**Key:** Use `lastTargetIndex` set by `SetTargetSelectContent_Postfix` to know current slot - reading from instance memory offset was unreliable.
+
+---
+
+## RESOLVED: New Game Start Confirmation Popup (2026-01-19)
+
+### Problem
+"Start the game with these names?" popup didn't read when selecting Done with all characters named. Other popups (Return to title, Must name all characters) worked fine.
+
+### Cause
+`NewGamePopup` extends `MonoBehaviour`, NOT `Popup`. The base `Popup.Open()` patch doesn't catch it.
+
+### Solution
+**File:** `Patches/NewGameNamingPatches.cs`
+
+Patch `NewGameWindowController.InitStartPopup()` which fires when entering the StartPopup state:
+```csharp
+// CRITICAL: Use correct namespace - Serial.FF3.UI.KeyInput, NOT Last.UI.KeyInput
+using NewGamePopup = Il2CppSerial.FF3.UI.KeyInput.NewGamePopup;
+
+public static void InitStartPopup_Postfix(object __instance)
+{
+    var controller = ((Il2CppSystem.Object)__instance).TryCast<NewGameWindowController>();
+    var popupProp = AccessTools.Property(typeof(NewGameWindowController), "popup");
+    var popupObj = popupProp.GetValue(controller);
+    var popup = ((Il2CppSystem.Object)popupObj).TryCast<NewGamePopup>();
+    string message = popup.Message;
+    FFIII_ScreenReaderMod.SpeakText(message);
+}
+```
+
+### Key Insight
+When TryCast fails silently, check the namespace. The log showed `Il2CppSerial.FF3.UI.KeyInput.NewGamePopup` but code imported `Il2CppLast.UI.KeyInput.NewGamePopup` - two different classes in different namespaces with the same name.
+
+---
+
+## RESOLVED: Battle Action Deduplication Too Aggressive (2026-01-19)
+
+### Problem
+When two enemies of the same name attacked in succession (e.g., "Minotaur attacks" followed by another Minotaur attacking), only the first attack was announced. The second attack's message was deduplicated, leaving only damage values announced.
+
+### Cause
+`ParameterActFunctionManagment_CreateActFunction_Patch` used `GlobalBattleMessageTracker.TryAnnounce()` which performs **text-based exact-match deduplication**. Two Minotaurs attacking both generate "Minotaur attacks" - identical text that gets deduplicated.
+
+### Solution
+**File:** `Patches/BattleMessagePatches.cs:143`
+
+Changed from text-based to **object-based deduplication** using `BattleActData` reference:
+```csharp
+// BEFORE (text-based - caused issue)
+GlobalBattleMessageTracker.TryAnnounce(announcement, "BattleAction");
+
+// AFTER (object-based - each BattleActData is unique per action)
+if (AnnouncementDeduplicator.ShouldAnnounce("BattleAction", battleActData))
+{
+    MelonLogger.Msg($"[BattleAction] {announcement}");
+    FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
+}
+```
+
+### Key Insight
+Battle actions should use object-based deduplication because each `BattleActData` instance is unique per game action. Text-based deduplication is appropriate for menus and UI elements where the same text appearing twice is a true duplicate, but not for battle actions where different entities can legitimately perform identical-looking actions.
+
+---
+
+## RESOLVED: Magic Menu Target Selection (2026-01-20)
+
+### Problem
+When using a spell outside of battle (e.g., Cure from Magic menu), navigating between character targets was silent. Item menu targeting worked correctly.
+
+### Cause
+Magic targeting uses `AbilityUseContentListController` (namespace: `Serial.FF3.UI.KeyInput`), not `ItemUseController`. Initial patch on `SelectContentByIndex(int)` never fired because that method isn't called during cursor navigation.
+
+### Solution
+**File:** `Patches/MagicMenuPatches.cs`
+
+Patch `AbilityUseContentListController.SetCursor(Cursor)` instead:
+```csharp
+MethodInfo setCursorMethod = AccessTools.Method(controllerType, "SetCursor", new[] { typeof(GameCursor) });
+```
+
+Read character data from `contentList` at offset 0x50:
+```csharp
+IntPtr contentListPtr = *(IntPtr*)((byte*)instancePtr + 0x50);
+var contentList = new Il2CppSystem.Collections.Generic.List<ItemTargetSelectContentController>(contentListPtr);
+var characterData = contentList[targetCursor.Index].CurrentData;
+```
+
+### Announcement Format
+| Context | Format |
+|---------|--------|
+| Pre-menu (Magic/Status/Equip) | "CharName, Job, Level X, Row, HP" |
+| Target selection (Items/Magic) | "CharName, HP, status" (no level) |
+| Spell menus (in/out of battle) | "SpellName: MP: X/Y. Description" |
+
+**Key:** Use `ConfirmedLevel()` not `BaseLevel` for pre-menu announcements.
+
+---
+
+## RESOLVED: NPC Dialogue Deduplication Fix (2026-01-20)
+
+### Problem
+When talking to the same NPC twice and they speak identical dialogue, the second interaction produced no speech output. The deduplication persisted across separate NPC conversations.
+
+### Cause
+`FFIII_ScreenReaderMod.cs:1129` checks `lastDialogueMessage` to prevent duplicate announcements within a conversation, but the variable was never cleared when dialogue ended.
+
+### Investigation Results
+- **Single output path confirmed**: Only `line 1202` outputs NPC dialogue via `pendingDialogueText`
+- **No double-announcement evidence**: Log shows single `[Dialogue]` and `[SPEECH]` per conversation
+- **Deduplication purpose**: Guards against `SetContent` being called multiple times within a single conversation
+
+### Solution
+**File:** `Core/FFIII_ScreenReaderMod.cs`
+
+Patch `MessageWindowManager.Close()` to clear dialogue state:
+```csharp
+public static void Close_Postfix()
+{
+    lastDialogueMessage = "";
+    pendingDialogueText = "";
+}
+```
+
+**Hook:** `MessageWindowManager.Close()` (no parameters, IL2CPP-safe)
+**Patch:** Added via `HarmonyPatchHelper.PatchMethod()` in `TryPatchDialogue()`
+
+---
+
+## IMPLEMENTED: Event-Driven Entity Refresh (2026-01-20)
+
+### Problem
+When opening a treasure chest, the entity scanner's cached `NavigableEntity` retained the old `isOpen=false` state until the next periodic scan (previously every 5 seconds).
+
+### Solution
+Replaced periodic 5-second timer with event-driven refresh hooks:
+
+| Hook | Method | Trigger |
+|------|--------|---------|
+| Treasure chest opened | `FieldTresureBox.Open()` | Chest interaction |
+| Dialogue ends | `MessageWindowManager.Close()` | NPC interaction complete |
+
+### Implementation
+**File:** `Core/FFIII_ScreenReaderMod.cs`
+
+```csharp
+// Event-driven refresh with 1-frame delay
+internal void ScheduleEntityRefresh()
+{
+    CoroutineManager.StartManaged(EntityRefreshCoroutine());
+}
+
+private IEnumerator EntityRefreshCoroutine()
+{
+    yield return null;  // Wait 1 frame for game state update
+    entityScanner.ScanEntities();
+}
+
+// Postfix patches call ScheduleEntityRefresh()
+public static void TreasureBox_Open_Postfix()
+{
+    FFIII_ScreenReaderMod.Instance?.ScheduleEntityRefresh();
+}
+```
+
+### Key Points
+- **No polling**: Coroutine only runs when hooks trigger
+- **1-frame delay**: Ensures game state fully updates before rescan
+- **One-shot**: Each trigger runs scan once, then completes
+- Removed `ENTITY_SCAN_INTERVAL` (5s timer) and `lastEntityScanTime`
+- Kept fallback: `RefreshEntitiesIfNeeded()` still scans if entity list is empty
+
+---
+
+## RESOLVED: Battle Pause Menu Reading (2026-01-20)
+
+### Problem
+Battle pause menu (spacebar during battle) with Resume/Controls/Return to Title options was not being announced. `BattleCommandState` was suppressing cursor navigation even when pause menu was open.
+
+### Solution
+**Files:** `Patches/BattlePausePatches.cs`, `Core/CursorSuppressionCheck.cs`
+
+**Approach:** Direct memory read (no hookable method fires reliably at runtime).
+
+Multiple patch attempts failed - methods exist but are never called:
+- `BattlePauseController.SetEnablePauseMenu(bool)` - private, never fires
+- `BattlePauseView.SetEnablePauseRoot(bool)` - public, never fires
+- `BattlePauseController.UpdateSelect()` - public, never fires
+- `BattlePauseController.UpdateFocus()` - private, never fires
+
+1. `BattlePauseState.IsActive` reads game memory directly:
+```csharp
+public static bool IsActive
+{
+    get
+    {
+        var uiManager = BattleUIManager.Instance;
+        if (uiManager == null) return false;
+
+        IntPtr uiManagerPtr = uiManager.Pointer;
+        IntPtr pauseControllerPtr = Marshal.ReadIntPtr(uiManagerPtr + 0x90);
+        if (pauseControllerPtr == IntPtr.Zero) return false;
+
+        byte isActive = Marshal.ReadByte(pauseControllerPtr + 0x71);
+        return isActive != 0;
+    }
+}
+```
+
+2. `CursorSuppressionCheck.Check()` bypasses when pause menu active:
+```csharp
+// First check - before other battle suppressions
+if (BattlePauseState.IsActive)
+    return SuppressionResult.None;
+```
+
+3. Generic cursor navigation + `MenuTextDiscovery` reads the pause menu items.
+
+### Key Offsets
+| Class | Field | Offset |
+|-------|-------|--------|
+| BattleUIManager | pauseController | 0x90 |
+| BattlePauseController | isActivePauseMenu | 0x71 |
+| BattlePauseController | selectCommandCursor | 0x40 |
+| BattlePauseController | commandMessageIdList | 0x30 |
+
+### Future Consideration
+May revisit to find a hookable method instead of direct memory reading. The game likely shows/hides the pause menu via Unity's `SetActive()` on GameObjects, which bypasses the controller methods we tried to patch.

@@ -4,6 +4,7 @@ using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
+using UnityEngine.UI;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
 using Il2CppLast.Management;
@@ -11,6 +12,7 @@ using Il2CppLast.Management;
 // Type aliases for IL2CPP types
 using KeyInputJobChangeWindowController = Il2CppSerial.FF3.UI.KeyInput.JobChangeWindowController;
 using TouchJobChangeWindowController = Il2CppSerial.FF3.UI.Touch.JobChangeWindowController;
+using KeyInputJobChangeWindowView = Il2CppSerial.FF3.UI.KeyInput.JobChangeWindowView;
 using JobContentController = Il2CppSerial.FF3.UI.KeyInput.JobContentController;
 using OwnedCharacterData = Il2CppLast.Data.User.OwnedCharacterData;
 using OwnedJobData = Il2CppLast.Data.User.OwnedJobData;
@@ -27,62 +29,37 @@ namespace FFIII_ScreenReader.Patches
     {
         /// <summary>
         /// True when job menu is active and handling announcements.
+        /// Delegates to MenuStateRegistry for centralized state tracking.
         /// </summary>
-        public static bool IsActive { get; set; } = false;
-
-        /// <summary>
-        /// Check if GenericCursor should be suppressed. Validates controller is still active.
-        /// </summary>
-        public static bool ShouldSuppress()
+        public static bool IsActive
         {
-            if (!IsActive) return false;
-
-            // Validate job menu controller is still active
-            try
-            {
-                var controller = UnityEngine.Object.FindObjectOfType<KeyInputJobChangeWindowController>();
-                if (controller == null || !controller.gameObject.activeInHierarchy)
-                {
-                    IsActive = false;
-                    return false;
-                }
-                return true;
-            }
-            catch
-            {
-                IsActive = false;
-                return false;
-            }
+            get => MenuStateRegistry.IsActive(MenuStateRegistry.JOB_MENU);
+            set => MenuStateRegistry.SetActive(MenuStateRegistry.JOB_MENU, value);
         }
 
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
-        private static int lastJobIndex = -1;
+        /// <summary>
+        /// Returns true if generic cursor reading should be suppressed.
+        /// State is cleared by transition patches when menu closes.
+        /// </summary>
+        public static bool ShouldSuppress() => IsActive;
+
+        private const string CONTEXT = "JobMenu.Select";
+        private const string CONTEXT_INDEX = "JobMenu.Index";
 
         public static bool ShouldAnnounce(string announcement)
         {
-            float currentTime = UnityEngine.Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.1f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
+            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT, announcement);
         }
 
         public static bool IsNewJobIndex(int index)
         {
-            if (index == lastJobIndex)
-                return false;
-            lastJobIndex = index;
-            return true;
+            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_INDEX, index);
         }
 
         public static void ResetState()
         {
             IsActive = false;
-            lastJobIndex = -1;
-            lastAnnouncement = "";
+            AnnouncementDeduplicator.Reset(CONTEXT, CONTEXT_INDEX);
         }
 
         /// <summary>
@@ -93,35 +70,94 @@ namespace FFIII_ScreenReader.Patches
             if (job == null)
                 return null;
 
-            try
-            {
-                string mesId = job.MesIdName;
-                if (!string.IsNullOrEmpty(mesId))
-                {
-                    var messageManager = MessageManager.Instance;
-                    if (messageManager != null)
-                    {
-                        string localizedName = messageManager.GetMessage(mesId, false);
-                        if (!string.IsNullOrWhiteSpace(localizedName))
-                            return localizedName;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Job Menu] Error getting job name: {ex.Message}");
-            }
-
-            return null;
+            return LocalizationHelper.GetText(job.MesIdName);
         }
 
         /// <summary>
-        /// Gets the job level for a specific job ID from character data.
+        /// Reads job level directly from the Job Change Window UI.
+        /// Returns the level as displayed by the game, or -1 if not found.
+        /// </summary>
+        public static int TryReadJobLevelFromUI()
+        {
+            try
+            {
+                var jobView = UnityEngine.Object.FindObjectOfType<KeyInputJobChangeWindowView>();
+                if (jobView == null)
+                {
+                    MelonLogger.Msg("[Job Debug] JobChangeWindowView not found");
+                    return -1;
+                }
+
+                // Try InfoSkillLevelValueText first (the info panel showing selected job)
+                // Offset 0x80 in KeyInput version
+                try
+                {
+                    IntPtr viewPtr = jobView.Pointer;
+                    IntPtr textPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(viewPtr + 0x80);
+                    if (textPtr != IntPtr.Zero)
+                    {
+                        var textComponent = new UnityEngine.UI.Text(textPtr);
+                        string levelText = textComponent.text;
+                        MelonLogger.Msg($"[Job Debug] InfoSkillLevelValueText.text = '{levelText}'");
+
+                        if (!string.IsNullOrEmpty(levelText) && int.TryParse(levelText, out int level))
+                        {
+                            return level;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Msg($"[Job Debug] Failed to read InfoSkillLevelValueText: {ex.Message}");
+                }
+
+                // Fallback: try SkillLevelValueText (offset 0x68)
+                try
+                {
+                    IntPtr viewPtr = jobView.Pointer;
+                    IntPtr textPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(viewPtr + 0x68);
+                    if (textPtr != IntPtr.Zero)
+                    {
+                        var textComponent = new UnityEngine.UI.Text(textPtr);
+                        string levelText = textComponent.text;
+                        MelonLogger.Msg($"[Job Debug] SkillLevelValueText.text = '{levelText}'");
+
+                        if (!string.IsNullOrEmpty(levelText) && int.TryParse(levelText, out int level))
+                        {
+                            return level;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Msg($"[Job Debug] Failed to read SkillLevelValueText: {ex.Message}");
+                }
+
+                return -1;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Job Debug] TryReadJobLevelFromUI error: {ex.Message}");
+                return -1;
+            }
+        }
+
+        /// <summary>
+        /// Gets the job level for a specific job ID.
+        /// First tries to read from UI (most accurate), falls back to data accessor.
         /// </summary>
         public static int GetJobLevel(OwnedCharacterData characterData, int jobId)
         {
+            // First try reading from UI - this is the most accurate
+            int uiLevel = TryReadJobLevelFromUI();
+            if (uiLevel > 0)
+            {
+                return uiLevel;
+            }
+
+            // Fallback to data accessor (may return base level instead of calculated)
             if (characterData == null)
-                return 0;
+                return 1;
 
             try
             {
@@ -132,7 +168,7 @@ namespace FFIII_ScreenReader.Patches
                     {
                         if (jobData != null && jobData.Id == jobId)
                         {
-                            return jobData.Level;
+                            return jobData.Level > 0 ? jobData.Level : 1;
                         }
                     }
                 }
@@ -142,7 +178,7 @@ namespace FFIII_ScreenReader.Patches
                 MelonLogger.Warning($"[Job Menu] Error getting job level: {ex.Message}");
             }
 
-            return 0;
+            return 1;
         }
 
         /// <summary>
@@ -191,11 +227,32 @@ namespace FFIII_ScreenReader.Patches
             {
                 TryPatchUpdateJobInfo(harmony);
                 TryPatchSelectContent(harmony);
+                TryPatchSetActive(harmony);
                 isPatched = true;
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Job Menu] Error applying patches: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch SetActive - clears state when menu closes.
+        /// </summary>
+        private static void TryPatchSetActive(HarmonyLib.Harmony harmony)
+        {
+            HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputJobChangeWindowController),
+                typeof(JobMenuPatches), logPrefix: "[Job Menu]");
+        }
+
+        /// <summary>
+        /// Postfix for SetActive - clears state when menu closes.
+        /// </summary>
+        public static void SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                JobMenuState.ResetState();
             }
         }
 
@@ -279,6 +336,7 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// Postfix for UpdateJobInfo - announces job name and level.
+        /// Adds "Equipped" indicator when viewing the currently equipped job.
         /// </summary>
         public static void UpdateJobInfo_Postfix(object __instance, OwnedCharacterData characterData, Job targetJob)
         {
@@ -301,8 +359,13 @@ namespace FFIII_ScreenReader.Patches
                 // Get job level for this specific job
                 int jobLevel = JobMenuState.GetJobLevel(characterData, targetJob.Id);
 
-                // Build announcement: "Job Name, Job Level X"
-                string announcement = $"{jobName}, Job Level {jobLevel}";
+                // Check if this is the currently equipped job
+                bool isEquipped = (targetJob.Id == characterData.JobId);
+
+                // Build announcement: "Job Name, Job Level X" or "Job Name, Job Level X. Equipped."
+                string announcement = isEquipped
+                    ? $"{jobName}, Job Level {jobLevel}. Equipped."
+                    : $"{jobName}, Job Level {jobLevel}";
 
                 // Skip duplicates
                 if (!JobMenuState.ShouldAnnounce(announcement))

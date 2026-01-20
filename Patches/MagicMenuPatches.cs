@@ -13,6 +13,8 @@ using Il2CppInterop.Runtime;
 using AbilityCommandController = Il2CppSerial.FF3.UI.KeyInput.AbilityCommandController;
 using AbilityContentListController = Il2CppSerial.FF3.UI.KeyInput.AbilityContentListController;
 using AbilityWindowController = Il2CppSerial.FF3.UI.KeyInput.AbilityWindowController;
+using AbilityUseContentListController = Il2CppSerial.FF3.UI.KeyInput.AbilityUseContentListController;
+using ItemTargetSelectContentController = Il2CppLast.UI.KeyInput.ItemTargetSelectContentController;
 using BattleAbilityInfomationContentController = Il2CppLast.UI.KeyInput.BattleAbilityInfomationContentController;
 using OwnedAbility = Il2CppLast.Data.User.OwnedAbility;
 using OwnedCharacterData = Il2CppLast.Data.User.OwnedCharacterData;
@@ -31,9 +33,6 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     public static class MagicMenuState
     {
-        // Track if spell list has focus (SetFocus(true) was called)
-        private static bool _isSpellListFocused = false;
-
         // Track last announced spell ID to prevent duplicates
         private static int lastSpellId = -1;
 
@@ -43,10 +42,12 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// True when spell list has focus (SetFocus(true) was called).
         /// Only suppresses GenericCursor when spell list is actually focused.
+        /// Delegates to MenuStateRegistry for centralized state tracking.
         /// </summary>
         public static bool IsSpellListActive
         {
-            get => _isSpellListFocused;
+            get => MenuStateRegistry.IsActive(MenuStateRegistry.MAGIC_MENU);
+            private set => MenuStateRegistry.SetActive(MenuStateRegistry.MAGIC_MENU, value);
         }
 
         /// <summary>
@@ -56,7 +57,7 @@ namespace FFIII_ScreenReader.Patches
         {
             // Clear other menu states to prevent conflicts
             FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Magic");
-            _isSpellListFocused = true;
+            IsSpellListActive = true;
             lastSpellId = -1; // Reset to announce first spell
         }
 
@@ -65,7 +66,7 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void OnSpellListUnfocused()
         {
-            _isSpellListFocused = false;
+            IsSpellListActive = false;
             lastSpellId = -1;
             _currentCharacter = null;
         }
@@ -80,87 +81,42 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// Only suppresses when spell list is actually focused AND we're in a list state.
-        /// Uses state machine validation to check actual game state.
+        /// Returns true when spell list should suppress generic cursor reading.
+        /// Validates state machine at runtime to detect return to command bar.
         /// </summary>
         public static bool ShouldSuppress()
         {
-            if (!_isSpellListFocused)
+            if (!IsSpellListActive)
                 return false;
 
-            try
+            // Validate we're actually in a submenu, not command bar
+            int state = GetWindowControllerState();
+            if (state == STATE_COMMAND || state == 0)
             {
-                // Check the AbilityWindowController's state machine
-                // If we're in Command state (7), don't suppress even if flag is set
-                var windowController = UnityEngine.Object.FindObjectOfType<AbilityWindowController>();
-                if (windowController != null)
-                {
-                    int currentState = GetCurrentState(windowController);
-                    if (currentState == STATE_COMMAND)
-                    {
-                        // We're in command menu, not spell list - clear flag and don't suppress
-                        ResetState();
-                        return false;
-                    }
-                }
-
-                // Validate the spell list controller is actually active
-                var controller = UnityEngine.Object.FindObjectOfType<AbilityContentListController>();
-                if (controller == null || !controller.gameObject.activeInHierarchy)
-                {
-                    // Controller gone - reset state
-                    ResetState();
-                    return false;
-                }
-                return true;
-            }
-            catch
-            {
+                // At command bar or menu closing - clear state and don't suppress
                 ResetState();
                 return false;
             }
+
+            return true;
         }
 
-        // Offsets for reading state machine (from dump.cs)
-        private const int OFFSET_WINDOW_STATE_MACHINE = 0x88;  // AbilityWindowController.stateMachine
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10; // StateMachine<T>.current (after Il2CppObject header)
-        private const int OFFSET_STATE_TAG = 0x10;             // State<T>.Tag (after Il2CppObject header)
-        private const int STATE_COMMAND = 7;                   // AbilityWindowController.State.Command
+        // AbilityWindowController.State enum values (from dump.cs)
+        private const int STATE_COMMAND = 7;  // Command menu state
+
+        // State machine offset for AbilityWindowController
+        private const int OFFSET_STATE_MACHINE = 0x88;
 
         /// <summary>
-        /// Reads the current state from AbilityWindowController's state machine.
-        /// Returns -1 if unable to read.
+        /// Gets the current state from AbilityWindowController's state machine.
+        /// Returns -1 if unable to read state.
         /// </summary>
-        private static int GetCurrentState(AbilityWindowController controller)
+        private static int GetWindowControllerState()
         {
-            try
-            {
-                IntPtr controllerPtr = controller.Pointer;
-                if (controllerPtr == IntPtr.Zero)
-                    return -1;
-
-                unsafe
-                {
-                    // Read stateMachine pointer at offset 0x88
-                    IntPtr stateMachinePtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_WINDOW_STATE_MACHINE);
-                    if (stateMachinePtr == IntPtr.Zero)
-                        return -1;
-
-                    // Read current State<T> pointer at offset 0x10
-                    IntPtr currentStatePtr = *(IntPtr*)((byte*)stateMachinePtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
-                    if (currentStatePtr == IntPtr.Zero)
-                        return -1;
-
-                    // Read Tag (int) at offset 0x10
-                    int stateValue = *(int*)((byte*)currentStatePtr.ToPointer() + OFFSET_STATE_TAG);
-                    return stateValue;
-                }
-            }
-            catch
-            {
+            var windowController = UnityEngine.Object.FindObjectOfType<AbilityWindowController>();
+            if (windowController == null || !windowController.gameObject.activeInHierarchy)
                 return -1;
-            }
+            return StateReaderHelper.ReadStateTag(windowController.Pointer, OFFSET_STATE_MACHINE);
         }
 
         /// <summary>
@@ -179,7 +135,7 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void ResetState()
         {
-            _isSpellListFocused = false;
+            IsSpellListActive = false;
             lastSpellId = -1;
             _currentCharacter = null;
         }
@@ -192,23 +148,7 @@ namespace FFIII_ScreenReader.Patches
             if (ability == null)
                 return null;
 
-            try
-            {
-                string mesId = ability.MesIdName;
-                if (!string.IsNullOrEmpty(mesId))
-                {
-                    var messageManager = MessageManager.Instance;
-                    if (messageManager != null)
-                    {
-                        string localizedName = messageManager.GetMessage(mesId, false);
-                        if (!string.IsNullOrWhiteSpace(localizedName))
-                            return TextUtils.StripIconMarkup(localizedName);
-                    }
-                }
-            }
-            catch { }
-
-            return null;
+            return LocalizationHelper.GetText(ability.MesIdName);
         }
 
         /// <summary>
@@ -219,23 +159,7 @@ namespace FFIII_ScreenReader.Patches
             if (ability == null)
                 return null;
 
-            try
-            {
-                string mesId = ability.MesIdDescription;
-                if (!string.IsNullOrEmpty(mesId))
-                {
-                    var messageManager = MessageManager.Instance;
-                    if (messageManager != null)
-                    {
-                        string localizedDesc = messageManager.GetMessage(mesId, false);
-                        if (!string.IsNullOrWhiteSpace(localizedDesc))
-                            return TextUtils.StripIconMarkup(localizedDesc);
-                    }
-                }
-            }
-            catch { }
-
-            return null;
+            return LocalizationHelper.GetText(ability.MesIdDescription);
         }
 
         /// <summary>
@@ -322,7 +246,7 @@ namespace FFIII_ScreenReader.Patches
         private const int OFFSET_TARGET_CHARACTER = 0x98;  // OwnedCharacterData targetCharacterData
 
         // AbilityWindowController.State enum values (from dump.cs line 281758)
-        private const int STATE_COMMAND = 7;  // Command menu state
+        private const int STATE_COMMAND = 7;  // Command menu state (used by SetNextState_Postfix)
 
         /// <summary>
         /// Apply manual Harmony patches for magic menu.
@@ -342,6 +266,12 @@ namespace FFIII_ScreenReader.Patches
 
                 // Patch window controller to clear flag when transitioning to command menu
                 TryPatchWindowController(harmony);
+
+                // Patch SetActive for menu close detection
+                TryPatchSetActive(harmony);
+
+                // Patch target selection for spell use (character selection when casting)
+                TryPatchTargetSelect(harmony);
 
                 isPatched = true;
             }
@@ -458,16 +388,146 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
+        /// Patches AbilityWindowController.SetActive for menu close detection.
+        /// </summary>
+        private static void TryPatchSetActive(HarmonyLib.Harmony harmony)
+        {
+            HarmonyPatchHelper.PatchSetActive(harmony, typeof(AbilityWindowController),
+                typeof(MagicMenuPatches), logPrefix: "[Magic Menu]");
+        }
+
+        /// <summary>
+        /// Patches AbilityUseContentListController.SetCursor for target selection.
+        /// Called when navigating between characters when casting a spell.
+        /// </summary>
+        private static void TryPatchTargetSelect(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                Type controllerType = typeof(AbilityUseContentListController);
+
+                // Find SetCursor(Cursor) - private method called during navigation
+                MethodInfo setCursorMethod = AccessTools.Method(controllerType, "SetCursor", new[] { typeof(GameCursor) });
+
+                if (setCursorMethod != null)
+                {
+                    var postfix = typeof(MagicMenuPatches).GetMethod(nameof(AbilityUseSetCursor_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(setCursorMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[Magic Menu] Patched AbilityUseContentListController.SetCursor for target selection");
+                }
+                else
+                {
+                    MelonLogger.Warning("[Magic Menu] SetCursor method not found on AbilityUseContentListController");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic Menu] Failed to patch target selection: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Postfix for SetActive - clears state when menu closes.
+        /// </summary>
+        public static void SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                MagicMenuState.ResetState();
+            }
+        }
+
+        /// <summary>
+        /// Postfix for AbilityUseContentListController.SetCursor.
+        /// Announces character name, HP, and status when selecting spell target.
+        /// </summary>
+        public static unsafe void AbilityUseSetCursor_Postfix(object __instance, GameCursor targetCursor)
+        {
+            try
+            {
+                if (__instance == null || targetCursor == null)
+                    return;
+
+                var controller = ((Il2CppSystem.Object)__instance).TryCast<AbilityUseContentListController>();
+                if (controller == null)
+                    return;
+
+                int index = targetCursor.Index;
+                if (index < 0)
+                    return;
+
+                // Read contentList from offset 0x50 (List<ItemTargetSelectContentController>)
+                IntPtr instancePtr = controller.Pointer;
+                IntPtr contentListPtr = *(IntPtr*)((byte*)instancePtr + 0x50);
+                if (contentListPtr == IntPtr.Zero)
+                    return;
+
+                var contentList = new Il2CppSystem.Collections.Generic.List<ItemTargetSelectContentController>(contentListPtr);
+                if (contentList == null || contentList.Count == 0)
+                    return;
+
+                if (index >= contentList.Count)
+                    return;
+
+                var content = contentList[index];
+                if (content == null)
+                    return;
+
+                // Get character data from the content controller
+                var characterData = content.CurrentData;
+                if (characterData == null)
+                    return;
+
+                // Build announcement: "Character Name, HP current/max, Status effects"
+                // Note: Level is NOT included for target selection - only for pre-menus
+                string charName = characterData.Name;
+                if (string.IsNullOrWhiteSpace(charName))
+                    return;
+
+                string announcement = charName;
+
+                // Add HP and status information (no level for target selection)
+                var parameter = characterData.Parameter;
+                if (parameter != null)
+                {
+                    // Add HP and status conditions via helper
+                    string statusInfo = CharacterStatusHelper.GetFullStatus(parameter);
+                    if (!string.IsNullOrEmpty(statusInfo))
+                    {
+                        announcement += statusInfo;
+                    }
+                }
+
+                // Skip duplicates using deduplicator
+                if (!AnnouncementDeduplicator.ShouldAnnounce("MagicTarget", announcement))
+                    return;
+
+                MelonLogger.Msg($"[Magic Target] {announcement}");
+                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic Menu] Error in AbilityUseSetCursor_Postfix: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Postfix for AbilityWindowController.SetNextState - detects state transitions.
-        /// When transitioning to Command state (7), clear the spell list flag.
+        /// Clears spell list flag when:
+        /// - Transitioning to Command state (7) = back to command bar
+        /// - Transitioning to None state (0) = menu closing
         /// </summary>
         public static void SetNextState_Postfix(object __instance, int state)
         {
             try
             {
-                // Check if transitioning to Command state
-                if (state == STATE_COMMAND && MagicMenuState.IsSpellListActive)
+                MelonLogger.Msg($"[Magic Menu] SetNextState called with state={state}, IsSpellListActive={MagicMenuState.IsSpellListActive}");
+
+                // Clear state when returning to command bar (7) or menu closing (0)
+                if ((state == STATE_COMMAND || state == 0) && MagicMenuState.IsSpellListActive)
                 {
+                    MelonLogger.Msg($"[Magic Menu] Clearing state - transitioning to command bar or closing");
                     MagicMenuState.OnSpellListUnfocused();
                 }
             }
@@ -477,6 +537,7 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// Postfix for UpdateController - called when spell list is actively handling input.
         /// This fires every frame while the spell list is active, so we use it to set the active flag.
+        /// State clearing is now handled by SetNextState_Postfix instead of state machine validation.
         /// </summary>
         public static void UpdateController_Postfix(object __instance)
         {
@@ -488,6 +549,19 @@ namespace FFIII_ScreenReader.Patches
                 var controller = __instance as AbilityContentListController;
                 if (controller == null || !controller.gameObject.activeInHierarchy)
                     return;
+
+                // COMMENTED OUT: State machine validation - clearing now handled by SetNextState_Postfix
+                // The raw pointer state machine reading was unreliable.
+                // int currentState = GetWindowControllerState();
+                // if (currentState == STATE_COMMAND || currentState == 0)
+                // {
+                //     // At command bar or menu closing - ensure flag is cleared
+                //     if (MagicMenuState.IsSpellListActive)
+                //     {
+                //         MagicMenuState.OnSpellListUnfocused();
+                //     }
+                //     return;
+                // }
 
                 // Spell list is actively handling input - enable spell reading
                 if (!MagicMenuState.IsSpellListActive)
@@ -657,40 +731,23 @@ namespace FFIII_ScreenReader.Patches
 
                 // Get item name and description directly from OwnedItemData
                 // Note: "Deiscription" is a typo in the game code
-                string itemName = null;
                 string description = null;
-
                 try
                 {
-                    itemName = itemData.Name;
-                    if (!string.IsNullOrEmpty(itemName))
-                    {
-                        itemName = TextUtils.StripIconMarkup(itemName);
-                    }
-
                     description = itemData.Deiscription; // Game code typo
-                    if (!string.IsNullOrEmpty(description))
-                    {
-                        description = TextUtils.StripIconMarkup(description);
-                    }
                 }
                 catch { }
 
-                if (string.IsNullOrEmpty(itemName))
+                // Build announcement: "Spell Tome Name: Description"
+                string announcement = AnnouncementBuilder.FormatWithDescription(itemData.Name, description);
+                if (string.IsNullOrEmpty(announcement))
                 {
                     AnnounceEmpty();
                     return;
                 }
 
-                // Build announcement: "Spell Tome Name: Description"
-                string announcement = itemName;
-                if (!string.IsNullOrEmpty(description))
-                {
-                    announcement += ": " + description;
-                }
-
                 // Check for duplicate
-                if (!MagicMenuState.ShouldAnnounceSpell(itemName.GetHashCode()))
+                if (!MagicMenuState.ShouldAnnounceSpell(announcement.GetHashCode()))
                     return;
 
                 MelonLogger.Msg($"[Magic Menu] Learn announcing: {announcement}");
@@ -715,8 +772,8 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Announces a spell with name, charges, and description.
-        /// Format: "Spell Name: charges/max charges. Description"
+        /// Announces a spell with name, MP, and description.
+        /// Format: "Spell Name: MP: current/max. Description"
         /// </summary>
         private static void AnnounceSpell(OwnedAbility ability)
         {
@@ -757,7 +814,7 @@ namespace FFIII_ScreenReader.Patches
                     var (current, max) = MagicMenuState.GetChargesForLevel(MagicMenuState.CurrentCharacter, spellLevel);
                     if (max > 0)
                     {
-                        announcement += $": {current}/{max} charges";
+                        announcement += $": MP: {current}/{max}";
                     }
                 }
 

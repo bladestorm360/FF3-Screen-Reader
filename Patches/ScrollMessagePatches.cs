@@ -3,6 +3,12 @@ using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
 using FFIII_ScreenReader.Core;
+using FFIII_ScreenReader.Utils;
+using FadeMessageManager = Il2CppLast.Message.FadeMessageManager;
+using LineFadeMessageManager = Il2CppLast.Message.LineFadeMessageManager;
+using ScrollMessageManager = Il2CppLast.Message.ScrollMessageManager;
+using ScrollMessageClient = Il2CppLast.Management.ScrollMessageClient;
+using MessageManager = Il2CppLast.Management.MessageManager;
 
 namespace FFIII_ScreenReader.Patches
 {
@@ -24,75 +30,85 @@ namespace FFIII_ScreenReader.Patches
             {
                 MelonLogger.Msg("Applying scroll/fade message patches...");
 
-                // Patch FadeMessageManager.Play - receives single message string
-                Type fadeManagerType = FindType("Il2CppLast.Message.FadeMessageManager");
-                if (fadeManagerType != null)
-                {
-                    MelonLogger.Msg($"Found FadeMessageManager: {fadeManagerType.FullName}");
+                // Use typeof() directly - much faster than assembly scanning
+                Type fadeManagerType = typeof(FadeMessageManager);
+                MelonLogger.Msg($"Found FadeMessageManager: {fadeManagerType.FullName}");
 
-                    var playMethod = AccessTools.Method(fadeManagerType, "Play");
-                    if (playMethod != null)
-                    {
-                        var postfix = typeof(ScrollMessagePatches).GetMethod("FadeManagerPlay_Postfix",
-                            BindingFlags.Public | BindingFlags.Static);
-                        harmony.Patch(playMethod, postfix: new HarmonyMethod(postfix));
-                        MelonLogger.Msg("Patched FadeMessageManager.Play");
-                    }
+                var playMethod = AccessTools.Method(fadeManagerType, "Play");
+                if (playMethod != null)
+                {
+                    var postfix = typeof(ScrollMessagePatches).GetMethod("FadeManagerPlay_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(playMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("Patched FadeMessageManager.Play");
+                }
+
+                // Use typeof() directly - much faster than assembly scanning
+                Type lineFadeManagerType = typeof(LineFadeMessageManager);
+                MelonLogger.Msg($"Found LineFadeMessageManager: {lineFadeManagerType.FullName}");
+
+                // Patch Play method
+                var lineFadePlayMethod = AccessTools.Method(lineFadeManagerType, "Play");
+                if (lineFadePlayMethod != null)
+                {
+                    var postfix = typeof(ScrollMessagePatches).GetMethod("LineFadeManagerPlay_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(lineFadePlayMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("Patched LineFadeMessageManager.Play");
+                }
+
+                // Patch AsyncPlay method
+                var asyncPlayMethod = AccessTools.Method(lineFadeManagerType, "AsyncPlay");
+                if (asyncPlayMethod != null)
+                {
+                    var postfix = typeof(ScrollMessagePatches).GetMethod("LineFadeManagerPlay_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(asyncPlayMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("Patched LineFadeMessageManager.AsyncPlay");
+                }
+
+                // Use typeof() directly - much faster than assembly scanning
+                Type scrollManagerType = typeof(ScrollMessageManager);
+                MelonLogger.Msg($"Found ScrollMessageManager: {scrollManagerType.FullName}");
+
+                var scrollPlayMethod = AccessTools.Method(scrollManagerType, "Play");
+                if (scrollPlayMethod != null)
+                {
+                    var postfix = typeof(ScrollMessagePatches).GetMethod("ScrollManagerPlay_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(scrollPlayMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("Patched ScrollMessageManager.Play");
+                }
+
+                // Patch ScrollMessageClient.PlayMessageId - catches battle messages by ID
+                // (Back Attack!, Preemptive!, The party escaped!, etc.)
+                Type scrollClientType = typeof(ScrollMessageClient);
+                MelonLogger.Msg($"Found ScrollMessageClient: {scrollClientType.FullName}");
+
+                var playMessageIdMethod = AccessTools.Method(scrollClientType, "PlayMessageId");
+                if (playMessageIdMethod != null)
+                {
+                    var postfix = typeof(ScrollMessagePatches).GetMethod("ScrollClientPlayMessageId_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(playMessageIdMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("Patched ScrollMessageClient.PlayMessageId");
                 }
                 else
                 {
-                    MelonLogger.Warning("FadeMessageManager type not found");
+                    MelonLogger.Warning("ScrollMessageClient.PlayMessageId method not found");
                 }
 
-                // Patch LineFadeMessageManager.Play and AsyncPlay - receives List<string> messages
-                Type lineFadeManagerType = FindType("Il2CppLast.Message.LineFadeMessageManager");
-                if (lineFadeManagerType != null)
+                var playMessageValueMethod = AccessTools.Method(scrollClientType, "PlayMessageValue");
+                if (playMessageValueMethod != null)
                 {
-                    MelonLogger.Msg($"Found LineFadeMessageManager: {lineFadeManagerType.FullName}");
-
-                    // Patch Play method
-                    var playMethod = AccessTools.Method(lineFadeManagerType, "Play");
-                    if (playMethod != null)
-                    {
-                        var postfix = typeof(ScrollMessagePatches).GetMethod("LineFadeManagerPlay_Postfix",
-                            BindingFlags.Public | BindingFlags.Static);
-                        harmony.Patch(playMethod, postfix: new HarmonyMethod(postfix));
-                        MelonLogger.Msg("Patched LineFadeMessageManager.Play");
-                    }
-
-                    // Patch AsyncPlay method
-                    var asyncPlayMethod = AccessTools.Method(lineFadeManagerType, "AsyncPlay");
-                    if (asyncPlayMethod != null)
-                    {
-                        var postfix = typeof(ScrollMessagePatches).GetMethod("LineFadeManagerPlay_Postfix",
-                            BindingFlags.Public | BindingFlags.Static);
-                        harmony.Patch(asyncPlayMethod, postfix: new HarmonyMethod(postfix));
-                        MelonLogger.Msg("Patched LineFadeMessageManager.AsyncPlay");
-                    }
+                    var postfix = typeof(ScrollMessagePatches).GetMethod("ScrollClientPlayMessageValue_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(playMessageValueMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("Patched ScrollMessageClient.PlayMessageValue");
                 }
                 else
                 {
-                    MelonLogger.Warning("LineFadeMessageManager type not found");
-                }
-
-                // Patch ScrollMessageManager.Play - receives scroll message string
-                Type scrollManagerType = FindType("Il2CppLast.Message.ScrollMessageManager");
-                if (scrollManagerType != null)
-                {
-                    MelonLogger.Msg($"Found ScrollMessageManager: {scrollManagerType.FullName}");
-
-                    var playMethod = AccessTools.Method(scrollManagerType, "Play");
-                    if (playMethod != null)
-                    {
-                        var postfix = typeof(ScrollMessagePatches).GetMethod("ScrollManagerPlay_Postfix",
-                            BindingFlags.Public | BindingFlags.Static);
-                        harmony.Patch(playMethod, postfix: new HarmonyMethod(postfix));
-                        MelonLogger.Msg("Patched ScrollMessageManager.Play");
-                    }
-                }
-                else
-                {
-                    MelonLogger.Warning("ScrollMessageManager type not found");
+                    MelonLogger.Warning("ScrollMessageClient.PlayMessageValue method not found");
                 }
 
                 MelonLogger.Msg("Scroll/Fade message patches applied successfully");
@@ -104,27 +120,7 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        /// <summary>
-        /// Finds a type by name across all loaded assemblies.
-        /// </summary>
-        private static Type FindType(string fullName)
-        {
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    foreach (var type in assembly.GetTypes())
-                    {
-                        if (type.FullName == fullName)
-                        {
-                            return type;
-                        }
-                    }
-                }
-                catch { }
-            }
-            return null;
-        }
+        // FindType method removed - using typeof() directly is much faster
 
         /// <summary>
         /// Postfix for FadeMessageManager.Play - captures the message parameter directly.
@@ -134,10 +130,14 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
+                // Debug: Log that postfix was called
+                MelonLogger.Msg($"[Fade Message] Postfix called, __0 type: {__0?.GetType()?.Name ?? "null"}, value: {__0?.ToString() ?? "null"}");
+
                 // __0 is the first parameter (message string)
                 string message = __0?.ToString();
                 if (string.IsNullOrEmpty(message))
                 {
+                    MelonLogger.Msg("[Fade Message] Message was null or empty, skipping");
                     return;
                 }
 
@@ -156,6 +156,14 @@ namespace FFIII_ScreenReader.Patches
                     cleanMessage = cleanMessage.Replace("  ", " ");
                 }
                 cleanMessage = cleanMessage.Trim();
+
+                // Check for duplicate location announcement
+                // E.g., skip "Altar Cave" if "Entering Altar Cave" was just announced
+                if (!LocationMessageTracker.ShouldAnnounceFadeMessage(cleanMessage))
+                {
+                    MelonLogger.Msg($"[Fade Message] Skipped (duplicate of map transition): {cleanMessage}");
+                    return;
+                }
 
                 MelonLogger.Msg($"[Fade Message] {cleanMessage}");
                 FFIII_ScreenReaderMod.SpeakText(cleanMessage);
@@ -267,6 +275,89 @@ namespace FFIII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error in ScrollManagerPlay_Postfix: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Postfix for ScrollMessageClient.PlayMessageId - catches battle messages by ID.
+        /// This catches messages like "Back Attack!", "Preemptive Strike!", "The party escaped!" etc.
+        /// ScrollMessageClient.PlayMessageId(ScrollType type, string messageId, ...)
+        /// </summary>
+        public static void ScrollClientPlayMessageId_Postfix(object __1)
+        {
+            try
+            {
+                // __1 is the second parameter (messageId string, first is ScrollType)
+                string messageId = __1?.ToString();
+                if (string.IsNullOrEmpty(messageId))
+                {
+                    return;
+                }
+
+                // Look up the localized message
+                var messageManager = MessageManager.Instance;
+                if (messageManager != null)
+                {
+                    string message = messageManager.GetMessage(messageId);
+                    if (!string.IsNullOrWhiteSpace(message))
+                    {
+                        // Avoid duplicate announcements
+                        if (message == lastScrollMessage)
+                        {
+                            return;
+                        }
+
+                        lastScrollMessage = message;
+
+                        string cleanMessage = message.Trim();
+                        MelonLogger.Msg($"[ScrollClient MessageId] {messageId} -> {cleanMessage}");
+
+                        // Clear flee flag if this is an escape result message
+                        if (messageId.IndexOf("ESCAPE", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            GlobalBattleMessageTracker.ClearFleeInProgress();
+                        }
+
+                        FFIII_ScreenReaderMod.SpeakText(cleanMessage);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error in ScrollClientPlayMessageId_Postfix: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Postfix for ScrollMessageClient.PlayMessageValue - catches direct message display.
+        /// ScrollMessageClient.PlayMessageValue(ScrollType type, string messageValue, ...)
+        /// </summary>
+        public static void ScrollClientPlayMessageValue_Postfix(object __1)
+        {
+            try
+            {
+                // __1 is the second parameter (messageValue string, first is ScrollType)
+                string messageValue = __1?.ToString();
+                if (string.IsNullOrEmpty(messageValue))
+                {
+                    return;
+                }
+
+                // Avoid duplicate announcements
+                if (messageValue == lastScrollMessage)
+                {
+                    return;
+                }
+
+                lastScrollMessage = messageValue;
+
+                string cleanMessage = messageValue.Trim();
+                MelonLogger.Msg($"[ScrollClient MessageValue] {cleanMessage}");
+                FFIII_ScreenReaderMod.SpeakText(cleanMessage);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error in ScrollClientPlayMessageValue_Postfix: {ex.Message}");
             }
         }
 

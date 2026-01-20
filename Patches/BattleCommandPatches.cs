@@ -21,14 +21,16 @@ namespace FFIII_ScreenReader.Patches
     {
         /// <summary>
         /// True when battle command menu is actively handling announcements.
+        /// Delegates to MenuStateRegistry for centralized state tracking.
         /// </summary>
-        public static bool IsActive { get; set; } = false;
+        public static bool IsActive
+        {
+            get => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_COMMAND);
+            set => MenuStateRegistry.SetActive(MenuStateRegistry.BATTLE_COMMAND, value);
+        }
 
-        // State machine offsets (from dump.cs)
-        // KeyInput.BattleCommandSelectController has stateMachine at offset 0x48
+        // State machine offset for BattleCommandSelectController (from dump.cs)
         private const int OFFSET_STATE_MACHINE = 0x48;
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
-        private const int OFFSET_STATE_TAG = 0x10;
 
         // BattleCommandSelectController.State values (from dump.cs line 435181)
         private const int STATE_NONE = 0;
@@ -52,33 +54,9 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         private static int GetCurrentState(BattleCommandSelectController controller)
         {
-            try
-            {
-                IntPtr controllerPtr = controller.Pointer;
-                if (controllerPtr == IntPtr.Zero)
-                    return -1;
-
-                unsafe
-                {
-                    // Read stateMachine pointer at offset 0x48
-                    IntPtr stateMachinePtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_STATE_MACHINE);
-                    if (stateMachinePtr == IntPtr.Zero)
-                        return -1;
-
-                    // Read current State<T> pointer at offset 0x10
-                    IntPtr currentStatePtr = *(IntPtr*)((byte*)stateMachinePtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
-                    if (currentStatePtr == IntPtr.Zero)
-                        return -1;
-
-                    // Read Tag (int) at offset 0x10
-                    int stateValue = *(int*)((byte*)currentStatePtr.ToPointer() + OFFSET_STATE_TAG);
-                    return stateValue;
-                }
-            }
-            catch
-            {
+            if (controller == null)
                 return -1;
-            }
+            return StateReaderHelper.ReadStateTag(controller.Pointer, OFFSET_STATE_MACHINE);
         }
 
         /// <summary>
@@ -116,6 +94,10 @@ namespace FFIII_ScreenReader.Patches
                 BattleTargetPatches.ResetState();
                 BattleCommandSelectController_SetCursor_Patch.ResetState();
 
+                // Clear flee-in-progress flag when a player's turn begins
+                // If flee succeeded, battle would have ended. If we're here, flee failed.
+                GlobalBattleMessageTracker.ClearFleeInProgress();
+
                 string announcement = $"{characterName}'s turn";
                 MelonLogger.Msg($"[Battle Turn] {announcement}");
                 // Turn announcements can interrupt
@@ -140,7 +122,7 @@ namespace FFIII_ScreenReader.Patches
     [HarmonyPatch(typeof(BattleCommandSelectController), "SetCursor", new Type[] { typeof(int) })]
     public static class BattleCommandSelectController_SetCursor_Patch
     {
-        private static int lastAnnouncedIndex = -1;
+        private const string CONTEXT_CURSOR = "BattleCommand.Cursor";
 
         [HarmonyPostfix]
         public static void Postfix(BattleCommandSelectController __instance, int index)
@@ -158,7 +140,7 @@ namespace FFIII_ScreenReader.Patches
                 bool targetActive = BattleTargetPatches.CheckAndUpdateTargetSelectionActive();
 
                 // Log EVERY SetCursor call to understand what's happening
-                MelonLogger.Msg($"[Battle Command] SetCursor called: index={index}, TargetActive={targetActive}, lastIndex={lastAnnouncedIndex}");
+                MelonLogger.Msg($"[Battle Command] SetCursor called: index={index}, TargetActive={targetActive}");
 
                 // SUPPRESSION: If targeting is active, do not announce commands
                 if (targetActive)
@@ -167,13 +149,20 @@ namespace FFIII_ScreenReader.Patches
                     return;
                 }
 
+                // SUPPRESSION: If flee is in progress, do not announce commands
+                // This prevents "Defend" being announced when flee action resets cursor to index 0
+                if (GlobalBattleMessageTracker.IsFleeInProgress)
+                {
+                    MelonLogger.Msg($"[Battle Command] SUPPRESSED - flee in progress");
+                    return;
+                }
+
                 // Skip duplicate announcements
-                if (index == lastAnnouncedIndex)
+                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_CURSOR, index))
                 {
                     MelonLogger.Msg($"[Battle Command] SUPPRESSED - duplicate index");
                     return;
                 }
-                lastAnnouncedIndex = index;
 
                 var contentList = __instance.contentList;
                 if (contentList == null || contentList.Count == 0) return;
@@ -203,7 +192,7 @@ namespace FFIII_ScreenReader.Patches
 
         public static void ResetState()
         {
-            lastAnnouncedIndex = -1;
+            AnnouncementDeduplicator.Reset(CONTEXT_CURSOR);
         }
     }
 
@@ -212,14 +201,21 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     public static class BattleTargetPatches
     {
-        private static int lastAnnouncedPlayerIndex = -1;
-        private static int lastAnnouncedEnemyIndex = -1;
-        public static bool IsTargetSelectionActive { get; private set; } = false;
+        private const string CONTEXT_PLAYER = "BattleTarget.Player";
+        private const string CONTEXT_ENEMY = "BattleTarget.Enemy";
+
+        /// <summary>
+        /// True when target selection is active. Delegates to MenuStateRegistry.
+        /// </summary>
+        public static bool IsTargetSelectionActive
+        {
+            get => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_TARGET);
+            private set => MenuStateRegistry.SetActive(MenuStateRegistry.BATTLE_TARGET, value);
+        }
 
         public static void ResetState()
         {
-            lastAnnouncedPlayerIndex = -1;
-            lastAnnouncedEnemyIndex = -1;
+            AnnouncementDeduplicator.Reset(CONTEXT_PLAYER, CONTEXT_ENEMY);
         }
 
         // Cached reference to avoid FindObjectOfType on every call
@@ -331,15 +327,11 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                if (index == lastAnnouncedPlayerIndex) return;
-                lastAnnouncedPlayerIndex = index;
-                lastAnnouncedEnemyIndex = -1;
+                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_PLAYER, index)) return;
+                AnnouncementDeduplicator.Reset(CONTEXT_ENEMY);
 
                 var playerList = list.TryCast<Il2CppSystem.Collections.Generic.List<BattlePlayerData>>();
-                if (playerList == null || playerList.Count == 0) return;
-                if (index < 0 || index >= playerList.Count) return;
-
-                var selectedPlayer = playerList[index];
+                var selectedPlayer = SelectContentHelper.TryGetItem(playerList, index);
                 if (selectedPlayer == null) return;
 
                 string name = "Unknown";
@@ -393,15 +385,11 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                if (index == lastAnnouncedEnemyIndex) return;
-                lastAnnouncedEnemyIndex = index;
-                lastAnnouncedPlayerIndex = -1;
+                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_ENEMY, index)) return;
+                AnnouncementDeduplicator.Reset(CONTEXT_PLAYER);
 
                 var enemyList = list.TryCast<Il2CppSystem.Collections.Generic.List<BattleEnemyData>>();
-                if (enemyList == null || enemyList.Count == 0) return;
-                if (index < 0 || index >= enemyList.Count) return;
-
-                var selectedEnemy = enemyList[index];
+                var selectedEnemy = SelectContentHelper.TryGetItem(enemyList, index);
                 if (selectedEnemy == null) return;
 
                 string name = "Unknown";

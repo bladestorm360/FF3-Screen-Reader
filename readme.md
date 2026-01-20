@@ -5,10 +5,11 @@
 Adds NVDA output, pathfinding, sound queues and other accessibility aides to Final Fantasy III Pixel Remaster.
 
 ## Known Issues
+There is about a 1 second delay (may be longer on lower spec pc) between the "Press any button" text and when the user games input. This is because the text is announced when the title screen finishes loading but there is another second or so of logo animation before the user is given control.
 Shop menus are reading the first highlighted item on both entry and exit.
 Secret passages, even when opened, do not show properly on the pathfinder. Can use wall bumps and estimation to find, usually near the opening mechanism.
 H in battle announces statistics for all characters, not active character.
-Pop-ups are not reading, usually context-sensative yes or no dialogues such as load game or learn spell. Yes or no options read but not the pop-up text.
+Level up gains are not fully implemented, only Hp is announced.
 
 ## Install
 
@@ -24,14 +25,17 @@ If you created a steam library on another drive, the path will be Drive Letter\\
 FFIII\_screenreader.dll   goes in MelonLoader/mods folder.
 
 ## Keys
-
-J and L or \[ and ]: cycle destinations in pathfinder
-Shift+J and L or - and =: change destination categories
-\\ or p: get directions to selected destination
-Shift+\\ or P: Toggle pathfinding filter so that not all destinations are visible, just ones with a valid path.
+Game:
 WASD or arrow keys: movement
 Enter: Confirm
 Backspace: cancel
+Q: On new game screen, random name for highlighted character. In shop, toggle between statistics and description view.
+Mod:
+J and L or \[ and ]: cycle destinations in pathfinder
+Shift+J and L or - and =: change destination categories
+K: Announce currently selected entity
+\\ or p: get directions to selected destination
+Shift+\\ or P: Toggle pathfinding filter so that not all destinations are visible, just ones with a valid path.
 G: Announce current Gil
 M: Announce current map.
 H: In battle, announce character hp, mp, status effects.

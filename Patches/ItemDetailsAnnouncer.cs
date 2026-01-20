@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using MelonLoader;
 using FFIII_ScreenReader.Core;
+using FFIII_ScreenReader.Utils;
 
 // Type aliases for IL2CPP types
 using MasterManager = Il2CppLast.Data.Master.MasterManager;
@@ -226,29 +227,11 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// Gets the localized name for a job.
+        /// Note: masterManager and messageManager params kept for API compatibility.
         /// </summary>
         private static string GetJobName(MasterManager masterManager, MessageManager messageManager, int jobId)
         {
-            try
-            {
-                var job = masterManager.GetData<Job>(jobId);
-                if (job == null)
-                    return null;
-
-                string mesIdName = job.MesIdName;
-                if (string.IsNullOrEmpty(mesIdName))
-                    return null;
-
-                if (messageManager != null)
-                {
-                    string localizedName = messageManager.GetMessage(mesIdName, false);
-                    if (!string.IsNullOrWhiteSpace(localizedName))
-                        return localizedName;
-                }
-            }
-            catch { }
-
-            return null;
+            return LocalizationHelper.GetJobName(jobId);
         }
 
         /// <summary>

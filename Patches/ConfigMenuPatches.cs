@@ -4,6 +4,7 @@ using MelonLoader;
 using Il2CppLast.UI.KeyInput;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Menus;
+using FFIII_ScreenReader.Utils;
 using UnityEngine;
 using Key = Il2CppSystem.Input.Key;
 using ConfigActualDetailsControllerBase_KeyInput = Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase;
@@ -17,32 +18,36 @@ namespace FFIII_ScreenReader.Patches
     {
         /// <summary>
         /// True when config menu is active and handling announcements.
+        /// Delegates to MenuStateRegistry for centralized state tracking.
         /// </summary>
-        public static bool IsActive { get; set; } = false;
+        public static bool IsActive
+        {
+            get => MenuStateRegistry.IsActive(MenuStateRegistry.CONFIG_MENU);
+            set => MenuStateRegistry.SetActive(MenuStateRegistry.CONFIG_MENU, value);
+        }
 
         /// <summary>
-        /// Check if GenericCursor should be suppressed. Validates controller is still active.
+        /// Returns true if generic cursor reading should be suppressed.
+        /// Validates that config UI is actually visible to handle title screen config menu
+        /// which uses OptionWindowController (not ConfigController) and doesn't trigger SetActive.
         /// </summary>
         public static bool ShouldSuppress()
         {
-            if (!IsActive) return false;
-
-            // Validate config menu controller is still active
-            try
-            {
-                var controller = UnityEngine.Object.FindObjectOfType<ConfigActualDetailsControllerBase_KeyInput>();
-                if (controller == null || !controller.gameObject.activeInHierarchy)
-                {
-                    IsActive = false;
-                    return false;
-                }
-                return true;
-            }
-            catch
-            {
-                IsActive = false;
+            if (!IsActive)
                 return false;
-            }
+
+            // Validate config UI is actually visible (handles title screen config menu case)
+            var configController = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.ConfigController>();
+            if (configController != null && configController.gameObject.activeInHierarchy)
+                return true;
+
+            var commandController = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.ConfigCommandController>();
+            if (commandController != null && commandController.gameObject.activeInHierarchy)
+                return true;
+
+            // Config UI not visible - clear state
+            ResetState();
+            return false;
         }
 
         public static void ResetState()
@@ -58,8 +63,8 @@ namespace FFIII_ScreenReader.Patches
     [HarmonyPatch(typeof(Il2CppLast.UI.KeyInput.ConfigCommandController), nameof(Il2CppLast.UI.KeyInput.ConfigCommandController.SetFocus))]
     public static class ConfigCommandController_SetFocus_Patch
     {
-        private static string lastAnnouncedText = "";
-        private static string lastAnnouncedSettingName = "";
+        private const string CONTEXT_TEXT = "ConfigMenu.Text";
+        private const string CONTEXT_SETTING = "ConfigMenu.Setting";
 
         [HarmonyPostfix]
         public static void Postfix(Il2CppLast.UI.KeyInput.ConfigCommandController __instance, bool isFocus)
@@ -136,24 +141,21 @@ namespace FFIII_ScreenReader.Patches
                 }
 
                 // Skip duplicate announcements
-                if (announcement == lastAnnouncedText)
+                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_TEXT, announcement))
                 {
                     return;
                 }
 
-                // Check if this is the same setting but different value (value changed)
-                if (menuText == lastAnnouncedSettingName && !string.IsNullOrWhiteSpace(configValue))
+                // Check if this is the same setting re-focused (from arrow key value change)
+                string lastSettingName = AnnouncementDeduplicator.GetLastString(CONTEXT_SETTING);
+                if (menuText == lastSettingName)
                 {
-                    // Same setting, value changed - announce just the value
-                    lastAnnouncedText = announcement;
-                    MelonLogger.Msg($"[Config Menu] Value: {configValue}");
-                    FFIII_ScreenReaderMod.SpeakText(configValue, interrupt: true);
+                    // Same setting re-focused - SwitchArrowSelectTypeProcess handles value announcements
                     return;
                 }
 
-                // Different setting - announce full "Setting: Value"
-                lastAnnouncedText = announcement;
-                lastAnnouncedSettingName = menuText;
+                // Different setting - update setting name tracker
+                AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SETTING, menuText);
 
                 MelonLogger.Msg($"[Config Menu] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
@@ -169,8 +171,7 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void ResetState()
         {
-            lastAnnouncedText = "";
-            lastAnnouncedSettingName = "";
+            AnnouncementDeduplicator.Reset(CONTEXT_TEXT, CONTEXT_SETTING);
         }
     }
 
@@ -181,7 +182,7 @@ namespace FFIII_ScreenReader.Patches
     [HarmonyPatch(typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchArrowSelectTypeProcess")]
     public static class ConfigActualDetails_SwitchArrowSelectType_Patch
     {
-        private static string lastArrowValue = "";
+        private const string CONTEXT_ARROW = "ConfigMenu.Arrow";
 
         [HarmonyPostfix]
         public static void Postfix(
@@ -213,9 +214,8 @@ namespace FFIII_ScreenReader.Patches
                             if (IsValidConfigValue(textValue))
                             {
                                 // Only announce if value changed
-                                if (textValue == lastArrowValue) return;
+                                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_ARROW, textValue)) return;
 
-                                lastArrowValue = textValue;
                                 MelonLogger.Msg($"[ConfigMenu] Arrow value changed: {textValue}");
                                 FFIII_ScreenReaderMod.SpeakText(textValue, interrupt: true);
                                 return;
@@ -259,8 +259,8 @@ namespace FFIII_ScreenReader.Patches
     [HarmonyPatch(typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess")]
     public static class ConfigActualDetails_SwitchSliderType_Patch
     {
-        private static string lastSliderPercentage = "";
-        private static ConfigCommandController lastController = null;
+        private const string CONTEXT_SLIDER = "ConfigMenu.Slider";
+        private const string CONTEXT_SLIDER_CONTROLLER = "ConfigMenu.SliderController";
 
         [HarmonyPostfix]
         public static void Postfix(
@@ -279,24 +279,20 @@ namespace FFIII_ScreenReader.Patches
                 string percentage = ConfigMenuReader.GetSliderPercentage(view.Slider);
                 if (string.IsNullOrEmpty(percentage)) return;
 
-                // Only announce if value changed for the SAME controller
-                // This prevents announcements when navigating between different sliders
-                if (controller == lastController && percentage == lastSliderPercentage)
+                // Check if we moved to a different controller (different option)
+                // If so, don't announce - let SetFocus handle the full "Name: Value" announcement
+                if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SLIDER_CONTROLLER, controller))
                 {
+                    // Update the percentage tracker for the new controller
+                    AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SLIDER, percentage);
                     return;
                 }
 
-                // If we moved to a different controller (different option), don't announce
-                // Let SetFocus handle the full "Name: Value" announcement
-                if (controller != lastController)
+                // Same controller - only announce if value changed
+                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SLIDER, percentage))
                 {
-                    lastController = controller;
-                    lastSliderPercentage = percentage;
                     return;
                 }
-
-                // Same controller, value changed - announce just the new value
-                lastSliderPercentage = percentage;
 
                 MelonLogger.Msg($"[ConfigMenu] Slider value changed: {percentage}");
                 FFIII_ScreenReaderMod.SpeakText(percentage, interrupt: true);
@@ -315,7 +311,7 @@ namespace FFIII_ScreenReader.Patches
     [HarmonyPatch(typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchArrowTypeProcess")]
     public static class ConfigActualDetailsTouch_SwitchArrowType_Patch
     {
-        private static string lastTouchArrowValue = "";
+        private const string CONTEXT_TOUCH_ARROW = "ConfigMenu.TouchArrow";
 
         [HarmonyPostfix]
         public static void Postfix(
@@ -346,9 +342,8 @@ namespace FFIII_ScreenReader.Patches
                             if (IsValidTouchConfigValue(textValue))
                             {
                                 // Only announce if value changed
-                                if (textValue == lastTouchArrowValue) return;
+                                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_TOUCH_ARROW, textValue)) return;
 
-                                lastTouchArrowValue = textValue;
                                 MelonLogger.Msg($"[ConfigMenu] Touch arrow value changed: {textValue}");
                                 FFIII_ScreenReaderMod.SpeakText(textValue, interrupt: true);
                                 return;
@@ -392,8 +387,8 @@ namespace FFIII_ScreenReader.Patches
     [HarmonyPatch(typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess")]
     public static class ConfigActualDetailsTouch_SwitchSliderType_Patch
     {
-        private static string lastTouchSliderPercentage = "";
-        private static Il2CppLast.UI.Touch.ConfigCommandController lastTouchController = null;
+        private const string CONTEXT_TOUCH_SLIDER = "ConfigMenu.TouchSlider";
+        private const string CONTEXT_TOUCH_SLIDER_CONTROLLER = "ConfigMenu.TouchSliderController";
 
         [HarmonyPostfix]
         public static void Postfix(
@@ -416,24 +411,20 @@ namespace FFIII_ScreenReader.Patches
                 string percentage = ConfigMenuReader.GetSliderPercentage(slider);
                 if (string.IsNullOrEmpty(percentage)) return;
 
-                // Only announce if value changed for the SAME controller
-                // This prevents announcements when navigating between different sliders
-                if (controller == lastTouchController && percentage == lastTouchSliderPercentage)
+                // Check if we moved to a different controller (different option)
+                // If so, don't announce - let SetFocus handle the full "Name: Value" announcement
+                if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_TOUCH_SLIDER_CONTROLLER, controller))
                 {
+                    // Update the percentage tracker for the new controller
+                    AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_TOUCH_SLIDER, percentage);
                     return;
                 }
 
-                // If we moved to a different controller (different option), don't announce
-                // Let SetFocus handle the full "Name: Value" announcement
-                if (controller != lastTouchController)
+                // Same controller - only announce if value changed
+                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_TOUCH_SLIDER, percentage))
                 {
-                    lastTouchController = controller;
-                    lastTouchSliderPercentage = percentage;
                     return;
                 }
-
-                // Same controller, value changed - announce just the new value
-                lastTouchSliderPercentage = percentage;
 
                 MelonLogger.Msg($"[ConfigMenu] Touch slider value changed: {percentage}");
                 FFIII_ScreenReaderMod.SpeakText(percentage, interrupt: true);
@@ -454,11 +445,23 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// Applies config menu patches using manual Harmony patching.
         /// Note: Most patches now use HarmonyPatch attributes and are auto-applied by MelonLoader.
-        /// This method is kept for any future manual patching needs.
+        /// This method adds transition patches for menu close detection.
         /// </summary>
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
-            MelonLogger.Msg("Config menu patches registered (using HarmonyPatch attributes)");
+            HarmonyPatchHelper.PatchSetActive(harmony, typeof(Il2CppLast.UI.KeyInput.ConfigController),
+                typeof(ConfigMenuPatches), logPrefix: "[Config Menu]");
+        }
+
+        /// <summary>
+        /// Postfix for SetActive - clears state when menu closes.
+        /// </summary>
+        public static void SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                ConfigMenuState.ResetState();
+            }
         }
     }
 }
