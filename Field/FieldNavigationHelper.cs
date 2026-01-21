@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using UnityEngine;
 using MelonLoader;
 using FFIII_ScreenReader.Utils;
@@ -35,6 +36,25 @@ namespace FFIII_ScreenReader.Field
     public static class FieldNavigationHelper
     {
         /// <summary>
+        /// Maps FieldEntity to its TransportationType for vehicle name resolution.
+        /// Populated when scanning Transportation.ModelList.
+        /// </summary>
+        public static Dictionary<FieldEntity, int> VehicleTypeMap { get; } = new Dictionary<FieldEntity, int>();
+
+        // Debug logging flag - logs once per map until reset
+        private static bool hasLoggedTransportation = false;
+
+        /// <summary>
+        /// Resets transportation debug logging and clears VehicleTypeMap (call on map change).
+        /// </summary>
+        public static void ResetTransportationDebug()
+        {
+            hasLoggedTransportation = false;
+            VehicleTypeMap.Clear();
+            MelonLogger.Msg("[Vehicle Debug] VehicleTypeMap cleared");
+        }
+
+        /// <summary>
         /// Gets all field entities in the current map.
         /// </summary>
         public static List<FieldEntity> GetAllFieldEntities()
@@ -59,27 +79,158 @@ namespace FFIII_ScreenReader.Field
                     }
                 }
 
+                // Check if we should log transportation debug (once per session until reset)
+                bool shouldLogTransport = !hasLoggedTransportation;
+
                 // Also check for transportation entities
                 if (fieldMap.fieldController.transportation != null)
                 {
+                    var transportation = fieldMap.fieldController.transportation;
+
+                    if (shouldLogTransport)
+                    {
+                        MelonLogger.Msg($"[Vehicle Debug] Transportation controller exists, checking for vehicles...");
+                    }
+
+                    // Method 1: NeedInteractiveList - returns dynamic vehicle entities
                     try
                     {
-                        var transportationEntities = fieldMap.fieldController.transportation.NeedInteractiveList();
+                        var transportationEntities = transportation.NeedInteractiveList();
+                        if (shouldLogTransport)
+                        {
+                            MelonLogger.Msg($"[Vehicle Debug] NeedInteractiveList returned: {(transportationEntities != null ? transportationEntities.Count.ToString() : "null")} items");
+                        }
+
                         if (transportationEntities != null)
                         {
                             foreach (var interactiveEntity in transportationEntities)
                             {
                                 if (interactiveEntity == null) continue;
 
+                                if (shouldLogTransport)
+                                {
+                                    MelonLogger.Msg($"[Vehicle Debug] NeedInteractiveList item: {interactiveEntity.GetType().Name}");
+                                }
+
                                 var fieldEntity = interactiveEntity.TryCast<FieldEntity>();
                                 if (fieldEntity != null && !results.Contains(fieldEntity))
                                 {
+                                    if (shouldLogTransport)
+                                    {
+                                        MelonLogger.Msg($"[Vehicle Debug] -> TryCast<FieldEntity> succeeded: {fieldEntity.GetType().Name}");
+                                    }
                                     results.Add(fieldEntity);
                                 }
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        if (shouldLogTransport)
+                        {
+                            MelonLogger.Msg($"[Vehicle Debug] NeedInteractiveList exception: {ex.Message}");
+                        }
+                    }
+
+                    // Method 2: Access Transportation.ModelList dictionary via pointer offsets
+                    // TransportationController.infoData (Transportation) at offset 0x18
+                    // Transportation.modelList (Dictionary<int, TransportationInfo>) at offset 0x18
+                    try
+                    {
+                        unsafe
+                        {
+                            IntPtr transportControllerPtr = transportation.Pointer;
+                            if (transportControllerPtr == IntPtr.Zero)
+                            {
+                                if (shouldLogTransport) MelonLogger.Msg($"[Vehicle Debug] TransportationController pointer is null");
+                            }
+                            else
+                            {
+                                // Get infoData (Transportation) at offset 0x18
+                                IntPtr infoDataPtr = *(IntPtr*)((byte*)transportControllerPtr + 0x18);
+                                if (shouldLogTransport) MelonLogger.Msg($"[Vehicle Debug] infoData pointer: 0x{infoDataPtr.ToInt64():X}");
+
+                                if (infoDataPtr != IntPtr.Zero)
+                                {
+                                    // Get modelList (Dictionary) at offset 0x18 in Transportation
+                                    IntPtr modelListPtr = *(IntPtr*)((byte*)infoDataPtr + 0x18);
+                                    if (shouldLogTransport) MelonLogger.Msg($"[Vehicle Debug] modelList pointer: 0x{modelListPtr.ToInt64():X}");
+
+                                    if (modelListPtr != IntPtr.Zero)
+                                    {
+                                        // Try to cast to Dictionary and iterate
+                                        var modelListObj = new Il2CppSystem.Object(modelListPtr);
+                                        var modelDict = modelListObj.TryCast<Il2CppSystem.Collections.Generic.Dictionary<int, TransportationInfo>>();
+
+                                        if (modelDict != null)
+                                        {
+                                            if (shouldLogTransport) MelonLogger.Msg($"[Vehicle Debug] ModelList dictionary count: {modelDict.Count}");
+
+                                            foreach (var kvp in modelDict)
+                                            {
+                                                int transportId = kvp.Key;
+                                                var transportInfo = kvp.Value;
+
+                                                if (transportInfo == null) continue;
+
+                                                bool enabled = transportInfo.Enable;
+                                                int transportType = transportInfo.Type;
+
+                                                if (shouldLogTransport)
+                                                {
+                                                    MelonLogger.Msg($"[Vehicle Debug] Transport ID={transportId}, Type={transportType}, Enable={enabled}");
+                                                }
+
+                                                // Skip non-vehicle types and disabled vehicles
+                                                // Type 0 = None, Type 1 = Player, Type 4 = Symbol, Type 5 = Content (internal markers)
+                                                if (transportType == 0 || transportType == 1 || transportType == 4 || transportType == 5 || !enabled) continue;
+
+                                                var mapObject = transportInfo.MapObject;
+                                                if (mapObject != null)
+                                                {
+                                                    string goName = "";
+                                                    try { goName = mapObject.gameObject?.name ?? ""; } catch { }
+
+                                                    if (shouldLogTransport)
+                                                    {
+                                                        MelonLogger.Msg($"[Vehicle Debug] -> MapObject: {mapObject.GetType().Name}, GO: {goName}");
+                                                    }
+
+                                                    if (!results.Contains(mapObject))
+                                                    {
+                                                        results.Add(mapObject);
+                                                        // Store the transport type for EntityScanner to use
+                                                        VehicleTypeMap[mapObject] = transportType;
+                                                        if (shouldLogTransport)
+                                                        {
+                                                            MelonLogger.Msg($"[Vehicle Debug] -> Added vehicle to results and VehicleTypeMap (Type={transportType})");
+                                                        }
+                                                    }
+                                                }
+                                                else if (shouldLogTransport)
+                                                {
+                                                    MelonLogger.Msg($"[Vehicle Debug] -> MapObject is null for Transport ID={transportId}");
+                                                }
+                                            }
+                                        }
+                                        else if (shouldLogTransport)
+                                        {
+                                            MelonLogger.Msg($"[Vehicle Debug] ModelList TryCast failed");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (shouldLogTransport)
+                        {
+                            MelonLogger.Msg($"[Vehicle Debug] ModelList access exception: {ex.Message}");
+                        }
+                    }
+
+                    hasLoggedTransportation = true;
                 }
             }
             catch (Exception ex)

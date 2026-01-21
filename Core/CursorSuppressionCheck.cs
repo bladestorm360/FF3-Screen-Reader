@@ -39,14 +39,36 @@ namespace FFIII_ScreenReader.Core
         /// Checks all menu states to determine if cursor reading should be suppressed.
         /// Returns suppression result with state name.
         ///
-        /// Order matters - popup check is first (handled specially by caller).
-        /// Battle pause check comes before battle states to allow generic cursor reading.
+        /// Order matters:
+        /// 1. Battle submenus checked FIRST (they have dedicated announcement patches)
+        /// 2. Popup check (handled specially by caller with ReadCurrentButton)
+        /// 3. Other menu states
+        ///
+        /// NOTE: Battle pause menu is handled by special case in CursorNavigation_Postfix
+        /// before this check runs (detects "curosr_parent" in cursor path).
         /// </summary>
         public static SuppressionResult Check()
         {
-            // Battle pause menu - allow generic cursor to read (bypass battle suppressions)
-            if (BattlePauseState.IsActive)
-                return SuppressionResult.None;
+            // === BATTLE SUBMENUS ===
+            // These have dedicated patches that handle announcements.
+
+            // Battle command menu - SetCursor patch handles command announcements
+            if (BattleCommandState.ShouldSuppress())
+                return SuppressionResult.Suppressed("BattleCommand");
+
+            // Battle target selection - needs target HP/status
+            if (BattleTargetPatches.ShouldSuppress())
+                return SuppressionResult.Suppressed("BattleTarget");
+
+            // Battle item menu - needs item data in battle
+            if (BattleItemMenuState.ShouldSuppress())
+                return SuppressionResult.Suppressed("BattleItem");
+
+            // Battle magic menu - needs spell data with charges in battle
+            if (BattleMagicMenuState.ShouldSuppress())
+                return SuppressionResult.Suppressed("BattleMagic");
+
+            // === OTHER MENUS ===
 
             // Popup - special case, handled with ReadCurrentButton
             if (PopupState.ShouldSuppress())
@@ -59,14 +81,6 @@ namespace FFIII_ScreenReader.Core
             // Item menu (item list) - needs item description
             if (ItemMenuState.ShouldSuppress())
                 return SuppressionResult.Suppressed("ItemMenu");
-
-            // Battle command menu - SetCursor patch handles command announcements
-            if (BattleCommandState.ShouldSuppress())
-                return SuppressionResult.Suppressed("BattleCommand");
-
-            // Battle target selection - needs target HP/status
-            if (BattleTargetPatches.ShouldSuppress())
-                return SuppressionResult.Suppressed("BattleTarget");
 
             // Job menu (job list) - needs job level data
             if (JobMenuState.ShouldSuppress())
@@ -83,14 +97,6 @@ namespace FFIII_ScreenReader.Core
             // Equipment menus (slot and item list) - needs stat comparison
             if (EquipMenuState.ShouldSuppress())
                 return SuppressionResult.Suppressed("EquipMenu");
-
-            // Battle item menu - needs item data in battle
-            if (BattleItemMenuState.ShouldSuppress())
-                return SuppressionResult.Suppressed("BattleItem");
-
-            // Battle magic menu - needs spell data with charges in battle
-            if (BattleMagicMenuState.ShouldSuppress())
-                return SuppressionResult.Suppressed("BattleMagic");
 
             // Config menu - needs current setting values
             if (ConfigMenuState.ShouldSuppress())

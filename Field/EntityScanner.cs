@@ -19,6 +19,7 @@ using FieldEntity = Il2CppLast.Entity.Field.FieldEntity;
 using PropertyEntity = Il2CppLast.Map.PropertyEntity;
 using PropertyGotoMap = Il2CppLast.Map.PropertyGotoMap;
 using PropertyTresureBox = Il2CppLast.Map.PropertyTresureBox;
+using PropertyTransportation = Il2CppLast.Map.PropertyTransportation;
 
 namespace FFIII_ScreenReader.Field
 {
@@ -404,6 +405,63 @@ namespace FFIII_ScreenReader.Field
             if (typeName.Contains("FieldPlayer") || goNameLower.Contains("player"))
                 return null;
 
+            // =====================================================
+            // VEHICLE DETECTION - Check EARLY before other types
+            // =====================================================
+
+            // Method 1: Check VehicleTypeMap first (populated from Transportation.ModelList)
+            if (FieldNavigationHelper.VehicleTypeMap.TryGetValue(fieldEntity, out int vehicleType))
+            {
+                string vehicleName = VehicleEntity.GetVehicleName(vehicleType);
+                MelonLogger.Msg($"[Entity Debug] *** VEHICLE (VehicleTypeMap) *** Type={vehicleType}, Name={vehicleName}, GO: {goName}");
+                return new VehicleEntity(fieldEntity, position, vehicleName, vehicleType);
+            }
+
+            // Method 2: Check PropertyTransportation type cast
+            try
+            {
+                var property = fieldEntity.Property;
+                if (property != null)
+                {
+                    var transportProperty = property.TryCast<PropertyTransportation>();
+                    if (transportProperty != null)
+                    {
+                        MelonLogger.Msg($"[Entity Debug] *** VEHICLE (PropertyTransportation) *** Type: {typeName}, GO: {goName}");
+                        string vehicleName = GetVehicleNameFromProperty(goName, typeName);
+                        int vehicleTypeFromName = GetVehicleTypeFromName(vehicleName);
+                        // Skip unknown vehicle types (Type 0)
+                        if (vehicleTypeFromName == 0)
+                        {
+                            MelonLogger.Msg($"[Entity Debug] -> Skipping unknown vehicle type: {vehicleName}");
+                            return null;
+                        }
+                        return new VehicleEntity(fieldEntity, position, vehicleName, vehicleTypeFromName);
+                    }
+                }
+            }
+            catch { }
+
+            // Method 3: String-based vehicle detection (fallback)
+            if (typeName.Contains("Transport") || goNameLower.Contains("ship") ||
+                goNameLower.Contains("canoe") || goNameLower.Contains("airship") ||
+                goNameLower.Contains("submarine") || goNameLower.Contains("enterprise") ||
+                goNameLower.Contains("nautilus") || goNameLower.Contains("invincible"))
+            {
+                MelonLogger.Msg($"[Entity Debug] *** VEHICLE (string match) *** Type: {typeName}, GO: {goName}");
+                string vehicleName = GetVehicleNameFromProperty(goName, typeName);
+                int vehicleTypeFromName = GetVehicleTypeFromName(vehicleName);
+                return new VehicleEntity(fieldEntity, position, vehicleName, vehicleTypeFromName);
+            }
+
+            // =====================================================
+            // RESIDENTCHARA FILTER - Skip party members AFTER vehicle detection
+            // =====================================================
+            if (goNameLower.Contains("residentchara"))
+            {
+                MelonLogger.Msg($"[Entity Debug] FILTERED by residentchara: {typeName}, GO: {goName}");
+                return null;
+            }
+
             // Skip inactive objects
             try
             {
@@ -500,16 +558,42 @@ namespace FFIII_ScreenReader.Field
                 return new EventEntity(fieldEntity, position, entityName, "Interactive");
             }
 
-            // Check for transportation by type name
-            if (typeName.Contains("Transport") || goNameLower.Contains("ship") ||
-                goNameLower.Contains("canoe") || goNameLower.Contains("airship"))
-            {
-                string vehicleName = CleanObjectName(goName, "Vehicle");
-                return new VehicleEntity(fieldEntity, position, vehicleName, 0);
-            }
-
             // Skip unidentifiable entities
             return null;
+        }
+
+        /// <summary>
+        /// Gets a vehicle name from the game object name or type name.
+        /// </summary>
+        private string GetVehicleNameFromProperty(string goName, string typeName)
+        {
+            string goNameLower = goName.ToLower();
+
+            if (goNameLower.Contains("canoe")) return "Canoe";
+            if (goNameLower.Contains("enterprise")) return "Airship";
+            if (goNameLower.Contains("nautilus")) return "Submarine";
+            if (goNameLower.Contains("invincible")) return "Airship";
+            if (goNameLower.Contains("airship")) return "Airship";
+            if (goNameLower.Contains("submarine")) return "Submarine";
+            if (goNameLower.Contains("ship")) return "Ship";
+
+            // Fallback to cleaned name
+            return CleanObjectName(goName, "Vehicle");
+        }
+
+        /// <summary>
+        /// Gets a vehicle type from the vehicle name (reverse lookup).
+        /// </summary>
+        private int GetVehicleTypeFromName(string vehicleName)
+        {
+            string nameLower = vehicleName.ToLower();
+
+            if (nameLower.Contains("canoe")) return 2;      // Ship type for canoe
+            if (nameLower.Contains("ship")) return 2;       // Ship
+            if (nameLower.Contains("airship")) return 3;    // Plane
+            if (nameLower.Contains("submarine")) return 6;  // Submarine
+
+            return 0; // Unknown
         }
 
         /// <summary>

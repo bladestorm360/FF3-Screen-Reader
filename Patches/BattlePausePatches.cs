@@ -36,6 +36,10 @@ namespace FFIII_ScreenReader.Patches
                     var uiManager = BattleUIManager.Instance;
                     if (uiManager == null) return false;
 
+                    // Must be initialized (actually in battle) before reading pause state
+                    // Without this check, garbage memory values outside battle can cause false positives
+                    if (!uiManager.Initialized) return false;
+
                     // Read pauseController pointer at offset 0x90
                     IntPtr uiManagerPtr = uiManager.Pointer;
                     IntPtr pauseControllerPtr = Marshal.ReadIntPtr(uiManagerPtr + OFFSET_PAUSE_CONTROLLER);

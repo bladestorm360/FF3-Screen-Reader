@@ -592,12 +592,62 @@ public static bool IsActive
 
 2. `CursorSuppressionCheck.Check()` bypasses when pause menu active:
 ```csharp
-// First check - before other battle suppressions
+// Checked AFTER battle submenus - allows generic reading only when no submenu active
 if (BattlePauseState.IsActive)
     return SuppressionResult.None;
 ```
 
 3. Generic cursor navigation + `MenuTextDiscovery` reads the pause menu items.
+
+### Suppression Check Order Fix (2026-01-21)
+
+**Problem:** MenuTextDiscovery was running during battle submenus (target selection, items, magic), announcing garbage text ("Attack", ":", "Lv.") that interrupted proper announcements.
+
+**Cause:** `BattlePauseState.IsActive` was checked FIRST in `CursorSuppressionCheck.Check()`. When it returned true (possibly due to memory state during battle), it returned `SuppressionResult.None` and skipped all other suppression checks including `BattleTargetPatches`, `BattleItemMenuState`, and `BattleMagicMenuState`.
+
+**Solution:** Reordered `CursorSuppressionCheck.Check()` to check battle submenus BEFORE `BattlePauseState`:
+1. BattleCommandState
+2. BattleTargetPatches
+3. BattleItemMenuState
+4. BattleMagicMenuState
+5. BattlePauseState (only allows generic reading if no submenu is active)
+6. Other menu states...
+
+### BattlePauseState Initialization Check (2026-01-21)
+
+**Problem:** After the suppression reorder fix, out-of-battle menus (Items, Magic, Equipment) were also being interrupted by MenuTextDiscovery garbage text.
+
+**Cause:** `BattlePauseState.IsActive` was returning `true` outside of battle because:
+- `BattleUIManager.Instance` singleton persists even when not in battle
+- Memory at offset 0x71 contained garbage non-zero values
+- This caused `CursorSuppressionCheck` to return `SuppressionResult.None` early, skipping checks for `ItemMenuState`, `MagicMenuState`, etc.
+
+**Solution:** Added `Initialized` check to `BattlePauseState.IsActive`:
+```csharp
+if (!uiManager.Initialized) return false;
+```
+This ensures pause state is only checked when battle UI is actually initialized, preventing garbage memory reads outside of battle.
+
+### Battle Pause Menu Direct Reading (2026-01-21)
+
+**Problem:** After the Initialized check fix, battle pause menu (Resume/Controls/Return to Title) stopped being read because:
+- Battle command state suppression runs before pause state check
+- `BattleCommandState.ShouldSuppress()` returns true during battle
+- Suppression prevents MenuTextDiscovery from running for pause menu
+
+**Solution:** Added special case in `CursorNavigation_Postfix` to detect pause menu cursor BEFORE suppression check:
+```csharp
+// Cursor path contains "curosr_parent" (game typo) when in pause menu
+if (cursorPath.Contains("curosr_parent"))
+{
+    CoroutineManager.StartManaged(
+        MenuTextDiscovery.WaitAndReadCursor(cursor, "Navigate", 0, false)
+    );
+    return;
+}
+```
+
+Also removed `BattlePauseState.IsActive` check from `CursorSuppressionCheck` since it's no longer needed - pause menu is handled by the special case before suppression runs.
 
 ### Key Offsets
 | Class | Field | Offset |
@@ -609,3 +659,142 @@ if (BattlePauseState.IsActive)
 
 ### Future Consideration
 May revisit to find a hookable method instead of direct memory reading. The game likely shows/hides the pause menu via Unity's `SetActive()` on GameObjects, which bypasses the controller methods we tried to patch.
+
+---
+
+## RESOLVED: Entity Scanner Not Updating on World Map (2026-01-21)
+
+### Problem
+When transitioning from a dungeon to the world map (overworld), the entity scanner continued to show entities from the previous dungeon map. For example, after exiting "Ancients' Maze 1F" to "World Map", the scanner still showed "Exit → Ancients' Maze Earth Crystal" from the dungeon.
+
+### Cause
+`CheckMapTransition()` announced the new map name but did not trigger an entity rescan. The `entityMap` cache retained stale dungeon entities.
+
+`RefreshEntitiesIfNeeded()` only rescanned when `Entities.Count == 0`, but after a map change the list was NOT empty - it contained old entities. So no rescan happened.
+
+### Solution
+**File:** `Core/FFIII_ScreenReaderMod.cs`
+
+Call `entityScanner.ForceRescan()` in `CheckMapTransition()` when map ID changes:
+```csharp
+// In CheckMapTransition(), after announcing the new map:
+Utils.MoveStateHelper.OnMapTransition(isWorldMap);
+
+// Force entity rescan on map change to clear stale entities from previous map
+entityScanner.ForceRescan();
+```
+
+`ForceRescan()` clears the `entityMap` cache and performs a fresh scan with the new map's entities.
+
+---
+
+## IMPLEMENTED: "Not on Map" Guard (2026-01-21)
+
+### Problem
+Entity navigation (J/L/K keys, category cycling, pathfinding) could be attempted from title screen, menus, loading screens, etc., potentially causing garbage output or crashes.
+
+### Solution (Ported from FF4)
+**File:** `Core/FFIII_ScreenReaderMod.cs`
+
+Added `EnsureFieldContext()` method that checks:
+1. `FieldMap` exists and `activeInHierarchy`
+2. `FieldPlayerController` exists with valid `fieldPlayer`
+
+Returns `false` and speaks "Not on map" if either check fails.
+
+```csharp
+private bool EnsureFieldContext()
+{
+    var fieldMap = GameObjectCache.Get<FieldMap>();
+    if (fieldMap == null || !fieldMap.gameObject.activeInHierarchy)
+    {
+        SpeakText("Not on map");
+        return false;
+    }
+
+    var playerController = GameObjectCache.Get<FieldPlayerController>();
+    if (playerController?.fieldPlayer == null)
+    {
+        SpeakText("Not on map");
+        return false;
+    }
+
+    return true;
+}
+```
+
+Guard added to these methods:
+- `CycleNext()` / `CyclePrevious()` - J/L entity cycling
+- `AnnounceCurrentEntity()` - P/\ pathfind to entity
+- `AnnounceEntityOnly()` - entity description
+- `CycleNextCategory()` / `CyclePreviousCategory()` - Shift+J/L
+- `ResetToAllCategory()`
+
+**Fix (2026-01-21):** Initial implementation only registered `FieldMap` in `DelayedInitialScan()`, not `FieldPlayerController`. Added registration for both:
+```csharp
+var playerController = UnityEngine.Object.FindObjectOfType<FieldPlayerController>();
+if (playerController != null)
+{
+    GameObjectCache.Register(playerController);
+    LoggerInstance.Msg("[ComponentCache] Cached FieldPlayerController");
+}
+```
+
+---
+
+## IMPLEMENTED: Vehicle Tracking via VehicleTypeMap (2026-01-21)
+
+### Problem
+Vehicles were either not detected, detected as NPCs, or announced as "ResidentCharaEntity" because:
+1. No tracking of which FieldEntities are vehicles with their TransportationType
+2. Vehicle detection was at the END of ConvertToNavigableEntity (string matching fallback)
+3. No filtering for ResidentChara (party members following player)
+4. VehicleEntity.GetVehicleName() mapping was incorrect
+
+### Solution (Ported from FF2)
+
+**1. FieldNavigationHelper.cs:**
+- Added `VehicleTypeMap` dictionary: `Dictionary<FieldEntity, int>` mapping entities to TransportationType
+- Added `ResetTransportationDebug()` to clear map on map transitions
+- Updated `GetAllFieldEntities()` to iterate `Transportation.ModelList` via pointer offsets:
+  - `TransportationController.Pointer + 0x18` → `infoData`
+  - `infoData + 0x18` → `modelList` (Dictionary<int, TransportationInfo>)
+  - For each enabled vehicle (Type not 0, 1, 4, 5): store `VehicleTypeMap[mapObject] = transportType`
+
+**2. EntityScanner.cs - ConvertToNavigableEntity():**
+- Vehicle detection moved EARLY (after player skip, before other types)
+- Detection order:
+  1. `VehicleTypeMap.TryGetValue()` - most reliable
+  2. `PropertyTransportation` type cast - secondary
+  3. String pattern matching - fallback
+- ResidentChara filtering AFTER vehicle detection: `goNameLower.Contains("residentchara")` returns null
+
+**3. NavigableEntity.cs - VehicleEntity.GetVehicleName():**
+Updated to use correct TransportationType enum values:
+```csharp
+case 2: return "Ship";          // Ship (Canoe, Viking Ship)
+case 3: return "Airship";       // Plane (Enterprise)
+case 6: return "Submarine";     // Submarine (Nautilus)
+case 7: return "Airship";       // LowFlying
+case 8: return "Airship";       // SpecialPlane (Invincible)
+```
+
+**4. FFIII_ScreenReaderMod.cs:**
+- Call `FieldNavigationHelper.ResetTransportationDebug()` in `CheckMapTransition()` before `ForceRescan()`
+
+### TransportationType Enum (FF3)
+```
+0 = None, 1 = Player, 2 = Ship, 3 = Plane (Airship),
+4 = Symbol, 5 = Content, 6 = Submarine, 7 = LowFlying,
+8 = SpecialPlane
+```
+Note: Values 9-12 (Chocobos, MagicalArmor) exist in the shared engine enum but are unused in FF3.
+
+### Memory Offsets for Vehicle Detection
+| Class | Field | Offset |
+|-------|-------|--------|
+| TransportationController | infoData | 0x18 |
+| Transportation | modelList | 0x18 |
+| TransportationInfo | MapObject | 0x28 |
+| TransportationInfo | Type | 0x6C |
+| TransportationInfo | Enable | 0x48 |

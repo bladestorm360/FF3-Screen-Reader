@@ -29,6 +29,8 @@ Screen reader accessibility mod for Final Fantasy III Pixel Remaster. Provides T
 | 7.3 | Status Details Navigation | DONE |
 | 7.4 | Confirmation Popups | DONE |
 | 7.5 | Map Transition Announcements | DONE |
+| 7.6 | Entity Scanner Map Guard | DONE |
+| 7.7 | Vehicle Category Tracking | DONE |
 
 ---
 
@@ -39,6 +41,7 @@ Screen reader accessibility mod for Final Fantasy III Pixel Remaster. Provides T
 - **Status Details**: Job Level stat via `BattleUtility.GetJobLevel()`
 - **Vehicle Transitions**: Patches `GetOn()`/`GetOff()` for boarding announcements
 - **Landing Detection**: Patches `ShowLandingGuide(bool)` for "Can land" announcements
+- **Vehicle Category**: Vehicles tracked via `VehicleTypeMap` from `Transportation.ModelList`, filtered from ResidentChara
 - **Confirmation Popups**: Patches base `Popup.Open()` with IL2CPP `TryCast<T>()` for type detection
 - **Map Transitions**: Automatic "Entering {mapName}" announcements with deduplication via `LocationMessageTracker`
 
@@ -90,19 +93,40 @@ Screen reader accessibility mod for Final Fantasy III Pixel Remaster. Provides T
 
 Both hooks use 1-frame delayed coroutine to ensure game state updates before rescan. See `debug.md` for technical details.
 
-### Battle Pause Menu Reading (RESOLVED 2026-01-20)
+### Battle Pause Menu Reading (RESOLVED 2026-01-21)
 
 **Problem:** Battle pause menu (spacebar during battle) with Resume/Controls/Return to Title options was not being read. `BattleCommandState` suppression was blocking cursor navigation.
 
 **Solution:**
-- `BattlePauseState.IsActive` reads game memory directly (no hookable method fires reliably)
-- Reads `BattleUIManager.Instance` → offset 0x90 (`pauseController`) → offset 0x71 (`isActivePauseMenu`)
-- `CursorSuppressionCheck` bypasses all battle suppression when `BattlePauseState.IsActive` is true
-- `MenuTextDiscovery` handles reading via generic cursor navigation
+- Detect pause menu by cursor path containing `curosr_parent` (game typo)
+- Special case in `CursorNavigation_Postfix` handles pause menu BEFORE suppression check
+- `MenuTextDiscovery` reads the menu items via generic text discovery strategies
 
-**Note:** May revisit later to find a hookable method instead of direct memory reading. Multiple methods were tried (`SetEnablePauseMenu`, `SetEnablePauseRoot`, `UpdateSelect`, `UpdateFocus`) but none fired at runtime.
+**Files:** `Core/FFIII_ScreenReaderMod.cs` (CursorNavigation_Postfix)
 
-**Files:** `Patches/BattlePausePatches.cs`, `Core/CursorSuppressionCheck.cs`
+### Entity Scanner World Map Refresh (RESOLVED 2026-01-21)
+
+**Problem:** Entity scanner showed stale entities from previous map after transitioning to world map (e.g., dungeon exits still shown after leaving dungeon).
+
+**Solution:** Call `entityScanner.ForceRescan()` in `CheckMapTransition()` when map ID changes. This clears the entity cache and performs a fresh scan with the new map's entities.
+
+### "Not on Map" Guard (RESOLVED 2026-01-21)
+
+**Problem:** Entity navigation could be attempted from title screen, menus, or loading screens.
+
+**Solution:** Added `EnsureFieldContext()` guard (ported from FF4) that checks `FieldMap.activeInHierarchy` and `FieldPlayerController.fieldPlayer`. Returns "Not on map" if not on a valid field. Applied to all entity navigation methods.
+
+### Vehicle Category Tracking (RESOLVED 2026-01-21)
+
+**Problem:** Vehicles not tracked in entity scanner. Were either not detected, detected as NPCs, or announced as "ResidentCharaEntity".
+
+**Solution:** Ported FF2's `VehicleTypeMap` system:
+- `FieldNavigationHelper.VehicleTypeMap` populated from `Transportation.ModelList` via pointer offsets
+- `ConvertToNavigableEntity()` checks VehicleTypeMap FIRST, before other type detection
+- ResidentChara entities filtered AFTER vehicle detection
+- `VehicleEntity.GetVehicleName()` fixed to use correct TransportationType enum values
+
+**Files:** `Field/FieldNavigationHelper.cs`, `Field/EntityScanner.cs`, `Field/NavigableEntity.cs`, `Core/FFIII_ScreenReaderMod.cs`
 
 ---
 

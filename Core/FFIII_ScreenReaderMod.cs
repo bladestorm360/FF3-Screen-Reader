@@ -462,7 +462,7 @@ namespace FFIII_ScreenReader.Core
             // Wait 0.5 seconds for scene to fully initialize and entities to spawn
             yield return new UnityEngine.WaitForSeconds(0.5f);
 
-            // Try to find and cache FieldMap
+            // Try to find and cache FieldMap and FieldPlayerController
             try
             {
                 var fieldMap = UnityEngine.Object.FindObjectOfType<FieldMap>();
@@ -474,6 +474,14 @@ namespace FFIII_ScreenReader.Core
                     // Initial entity scan
                     entityScanner.ScanEntities();
                     LoggerInstance.Msg($"[ComponentCache] Found {entityScanner.Entities.Count} entities");
+                }
+
+                // Also cache FieldPlayerController for EnsureFieldContext() checks
+                var playerController = UnityEngine.Object.FindObjectOfType<FieldPlayerController>();
+                if (playerController != null)
+                {
+                    GameObjectCache.Register(playerController);
+                    LoggerInstance.Msg("[ComponentCache] Cached FieldPlayerController");
                 }
             }
             catch (Exception ex)
@@ -517,6 +525,12 @@ namespace FFIII_ScreenReader.Core
                         // Check if entering interior map - if so, switch to on-foot state
                         bool isWorldMap = IsCurrentMapWorldMap();
                         Utils.MoveStateHelper.OnMapTransition(isWorldMap);
+
+                        // Clear vehicle type map on map change so it gets repopulated with new map's vehicles
+                        Field.FieldNavigationHelper.ResetTransportationDebug();
+
+                        // Force entity rescan on map change to clear stale entities from previous map
+                        entityScanner.ForceRescan();
                     }
                     else if (lastAnnouncedMapId == -1)
                     {
@@ -553,6 +567,9 @@ namespace FFIII_ScreenReader.Core
 
         internal void AnnounceCurrentEntity()
         {
+            if (!EnsureFieldContext())
+                return;
+
             RefreshEntitiesIfNeeded();
 
             var entity = entityScanner.CurrentEntity;
@@ -623,6 +640,9 @@ namespace FFIII_ScreenReader.Core
 
         internal void CycleNext()
         {
+            if (!EnsureFieldContext())
+                return;
+
             RefreshEntitiesIfNeeded();
 
             if (entityScanner.Entities.Count == 0)
@@ -637,6 +657,9 @@ namespace FFIII_ScreenReader.Core
 
         internal void CyclePrevious()
         {
+            if (!EnsureFieldContext())
+                return;
+
             RefreshEntitiesIfNeeded();
 
             if (entityScanner.Entities.Count == 0)
@@ -651,6 +674,9 @@ namespace FFIII_ScreenReader.Core
 
         internal void AnnounceEntityOnly()
         {
+            if (!EnsureFieldContext())
+                return;
+
             var entity = entityScanner.CurrentEntity;
             if (entity == null)
             {
@@ -750,8 +776,37 @@ namespace FFIII_ScreenReader.Core
             return null;
         }
 
+        /// <summary>
+        /// Checks if player is on an active field map.
+        /// Returns true if on valid map (ready for entity navigation), false otherwise.
+        /// Ported from FF4 to prevent entity navigation on title screen, menus, loading screens.
+        /// </summary>
+        private bool EnsureFieldContext()
+        {
+            // Check if FieldMap exists and is active
+            var fieldMap = GameObjectCache.Get<FieldMap>();
+            if (fieldMap == null || !fieldMap.gameObject.activeInHierarchy)
+            {
+                SpeakText("Not on map");
+                return false;
+            }
+
+            // Check if player controller exists
+            var playerController = GameObjectCache.Get<FieldPlayerController>();
+            if (playerController?.fieldPlayer == null)
+            {
+                SpeakText("Not on map");
+                return false;
+            }
+
+            return true;
+        }
+
         internal void CycleNextCategory()
         {
+            if (!EnsureFieldContext())
+                return;
+
             // Cycle to next category
             int nextCategory = ((int)currentCategory + 1) % CategoryCount;
             currentCategory = (EntityCategory)nextCategory;
@@ -763,6 +818,9 @@ namespace FFIII_ScreenReader.Core
 
         internal void CyclePreviousCategory()
         {
+            if (!EnsureFieldContext())
+                return;
+
             // Cycle to previous category
             int prevCategory = (int)currentCategory - 1;
             if (prevCategory < 0)
@@ -777,6 +835,9 @@ namespace FFIII_ScreenReader.Core
 
         internal void ResetToAllCategory()
         {
+            if (!EnsureFieldContext())
+                return;
+
             if (currentCategory == EntityCategory.All)
             {
                 SpeakText("Already in All category");
@@ -1046,6 +1107,18 @@ namespace FFIII_ScreenReader.Core
 
                 // DEBUG: Log PopupState
                 MelonLogger.Msg($"[CursorNav] PopupState: Active={Patches.PopupState.IsConfirmationPopupActive}, Type={Patches.PopupState.CurrentPopupType}, CmdListOffset={Patches.PopupState.CommandListOffset}");
+
+                // === BATTLE PAUSE MENU SPECIAL CASE ===
+                // Must be checked BEFORE suppression because battle states would suppress it.
+                // Cursor path contains "curosr_parent" (game typo) when in pause menu.
+                if (cursorPath.Contains("curosr_parent"))
+                {
+                    MelonLogger.Msg("[CursorNav] Battle pause menu detected - reading directly");
+                    CoroutineManager.StartManaged(
+                        MenuTextDiscovery.WaitAndReadCursor(cursor, "Navigate", 0, false)
+                    );
+                    return;
+                }
 
                 // === CENTRALIZED STATE CHECKS via CursorSuppressionCheck ===
                 // Checks all menu states and returns which one should suppress cursor reading

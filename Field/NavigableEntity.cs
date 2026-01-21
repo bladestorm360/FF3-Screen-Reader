@@ -359,15 +359,19 @@ namespace FFIII_ScreenReader.Field
 
         public static string GetVehicleName(int id)
         {
-            // FF3-specific vehicle names - adjust based on game
+            // FF3 TransportationType enum values (from MapConstants.TransportationType)
+            // Note: The enum contains values for all PR games, but FF3 only uses a subset
             switch (id)
             {
-                case 1: return "Player";
-                case 2: return "Canoe";
-                case 3: return "Airship";
-                case 4: return "Enterprise";
-                case 5: return "Nautilus";
-                case 6: return "Invincible";
+                case 0: return "Vehicle";       // None - shouldn't happen
+                case 1: return "Player";        // Player - shouldn't be a vehicle
+                case 2: return "Ship";          // Ship (Canoe, Viking Ship)
+                case 3: return "Airship";       // Plane (Enterprise)
+                case 4: return "Vehicle";       // Symbol - internal marker
+                case 5: return "Vehicle";       // Content - internal marker
+                case 6: return "Submarine";     // Submarine (Nautilus)
+                case 7: return "Airship";       // LowFlying
+                case 8: return "Airship";       // SpecialPlane (Invincible)
                 default: return $"Vehicle {id}";
             }
         }
