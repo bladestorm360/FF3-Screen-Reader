@@ -32,6 +32,8 @@ using TouchGameOverSelectPopup = Il2CppLast.UI.Touch.GameOverSelectPopup;
 using TouchTitleWindowController = Il2CppLast.UI.Touch.TitleWindowController;
 using TouchTitleWindowView = Il2CppLast.UI.Touch.TitleWindowView;
 using KeyInputTitleWindowView = Il2CppLast.UI.KeyInput.TitleWindowView;
+using KeyInputTitleMenuCommandController = Il2CppLast.UI.KeyInput.TitleMenuCommandController;
+using TouchTitleMenuCommandController = Il2CppLast.UI.Touch.TitleMenuCommandController;
 
 // Splash/Title screen
 using SplashController = Il2CppLast.UI.SplashController;
@@ -287,10 +289,58 @@ namespace FFIII_ScreenReader.Patches
                 {
                     MelonLogger.Warning("[Popup] SystemIndicator.Hide method not found");
                 }
+
+                // Step 4: Patch TitleMenuCommandController.SetEnableMainMenu to clear state when title menu becomes active
+                // This is called when user presses button on "Press any button" screen
+                TryPatchTitleMenuCommand(harmony);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Popup] Error patching title screen: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patch TitleMenuCommandController.SetEnableMainMenu(bool) in both KeyInput and Touch namespaces.
+        /// Clears all menu states when title menu becomes enabled (after "Press any button").
+        /// </summary>
+        private static void TryPatchTitleMenuCommand(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                // Patch KeyInput version
+                Type keyInputType = typeof(KeyInputTitleMenuCommandController);
+                var keyInputMethod = AccessTools.Method(keyInputType, "SetEnableMainMenu", new[] { typeof(bool) });
+                if (keyInputMethod != null)
+                {
+                    var postfix = typeof(PopupPatches).GetMethod(nameof(TitleMenuCommand_SetEnableMainMenu_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(keyInputMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[Popup] Patched KeyInput.TitleMenuCommandController.SetEnableMainMenu (clears state on title menu)");
+                }
+                else
+                {
+                    MelonLogger.Warning("[Popup] KeyInput.TitleMenuCommandController.SetEnableMainMenu not found");
+                }
+
+                // Patch Touch version
+                Type touchType = typeof(TouchTitleMenuCommandController);
+                var touchMethod = AccessTools.Method(touchType, "SetEnableMainMenu", new[] { typeof(bool) });
+                if (touchMethod != null)
+                {
+                    var postfix = typeof(PopupPatches).GetMethod(nameof(TitleMenuCommand_SetEnableMainMenu_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(touchMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[Popup] Patched Touch.TitleMenuCommandController.SetEnableMainMenu (clears state on title menu)");
+                }
+                else
+                {
+                    MelonLogger.Warning("[Popup] Touch.TitleMenuCommandController.SetEnableMainMenu not found");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Popup] Error patching TitleMenuCommandController: {ex.Message}");
             }
         }
 
@@ -693,6 +743,9 @@ namespace FFIII_ScreenReader.Patches
             {
                 MelonLogger.Msg("[Popup] SplashController_InitializeTitle_Postfix called - storing text silently");
 
+                // Note: State clearing moved to TitleMenuCommand_SetEnableMainMenu_Postfix
+                // which fires when title menu actually becomes enabled (after button press)
+
                 if (__instance == null)
                 {
                     MelonLogger.Msg("[Popup] SplashController is null");
@@ -795,6 +848,33 @@ namespace FFIII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Popup] Error in SystemIndicator.Hide postfix: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Postfix for TitleMenuCommandController.SetEnableMainMenu(bool).
+        /// Called when title menu becomes enabled/disabled.
+        /// Clears all menu states when isEnable=true (title menu becoming active after button press).
+        /// </summary>
+        public static void TitleMenuCommand_SetEnableMainMenu_Postfix(bool isEnable)
+        {
+            try
+            {
+                MelonLogger.Msg($"[Popup] TitleMenuCommand_SetEnableMainMenu_Postfix called with isEnable={isEnable}");
+
+                if (isEnable)
+                {
+                    // Title menu is becoming active - clear all battle/menu states
+                    // This happens after user presses button on "Press any button" screen
+                    MelonLogger.Msg("[Popup] Title menu enabled - clearing all menu states");
+                    MenuStateRegistry.ResetAll();
+                    BattleResultPatches.ClearAllBattleMenuFlags();
+                    MelonLogger.Msg("[Popup] All menu states cleared for title screen");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Popup] Error in SetEnableMainMenu postfix: {ex.Message}");
             }
         }
 

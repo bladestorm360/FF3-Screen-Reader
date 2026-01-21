@@ -29,6 +29,7 @@ namespace FFIII_ScreenReader.Utils
         public const string STATUS_MENU = "StatusMenu";
         public const string STATUS_DETAILS = "StatusDetails";
         public const string POPUP = "Popup";
+        public const string EVENT_ITEM_SELECT = "EventItemSelect";
 
         // Central state storage
         private static readonly Dictionary<string, bool> _states = new Dictionary<string, bool>();

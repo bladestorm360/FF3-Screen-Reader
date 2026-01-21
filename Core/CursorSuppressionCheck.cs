@@ -106,6 +106,10 @@ namespace FFIII_ScreenReader.Core
             if (MagicMenuState.ShouldSuppress())
                 return SuppressionResult.Suppressed("MagicMenu");
 
+            // NPC event item selection - needs item descriptions
+            if (EventItemSelectState.ShouldSuppress())
+                return SuppressionResult.Suppressed("EventItemSelect");
+
             // No suppression needed
             return SuppressionResult.None;
         }

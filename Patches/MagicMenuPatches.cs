@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
@@ -101,8 +102,11 @@ namespace FFIII_ScreenReader.Patches
             return true;
         }
 
-        // AbilityWindowController.State enum values (from dump.cs)
-        private const int STATE_COMMAND = 7;  // Command menu state
+        // AbilityWindowController.State enum values (from dump.cs line 281758)
+        public const int STATE_USE_LIST = 1;      // Use mode spell list
+        public const int STATE_MEMORIZE_LIST = 3; // Learn mode spell list
+        public const int STATE_REMOVE_LIST = 4;   // Remove mode spell list
+        private const int STATE_COMMAND = 7;       // Command menu state
 
         // State machine offset for AbilityWindowController
         private const int OFFSET_STATE_MACHINE = 0x88;
@@ -111,7 +115,7 @@ namespace FFIII_ScreenReader.Patches
         /// Gets the current state from AbilityWindowController's state machine.
         /// Returns -1 if unable to read state.
         /// </summary>
-        private static int GetWindowControllerState()
+        public static int GetWindowControllerState()
         {
             var windowController = UnityEngine.Object.FindObjectOfType<AbilityWindowController>();
             if (windowController == null || !windowController.gameObject.activeInHierarchy)
@@ -242,8 +246,11 @@ namespace FFIII_ScreenReader.Patches
         private const int OFFSET_DATA_LIST = 0x38;         // List<OwnedAbility> dataList (spells for Use/Remove)
         private const int OFFSET_ABILITY_ITEM_LIST = 0x40; // List<OwnedItemData> abilityItemList (spell tomes for Learn)
         private const int OFFSET_CONTENT_LIST = 0x60;      // List<BattleAbilityInfomationContentController> contentList
-        private const int OFFSET_IS_ITEM_LIST_CHECK = 0x29; // bool IsItemListCheck (true = Learn mode)
         private const int OFFSET_TARGET_CHARACTER = 0x98;  // OwnedCharacterData targetCharacterData
+
+        // Memory offset from dump.cs (Serial.FF3.UI.KeyInput.AbilityWindowController)
+        // Note: "isLearnigItem" is a typo in the game code
+        private const int OFFSET_IS_LEARNING_ITEM = 0xA8;  // bool isLearnigItem (true = Learn mode)
 
         // AbilityWindowController.State enum values (from dump.cs line 281758)
         private const int STATE_COMMAND = 7;  // Command menu state (used by SetNextState_Postfix)
@@ -292,29 +299,26 @@ namespace FFIII_ScreenReader.Patches
             {
                 Type controllerType = typeof(AbilityContentListController);
 
-                // Find UpdateController(bool, bool, bool)
-                MethodInfo updateControllerMethod = null;
-                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    if (method.Name == "UpdateController")
-                    {
-                        var parameters = method.GetParameters();
-                        if (parameters.Length >= 1)
-                        {
-                            updateControllerMethod = method;
-                            break;
-                        }
-                    }
-                }
+                // Use AccessTools for consistent IL2CPP method access
+                MethodInfo updateControllerMethod = AccessTools.Method(controllerType, "UpdateController",
+                    new[] { typeof(bool), typeof(bool), typeof(bool) });
 
                 if (updateControllerMethod != null)
                 {
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(UpdateController_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(updateControllerMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[Magic Menu] Patched AbilityContentListController.UpdateController for state tracking");
+                }
+                else
+                {
+                    MelonLogger.Warning("[Magic Menu] UpdateController method not found on AbilityContentListController");
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic Menu] Failed to patch UpdateController: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -327,29 +331,26 @@ namespace FFIII_ScreenReader.Patches
             {
                 Type controllerType = typeof(AbilityContentListController);
 
-                // Find SetCursor(Cursor, bool, WithinRangeType)
-                MethodInfo setCursorMethod = null;
-                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    if (method.Name == "SetCursor")
-                    {
-                        var parameters = method.GetParameters();
-                        if (parameters.Length >= 1 && parameters[0].ParameterType.Name == "Cursor")
-                        {
-                            setCursorMethod = method;
-                            break;
-                        }
-                    }
-                }
+                // Use AccessTools for IL2CPP private method access
+                MethodInfo setCursorMethod = AccessTools.Method(controllerType, "SetCursor",
+                    new[] { typeof(GameCursor), typeof(bool), typeof(WithinRangeType) });
 
                 if (setCursorMethod != null)
                 {
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(SetCursor_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setCursorMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[Magic Menu] Patched AbilityContentListController.SetCursor for spell navigation");
+                }
+                else
+                {
+                    MelonLogger.Warning("[Magic Menu] SetCursor method not found on AbilityContentListController");
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic Menu] Failed to patch SetCursor: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -362,29 +363,26 @@ namespace FFIII_ScreenReader.Patches
             {
                 Type controllerType = typeof(AbilityWindowController);
 
-                // Find SetNextState method (private method that takes State enum)
-                MethodInfo setNextStateMethod = null;
-                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    if (method.Name == "SetNextState")
-                    {
-                        var parameters = method.GetParameters();
-                        if (parameters.Length == 1)
-                        {
-                            setNextStateMethod = method;
-                            break;
-                        }
-                    }
-                }
+                // Use AccessTools for IL2CPP private method access
+                // SetNextState takes State enum but Harmony handles enum-to-int in postfix
+                MethodInfo setNextStateMethod = AccessTools.Method(controllerType, "SetNextState");
 
                 if (setNextStateMethod != null)
                 {
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(SetNextState_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[Magic Menu] Patched AbilityWindowController.SetNextState for state transitions");
+                }
+                else
+                {
+                    MelonLogger.Warning("[Magic Menu] SetNextState method not found on AbilityWindowController");
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic Menu] Failed to patch SetNextState: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -617,27 +615,162 @@ namespace FFIII_ScreenReader.Patches
                 if (controllerPtr == IntPtr.Zero)
                     return;
 
-                // Check if we're in Learn mode (spell tomes) or Use/Remove mode (spells)
-                bool isLearnMode = false;
-                unsafe
-                {
-                    isLearnMode = *(bool*)((byte*)controllerPtr.ToPointer() + OFFSET_IS_ITEM_LIST_CHECK);
-                }
+                // Use state machine to determine which list to read from
+                // State 3 (MemorizeList) = Learn mode → abilityItemList
+                // State 1 (UseList) or 4 (RemoveList) = Use/Remove mode → contentList
+                int state = MagicMenuState.GetWindowControllerState();
+                MelonLogger.Msg($"[Magic Menu] Current state: {state}");
 
-                if (isLearnMode)
+                if (state == MagicMenuState.STATE_MEMORIZE_LIST)
                 {
-                    // Learn mode - read from abilityItemList (spell tomes)
-                    AnnounceSpellTome(controllerPtr, cursorIndex);
+                    // Learn mode - use abilityItemList (spell tomes)
+                    if (TryAnnounceFromItemList(controllerPtr, cursorIndex))
+                    {
+                        MelonLogger.Msg("[Magic Menu] Announced from abilityItemList (Learn mode)");
+                    }
+                    else
+                    {
+                        MelonLogger.Msg("[Magic Menu] Learn mode: abilityItemList empty or invalid");
+                    }
+                }
+                else if (state == MagicMenuState.STATE_USE_LIST || state == MagicMenuState.STATE_REMOVE_LIST)
+                {
+                    // Use/Remove mode - use contentList (owned spells)
+                    if (TryAnnounceFromContentList(controllerPtr, cursorIndex))
+                    {
+                        MelonLogger.Msg("[Magic Menu] Announced from contentList (Use/Remove mode)");
+                    }
+                    else
+                    {
+                        MelonLogger.Msg("[Magic Menu] Use/Remove mode: contentList empty or invalid");
+                    }
                 }
                 else
                 {
-                    // Use/Remove mode - read from contentList (spells)
-                    AnnounceSpellAtIndex(controllerPtr, cursorIndex);
+                    MelonLogger.Msg($"[Magic Menu] Unknown state {state}, trying both lists");
+                    // Fallback: try contentList first, then abilityItemList
+                    if (!TryAnnounceFromContentList(controllerPtr, cursorIndex))
+                    {
+                        TryAnnounceFromItemList(controllerPtr, cursorIndex);
+                    }
                 }
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Magic Menu] Error in SetCursor_Postfix: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Tries to announce spell from contentList (Use/Remove mode).
+        /// Returns true if contentList has valid data at the index.
+        /// </summary>
+        private static bool TryAnnounceFromContentList(IntPtr controllerPtr, int index)
+        {
+            try
+            {
+                // Read contentList pointer at offset 0x60
+                IntPtr contentListPtr;
+                unsafe
+                {
+                    contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_CONTENT_LIST);
+                }
+
+                if (contentListPtr == IntPtr.Zero)
+                    return false;
+
+                var contentList = new Il2CppSystem.Collections.Generic.List<BattleAbilityInfomationContentController>(contentListPtr);
+
+                if (contentList.Count == 0)
+                    return false;
+
+                if (index < 0 || index >= contentList.Count)
+                    return false;
+
+                var contentController = contentList[index];
+                if (contentController == null)
+                {
+                    AnnounceEmpty();
+                    return true; // Valid list, just empty slot
+                }
+
+                var ability = contentController.Data;
+                if (ability == null)
+                {
+                    AnnounceEmpty();
+                    return true; // Valid list, just empty slot
+                }
+
+                AnnounceSpell(ability);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic Menu] Error in TryAnnounceFromContentList: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Tries to announce spell tome from abilityItemList (Learn mode).
+        /// Returns true if abilityItemList has valid data at the index.
+        /// </summary>
+        private static bool TryAnnounceFromItemList(IntPtr controllerPtr, int index)
+        {
+            try
+            {
+                // Read abilityItemList pointer at offset 0x40
+                IntPtr itemListPtr;
+                unsafe
+                {
+                    itemListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_ABILITY_ITEM_LIST);
+                }
+
+                if (itemListPtr == IntPtr.Zero)
+                    return false;
+
+                var itemList = new Il2CppSystem.Collections.Generic.List<OwnedItemData>(itemListPtr);
+
+                if (itemList.Count == 0)
+                    return false;
+
+                if (index < 0 || index >= itemList.Count)
+                    return false;
+
+                var itemData = itemList[index];
+                if (itemData == null)
+                {
+                    AnnounceEmpty();
+                    return true; // Valid list, just empty slot
+                }
+
+                // Get item name and description directly from OwnedItemData
+                // Note: "Deiscription" is a typo in the game code
+                string description = null;
+                try
+                {
+                    description = itemData.Deiscription;
+                }
+                catch { }
+
+                string announcement = AnnouncementBuilder.FormatWithDescription(itemData.Name, description);
+                if (string.IsNullOrEmpty(announcement))
+                {
+                    AnnounceEmpty();
+                    return true;
+                }
+
+                if (!MagicMenuState.ShouldAnnounceSpell(announcement.GetHashCode()))
+                    return true; // Valid but deduplicated
+
+                MelonLogger.Msg($"[Magic Menu] Learn announcing: {announcement}");
+                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic Menu] Error in TryAnnounceFromItemList: {ex.Message}");
+                return false;
             }
         }
 

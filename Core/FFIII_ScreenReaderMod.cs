@@ -178,6 +178,9 @@ namespace FFIII_ScreenReader.Core
             // Uses pointer-based field reading to avoid IL2CPP string property crashes
             PopupPatches.ApplyPatches(harmony);
 
+            // Patch NPC event item selection menu (when NPCs request item use)
+            EventItemSelectPatches.Apply(harmony);
+
             // Patch entity interactions (treasure chest opened) for entity scanner refresh
             TryPatchEntityInteractions(harmony);
 
@@ -1164,6 +1167,7 @@ namespace FFIII_ScreenReader.Core
             Patches.BattleMagicMenuState.Reset();
             Patches.SaveLoadMenuState.ResetState();
             Patches.PopupState.Clear();
+            Patches.EventItemSelectState.ClearState();
         }
 
         /// <summary>
@@ -1185,6 +1189,7 @@ namespace FFIII_ScreenReader.Core
             if (exceptMenu != "BattleMagic") Patches.BattleMagicMenuState.Reset();
             if (exceptMenu != "SaveLoad") Patches.SaveLoadMenuState.ResetState();
             if (exceptMenu != "Popup") Patches.PopupState.Clear();
+            if (exceptMenu != "EventItemSelect") Patches.EventItemSelectState.ClearState();
         }
 
         /// <summary>

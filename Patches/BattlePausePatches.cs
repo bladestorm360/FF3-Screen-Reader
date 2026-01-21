@@ -9,6 +9,8 @@ using FFIII_ScreenReader.Utils;
 // Type aliases for IL2CPP types
 using BattlePauseController = Il2CppLast.UI.KeyInput.BattlePauseController;
 using BattleUIManager = Il2CppLast.UI.BattleUIManager;
+using KeyInputCommonPopup = Il2CppLast.UI.KeyInput.CommonPopup;
+using GameCursor = Il2CppLast.UI.Cursor;
 
 namespace FFIII_ScreenReader.Patches
 {
@@ -66,34 +68,34 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Patches for battle pause menu (spacebar during battle).
     /// State is tracked via direct memory read, not patches.
+    /// Also handles popup button reading during battle.
     /// </summary>
     public static class BattlePausePatches
     {
+        // Memory offsets for CommonPopup (KeyInput) - from dump.cs line 462058
+        private const int OFFSET_SELECT_CURSOR = 0x68;    // Cursor selectCursor
+        private const int OFFSET_COMMAND_LIST = 0x70;     // List<CommonCommand> commandList
+
+        // Memory offset for CommonCommand - from dump.cs line 434249
+        private const int OFFSET_COMMAND_TEXT = 0x18;     // Text text
+
+        // Track last announced button to avoid duplicates
+        private static int lastAnnouncedButtonIndex = -1;
+
         /// <summary>
         /// Apply battle pause menu patches.
+        /// Note: State clearing for Return to Title is handled by TitleMenuCommandController.SetEnableMainMenu
+        /// in PopupPatches.cs, which fires when title menu becomes active.
         /// </summary>
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
             try
             {
                 MelonLogger.Msg("[Battle Pause] Applying battle pause menu patches...");
-
-                var controllerType = typeof(BattlePauseController);
-
-                // Patch OpenBackToTitlePopup - called when selecting "Return to Title"
-                var openBackToTitleMethod = AccessTools.Method(controllerType, "OpenBackToTitlePopup");
-                if (openBackToTitleMethod != null)
-                {
-                    var postfix = typeof(BattlePausePatches).GetMethod("OpenBackToTitlePopup_Postfix", BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(openBackToTitleMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Pause] Patched OpenBackToTitlePopup successfully");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Battle Pause] OpenBackToTitlePopup method not found");
-                }
-
                 MelonLogger.Msg("[Battle Pause] Using direct memory read for pause state detection");
+
+                // Patch CommonPopup.UpdateFocus for popup button reading during battle
+                TryPatchCommonPopupUpdateFocus(harmony);
             }
             catch (Exception ex)
             {
@@ -102,27 +104,103 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Postfix for OpenBackToTitlePopup - clears battle state when returning to title.
+        /// Patch CommonPopup.UpdateFocus to read popup buttons during battle.
         /// </summary>
-        public static void OpenBackToTitlePopup_Postfix()
+        private static void TryPatchCommonPopupUpdateFocus(HarmonyLib.Harmony harmony)
         {
             try
             {
-                MelonLogger.Msg("[Battle Pause] Return to Title popup opened - clearing battle state");
-                BattleResultPatches.ClearAllBattleMenuFlags();
+                Type popupType = typeof(KeyInputCommonPopup);
+                var updateFocusMethod = AccessTools.Method(popupType, "UpdateFocus");
+
+                if (updateFocusMethod != null)
+                {
+                    var postfix = typeof(BattlePausePatches).GetMethod(nameof(CommonPopup_UpdateFocus_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(updateFocusMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[Battle Pause] Patched CommonPopup.UpdateFocus for popup button reading");
+                }
+                else
+                {
+                    MelonLogger.Warning("[Battle Pause] CommonPopup.UpdateFocus method not found");
+                }
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Pause] Error in OpenBackToTitlePopup_Postfix: {ex.Message}");
+                MelonLogger.Warning($"[Battle Pause] Error patching CommonPopup.UpdateFocus: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// Reset state (called when battle ends).
+        /// Postfix for CommonPopup.UpdateFocus - reads and announces current button.
+        /// </summary>
+        public static void CommonPopup_UpdateFocus_Postfix(object __instance)
+        {
+            try
+            {
+                if (__instance == null) return;
+
+                var popup = __instance as KeyInputCommonPopup;
+                if (popup == null) return;
+
+                IntPtr popupPtr = popup.Pointer;
+                if (popupPtr == IntPtr.Zero) return;
+
+                // Read selectCursor at offset 0x68
+                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + OFFSET_SELECT_CURSOR);
+                if (cursorPtr == IntPtr.Zero) return;
+
+                var cursor = new GameCursor(cursorPtr);
+                int cursorIndex = cursor.Index;
+
+                // Skip if same button as last announced
+                if (cursorIndex == lastAnnouncedButtonIndex)
+                    return;
+
+                lastAnnouncedButtonIndex = cursorIndex;
+
+                // Read commandList at offset 0x70
+                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + OFFSET_COMMAND_LIST);
+                if (listPtr == IntPtr.Zero) return;
+
+                // IL2CPP List: _size at 0x18, _items at 0x10
+                int size = Marshal.ReadInt32(listPtr + 0x18);
+                if (cursorIndex < 0 || cursorIndex >= size) return;
+
+                IntPtr itemsPtr = Marshal.ReadIntPtr(listPtr + 0x10);
+                if (itemsPtr == IntPtr.Zero) return;
+
+                // Array elements start at 0x20, 8 bytes per pointer
+                IntPtr commandPtr = Marshal.ReadIntPtr(itemsPtr + 0x20 + (cursorIndex * 8));
+                if (commandPtr == IntPtr.Zero) return;
+
+                // Read text at offset 0x18
+                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + OFFSET_COMMAND_TEXT);
+                if (textPtr == IntPtr.Zero) return;
+
+                var textComponent = new UnityEngine.UI.Text(textPtr);
+                string buttonText = textComponent.text;
+
+                if (!string.IsNullOrWhiteSpace(buttonText))
+                {
+                    buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
+                    MelonLogger.Msg($"[Battle Pause] Popup button: {buttonText}");
+                    FFIII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Battle Pause] Error in UpdateFocus postfix: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Reset state (called when battle ends or popup closes).
         /// </summary>
         public static void Reset()
         {
             BattlePauseState.Reset();
+            lastAnnouncedButtonIndex = -1;
         }
     }
 }
