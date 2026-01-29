@@ -138,6 +138,15 @@ AbilityContentListController.targetCharacterData: 0x98
 | MessageWindowManager.messageLineIndex | 0xB0 |
 | MessageWindowManager.currentPageNumber | 0xF8 |
 
+### Walk/Run & Encounters
+| Field | Offset |
+|-------|--------|
+| UserDataManager.configSaveData | 0xB8 |
+| ConfigSaveData.isAutoDash | 0x40 (int: 0=off, 1=on) |
+| UserDataManager.CheatSettingsData | 0xA8 |
+| CheatSettingsData.isEnableEncount | 0x10 (bool) |
+| FieldKeyController.dashFlag | 0x28 |
+
 ---
 
 ## State Machine Values
@@ -283,6 +292,9 @@ Patch base `Popup.Open()`, use `TryCast<T>()` for type (GetType().Name returns "
 | Battle Popup Buttons | Hook `KeyInput.CommonPopup.UpdateFocus`, read cursor/commandList directly |
 | Duplicate Map Announcements | Use en-dash (U+2013) separator to match `MSG_LOCATION_STICK` format |
 | NPC Event Item Selection | Hook `SelectFieldContentController.SelectContent(int)`, read contentDataList at 0x28 |
+| Walk/Run (F1) | Patch `FieldKeyController.SetDashFlag` to cache flag. XOR with `ConfigSaveData.isAutoDash` to get effective run state |
+| Encounters (F3) | Read `CheatSettingsData.IsEnableEncount` property directly |
+| Enemy HP Display (F5) | `FFIII_ScreenReaderMod.EnemyHPDisplay` property (0=Numbers, 1=Percentage, 2=Hidden). Block toggle during battle via `MenuStateRegistry` |
 
 ---
 

@@ -33,7 +33,54 @@ namespace FFIII_ScreenReader.Utils
         // Cached state tracking
         private static int cachedMoveState = MOVE_STATE_WALK;
         private static int cachedTransportationType = 0;
+        private static bool cachedDashFlag = false;
         private const string CONTEXT_STATE = "Movement.State";
+
+        /// <summary>
+        /// Set cached dash flag state (called from SetDashFlag patch).
+        /// </summary>
+        public static void SetCachedDashFlag(bool value)
+        {
+            cachedDashFlag = value;
+        }
+
+        /// <summary>
+        /// Get the effective running state based on autoDash setting and dashFlag.
+        /// Returns true if player is running, false if walking.
+        /// </summary>
+        public static bool GetDashFlag()
+        {
+            try
+            {
+                bool autoDash = false;
+                var userData = Il2CppLast.Management.UserDataManager.Instance();
+                if (userData != null)
+                {
+                    unsafe
+                    {
+                        System.IntPtr userDataPtr = userData.Pointer;
+                        if (userDataPtr != System.IntPtr.Zero)
+                        {
+                            // configSaveData at offset 0xB8
+                            System.IntPtr configPtr = *(System.IntPtr*)((byte*)userDataPtr.ToPointer() + 0xB8);
+                            if (configPtr != System.IntPtr.Zero)
+                            {
+                                // isAutoDash (int) at offset 0x40
+                                int autoDashValue = *(int*)((byte*)configPtr.ToPointer() + 0x40);
+                                autoDash = autoDashValue != 0;
+                            }
+                        }
+                    }
+                }
+                // XOR: autoDash true + dashFlag false = running; autoDash false + dashFlag true = running
+                return autoDash != cachedDashFlag;
+            }
+            catch (System.Exception ex)
+            {
+                MelonLogger.Warning($"[MoveState] Error reading dash state: {ex.Message}");
+                return false;
+            }
+        }
 
         /// <summary>
         /// Set vehicle state when boarding (called from GetOn patch).
@@ -223,6 +270,7 @@ namespace FFIII_ScreenReader.Utils
         {
             cachedMoveState = MOVE_STATE_WALK;
             cachedTransportationType = 0;
+            cachedDashFlag = false;
             AnnouncementDeduplicator.Reset(CONTEXT_STATE);
         }
 

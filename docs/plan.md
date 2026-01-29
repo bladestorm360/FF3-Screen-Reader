@@ -61,6 +61,9 @@ Screen reader accessibility mod for Final Fantasy III Pixel Remaster. TTS announ
 | Shift+Up/Down | Jump stat group |
 | Ctrl+Up/Down | First/last stat |
 | R | Repeat stat |
+| F1 | Walk/Run toggle announcement |
+| F3 | Encounters on/off announcement |
+| F5 | Enemy HP display (Numbers/Percentage/Hidden) |
 
 ---
 

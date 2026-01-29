@@ -62,6 +62,9 @@ namespace FFIII_ScreenReader.Patches
                 TryPatchGetOn(harmony);
                 TryPatchGetOff(harmony);
 
+                // Patch SetDashFlag to track walk/run toggle
+                TryPatchSetDashFlag(harmony);
+
                 isPatched = true;
             }
             catch (Exception ex)
@@ -448,6 +451,43 @@ namespace FFIII_ScreenReader.Patches
                 case TRANSPORT_MAGICALARMOR: return "magical armor";
                 default: return null;
             }
+        }
+
+        /// <summary>
+        /// Patch FieldKeyController.SetDashFlag to track walk/run toggle.
+        /// Signature: public void SetDashFlag(bool dashFlag)
+        /// </summary>
+        private static void TryPatchSetDashFlag(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                var targetMethod = AccessTools.Method(
+                    typeof(Il2CppLast.OutGame.Library.FieldKeyController),
+                    "SetDashFlag");
+                if (targetMethod != null)
+                {
+                    var postfix = typeof(MovementSpeechPatches).GetMethod(nameof(SetDashFlag_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[MoveState] Patched SetDashFlag successfully");
+                }
+                else
+                {
+                    MelonLogger.Warning("[MoveState] Could not find SetDashFlag method");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[MoveState] Error patching SetDashFlag: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Postfix for SetDashFlag - tracks dash toggle state.
+        /// </summary>
+        public static void SetDashFlag_Postfix(bool dashFlag)
+        {
+            MoveStateHelper.SetCachedDashFlag(dashFlag);
         }
 
         /// <summary>

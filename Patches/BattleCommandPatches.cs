@@ -457,7 +457,21 @@ namespace FFIII_ScreenReader.Patches
                     char letter = (char)('A' + positionInGroup);
                     announcement += $" {letter}";
                 }
-                announcement += $": HP {currentHp}/{maxHp}";
+
+                // Apply HP display format based on user preference
+                int hpMode = FFIII_ScreenReaderMod.EnemyHPDisplay;
+                switch (hpMode)
+                {
+                    case 0: // Numbers
+                        announcement += $": HP {currentHp}/{maxHp}";
+                        break;
+                    case 1: // Percentage
+                        int pct = maxHp > 0 ? (currentHp * 100 / maxHp) : 0;
+                        announcement += $": {pct}%";
+                        break;
+                    case 2: // Hidden
+                        break; // No HP appended
+                }
 
                 MelonLogger.Msg($"[Battle Target] {announcement}");
                 // Target selection SHOULD interrupt - user confirmed a command and wants to hear the target

@@ -255,6 +255,27 @@ namespace FFIII_ScreenReader.Core
                 AnnounceCurrentVehicle();
             }
 
+            // F1 toggles walk/run - announce after game processes it
+            if (Input.GetKeyDown(KeyCode.F1))
+            {
+                CoroutineManager.StartManaged(AnnounceWalkRunState());
+                return;
+            }
+
+            // F3 toggles encounters - announce after game processes it
+            if (Input.GetKeyDown(KeyCode.F3))
+            {
+                CoroutineManager.StartManaged(AnnounceEncounterState());
+                return;
+            }
+
+            // F5 to toggle enemy HP display (only when not in battle)
+            if (Input.GetKeyDown(KeyCode.F5))
+            {
+                ToggleEnemyHPDisplay();
+                return;
+            }
+
             // Hotkey: I to announce item/option description (config menu, shop, or item menu)
             if (Input.GetKeyDown(KeyCode.I))
             {
@@ -433,6 +454,60 @@ namespace FFIII_ScreenReader.Core
                 MelonLogger.Warning($"Error dumping entity names: {ex.Message}");
                 FFIII_ScreenReaderMod.SpeakText("Failed to dump entity names", true);
             }
+        }
+
+        private System.Collections.IEnumerator AnnounceWalkRunState()
+        {
+            yield return null; yield return null; yield return null; // Wait 3 frames
+            try
+            {
+                bool isDashing = Utils.MoveStateHelper.GetDashFlag();
+                string state = isDashing ? "Run" : "Walk";
+                FFIII_ScreenReaderMod.SpeakText(state, interrupt: true);
+            }
+            catch (System.Exception ex)
+            {
+                MelonLogger.Warning($"[F1] Error reading walk/run state: {ex.Message}");
+            }
+        }
+
+        private System.Collections.IEnumerator AnnounceEncounterState()
+        {
+            yield return null; // Wait 1 frame
+            try
+            {
+                var userData = Il2CppLast.Management.UserDataManager.Instance();
+                if (userData?.CheatSettingsData != null)
+                {
+                    bool enabled = userData.CheatSettingsData.IsEnableEncount;
+                    string state = enabled ? "Encounters on" : "Encounters off";
+                    FFIII_ScreenReaderMod.SpeakText(state, interrupt: true);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                MelonLogger.Warning($"[F3] Error reading encounter state: {ex.Message}");
+            }
+        }
+
+        private void ToggleEnemyHPDisplay()
+        {
+            // Check if in battle using MenuStateRegistry
+            if (MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_COMMAND) ||
+                MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_TARGET) ||
+                MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_ITEM) ||
+                MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_MAGIC))
+            {
+                FFIII_ScreenReaderMod.SpeakText("Unavailable in battle", interrupt: true);
+                return;
+            }
+
+            int current = FFIII_ScreenReaderMod.EnemyHPDisplay;
+            int next = (current + 1) % 3;
+            FFIII_ScreenReaderMod.SetEnemyHPDisplay(next);
+
+            string[] options = { "Numbers", "Percentage", "Hidden" };
+            FFIII_ScreenReaderMod.SpeakText($"Enemy HP: {options[next]}", interrupt: true);
         }
 
         /// <summary>
