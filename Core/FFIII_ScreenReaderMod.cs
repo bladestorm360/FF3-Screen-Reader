@@ -7,6 +7,7 @@ using UnityEngine;
 using HarmonyLib;
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using GameCursor = Il2CppLast.UI.Cursor;
 using MessageWindowManager = Il2CppLast.Message.MessageWindowManager;
@@ -15,6 +16,7 @@ using UserDataManager = Il2CppLast.Management.UserDataManager;
 using FieldMapProvisionInformation = Il2CppLast.Map.FieldMapProvisionInformation;
 using FieldPlayerController = Il2CppLast.Map.FieldPlayerController;
 using FieldTresureBox = Il2CppLast.Entity.Field.FieldTresureBox;
+using SubSceneManagerMainGame = Il2CppLast.Management.SubSceneManagerMainGame;
 
 [assembly: MelonInfo(typeof(FFIII_ScreenReader.Core.FFIII_ScreenReaderMod), "FFIII Screen Reader", "1.0.0", "Author")]
 [assembly: MelonGame("SQUARE ENIX, Inc.", "FINAL FANTASY III")]
@@ -59,13 +61,100 @@ namespace FFIII_ScreenReader.Core
         // Map exit filter toggle
         private bool filterMapExits = false;
 
-        // Map transition tracking
-        private int lastAnnouncedMapId = -1;
+        // Audio feedback toggles
+        private bool enableWallTones = false;
+        private bool enableFootsteps = false;
+        private bool enableAudioBeacons = false;
+
+        // Coroutine-based audio loops (replace per-frame polling)
+        private IEnumerator wallToneCoroutine = null;
+        private IEnumerator beaconCoroutine = null;
+        private const float BEACON_INTERVAL = 2.0f;
+        private const float WALL_TONE_LOOP_INTERVAL = 0.1f;
+
+        // Map transition suppression for wall tones
+        private int wallToneMapId = -1;
+        private float wallToneSuppressedUntil = 0f;
+
+        // Reusable direction list buffer to avoid per-cycle allocations
+        private static readonly List<SoundPlayer.Direction> wallDirectionsBuffer = new List<SoundPlayer.Direction>(4);
 
         // Preferences
         private static MelonPreferences_Category prefsCategory;
         private static MelonPreferences_Entry<bool> prefPathfindingFilter;
         private static MelonPreferences_Entry<bool> prefMapExitFilter;
+        private static MelonPreferences_Entry<bool> prefWallTones;
+        private static MelonPreferences_Entry<bool> prefFootsteps;
+        private static MelonPreferences_Entry<bool> prefAudioBeacons;
+        private static MelonPreferences_Entry<int> prefWallBumpVolume;
+        private static MelonPreferences_Entry<int> prefFootstepVolume;
+        private static MelonPreferences_Entry<int> prefWallToneVolume;
+        private static MelonPreferences_Entry<int> prefBeaconVolume;
+        private static MelonPreferences_Entry<int> prefEnemyHPDisplay;
+
+        // Static volume properties (0-100, default 50)
+        public static int WallBumpVolume { get; private set; } = 50;
+        public static int FootstepVolume { get; private set; } = 50;
+        public static int WallToneVolume { get; private set; } = 50;
+        public static int BeaconVolume { get; private set; } = 50;
+
+        // Enemy HP display mode (0=Numbers, 1=Percentage, 2=Hidden)
+        public static int EnemyHPDisplay { get; private set; } = 0;
+
+        // Volume setters (save to preferences)
+        public static void SetWallBumpVolume(int value)
+        {
+            WallBumpVolume = Math.Clamp(value, 0, 100);
+            prefWallBumpVolume.Value = WallBumpVolume;
+            prefsCategory.SaveToFile(false);
+        }
+
+        public static void SetFootstepVolume(int value)
+        {
+            FootstepVolume = Math.Clamp(value, 0, 100);
+            prefFootstepVolume.Value = FootstepVolume;
+            prefsCategory.SaveToFile(false);
+        }
+
+        public static void SetWallToneVolume(int value)
+        {
+            WallToneVolume = Math.Clamp(value, 0, 100);
+            prefWallToneVolume.Value = WallToneVolume;
+            prefsCategory.SaveToFile(false);
+        }
+
+        public static void SetBeaconVolume(int value)
+        {
+            BeaconVolume = Math.Clamp(value, 0, 100);
+            prefBeaconVolume.Value = BeaconVolume;
+            prefsCategory.SaveToFile(false);
+        }
+
+        public static void SetEnemyHPDisplay(int value)
+        {
+            EnemyHPDisplay = Math.Clamp(value, 0, 2);
+            prefEnemyHPDisplay.Value = EnemyHPDisplay;
+            prefsCategory.SaveToFile(false);
+        }
+
+        // Static property accessors for ModMenu and other classes
+        public static bool WallTonesEnabled => Instance?.enableWallTones ?? false;
+        public static bool FootstepsEnabled => Instance?.enableFootsteps ?? false;
+        public static bool AudioBeaconsEnabled => Instance?.enableAudioBeacons ?? false;
+        public static bool PathfindingFilterEnabled => Instance?.filterByPathfinding ?? false;
+        public static bool MapExitFilterEnabled => Instance?.filterMapExits ?? false;
+
+        // Beacon suppression timestamp
+        private float beaconSuppressedUntil = 0f;
+
+        // Debounce timestamp for beacon
+        private float lastBeaconPlayedAt = 0f;
+
+        // Static direction vectors (avoid allocations)
+        private static readonly UnityEngine.Vector3 DirNorth = new UnityEngine.Vector3(0, 16, 0);
+        private static readonly UnityEngine.Vector3 DirSouth = new UnityEngine.Vector3(0, -16, 0);
+        private static readonly UnityEngine.Vector3 DirEast = new UnityEngine.Vector3(16, 0, 0);
+        private static readonly UnityEngine.Vector3 DirWest = new UnityEngine.Vector3(-16, 0, 0);
 
         public override void OnInitializeMelon()
         {
@@ -79,14 +168,36 @@ namespace FFIII_ScreenReader.Core
             prefsCategory = MelonPreferences.CreateCategory("FFIII_ScreenReader");
             prefPathfindingFilter = prefsCategory.CreateEntry<bool>("PathfindingFilter", false, "Pathfinding Filter", "Only show entities with valid paths when cycling");
             prefMapExitFilter = prefsCategory.CreateEntry<bool>("MapExitFilter", false, "Map Exit Filter", "Filter multiple map exits to the same destination, showing only the closest one");
+            prefWallTones = prefsCategory.CreateEntry<bool>("WallTones", false, "Wall Tones", "Play directional tones when approaching walls");
+            prefFootsteps = prefsCategory.CreateEntry<bool>("Footsteps", false, "Footsteps", "Play click sound on each tile movement");
+            prefAudioBeacons = prefsCategory.CreateEntry<bool>("AudioBeacons", false, "Audio Beacons", "Play ping toward selected entity");
+            prefWallBumpVolume = prefsCategory.CreateEntry<int>("WallBumpVolume", 50, "Wall Bump Volume", "Volume for wall bump sounds (0-100)");
+            prefFootstepVolume = prefsCategory.CreateEntry<int>("FootstepVolume", 50, "Footstep Volume", "Volume for footstep sounds (0-100)");
+            prefWallToneVolume = prefsCategory.CreateEntry<int>("WallToneVolume", 50, "Wall Tone Volume", "Volume for wall proximity tones (0-100)");
+            prefBeaconVolume = prefsCategory.CreateEntry<int>("BeaconVolume", 50, "Beacon Volume", "Volume for audio beacon pings (0-100)");
+            prefEnemyHPDisplay = prefsCategory.CreateEntry<int>("EnemyHPDisplay", 0, "Enemy HP Display", "0=Numbers, 1=Percentage, 2=Hidden");
 
             // Load saved preferences
             filterByPathfinding = prefPathfindingFilter.Value;
             filterMapExits = prefMapExitFilter.Value;
+            enableWallTones = prefWallTones.Value;
+            enableFootsteps = prefFootsteps.Value;
+            enableAudioBeacons = prefAudioBeacons.Value;
+            WallBumpVolume = Math.Clamp(prefWallBumpVolume.Value, 0, 100);
+            FootstepVolume = Math.Clamp(prefFootstepVolume.Value, 0, 100);
+            WallToneVolume = Math.Clamp(prefWallToneVolume.Value, 0, 100);
+            BeaconVolume = Math.Clamp(prefBeaconVolume.Value, 0, 100);
+            EnemyHPDisplay = Math.Clamp(prefEnemyHPDisplay.Value, 0, 2);
 
             // Initialize Tolk for screen reader support
             tolk = new TolkWrapper();
             tolk.Load();
+
+            // Initialize external sound player for distinct audio feedback
+            SoundPlayer.Initialize();
+
+            // Initialize entity name translator (Japanese -> English)
+            EntityTranslator.Initialize();
 
             // Initialize input manager
             inputManager = new InputManager(this);
@@ -97,6 +208,15 @@ namespace FFIII_ScreenReader.Core
 
             // Try manual patching with error handling
             TryManualPatching();
+
+            // Initialize ModMenu
+            ModMenu.Initialize();
+
+            // CRITICAL: Do NOT start audio loops here during initialization.
+            // Audio loops start from DelayedInitialScan() after scene loads.
+            // Starting them here causes lag/unresponsiveness because WallToneLoop
+            // runs before the scene is ready, resulting in repeated null checks
+            // and pathfinding queries on uninitialized data.
         }
 
         /// <summary>
@@ -111,8 +231,8 @@ namespace FFIII_ScreenReader.Core
             // Patch cursor navigation methods (menus and battle)
             TryPatchCursorNavigation(harmony);
 
-            // Patch dialogue methods via MessageWindowManager
-            TryPatchDialogue(harmony);
+            // Patch dialogue methods via MessageWindowPatches (per-page announcements)
+            MessageWindowPatches.ApplyPatches(harmony);
 
             // Patch New Game naming screen
             NewGameNamingPatches.ApplyPatches(harmony);
@@ -181,6 +301,12 @@ namespace FFIII_ScreenReader.Core
             // Patch NPC event item selection menu (when NPCs request item use)
             EventItemSelectPatches.Apply(harmony);
 
+            // Patch game state transitions (map changes, battle exit) - event-driven, no polling
+            GameStatePatches.ApplyPatches(harmony);
+
+            // Initialize map transition fade detection (cached reflection for FadeManager)
+            MapTransitionPatches.ApplyPatches(harmony);
+
             // Patch entity interactions (treasure chest opened) for entity scanner refresh
             TryPatchEntityInteractions(harmony);
 
@@ -219,59 +345,6 @@ namespace FFIII_ScreenReader.Core
             catch (Exception ex)
             {
                 LoggerInstance.Warning($"[Battle Target] Error applying ShowWindow patch: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Patches dialogue methods using MessageWindowManager.
-        /// Avoids string parameters by patching SetContent(List) and Play(bool).
-        /// </summary>
-        private void TryPatchDialogue(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                // Use typeof() directly - much faster than assembly scanning
-                Type managerType = typeof(MessageWindowManager);
-                LoggerInstance.Msg($"Found MessageWindowManager type: {managerType.FullName}");
-
-                // Get postfix methods
-                var setContentPostfix = typeof(ManualPatches).GetMethod("SetContent_Postfix", BindingFlags.Public | BindingFlags.Static);
-                var playPostfix = typeof(ManualPatches).GetMethod("Play_Postfix", BindingFlags.Public | BindingFlags.Static);
-
-                // Patch SetContent(List<BaseContent>) - for dialogue text
-                var setContentMethod = managerType.GetMethod("SetContent", BindingFlags.Public | BindingFlags.Instance);
-                if (setContentMethod != null && setContentPostfix != null)
-                {
-                    harmony.Patch(setContentMethod, postfix: new HarmonyMethod(setContentPostfix));
-                    LoggerInstance.Msg("Patched SetContent");
-                }
-                else
-                {
-                    LoggerInstance.Warning($"SetContent method or postfix not found. Method: {setContentMethod != null}, Postfix: {setContentPostfix != null}");
-                }
-
-                // Patch Play(bool) - for speaker name (read from instance)
-                var playMethod = managerType.GetMethod("Play", BindingFlags.Public | BindingFlags.Instance);
-                if (playMethod != null && playPostfix != null)
-                {
-                    harmony.Patch(playMethod, postfix: new HarmonyMethod(playPostfix));
-                    LoggerInstance.Msg("Patched Play");
-                }
-                else
-                {
-                    LoggerInstance.Warning($"Play method or postfix not found. Method: {playMethod != null}, Postfix: {playPostfix != null}");
-                }
-
-                // Patch Close() - clears dialogue deduplication state when window closes
-                HarmonyPatchHelper.PatchMethod(harmony, managerType, "Close",
-                    typeof(ManualPatches), "Close_Postfix", new Type[0], "[FFIII_Screen_Reader]");
-
-                LoggerInstance.Msg("Dialogue patches applied successfully");
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Error($"Error patching dialogue: {ex.Message}");
-                LoggerInstance.Error($"Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -370,6 +443,13 @@ namespace FFIII_ScreenReader.Core
             // Unsubscribe from scene load events
             UnityEngine.SceneManagement.SceneManager.sceneLoaded -= (UnityEngine.Events.UnityAction<UnityEngine.SceneManagement.Scene, UnityEngine.SceneManagement.LoadSceneMode>)OnSceneLoaded;
 
+            // Stop audio loops
+            StopWallToneLoop();
+            StopBeaconLoop();
+
+            // Shutdown sound player (closes waveOut handles, frees unmanaged memory)
+            SoundPlayer.Shutdown();
+
             CoroutineManager.CleanupAll();
             tolk?.Unload();
         }
@@ -392,6 +472,15 @@ namespace FFIII_ScreenReader.Core
 
                 // Clear old cache
                 GameObjectCache.Clear<FieldMap>();
+
+                // Stop audio loops during scene transition and suppress wall tones/beacons briefly
+                StopWallToneLoop();
+                StopBeaconLoop();
+                wallToneSuppressedUntil = Time.time + 1.0f;
+                beaconSuppressedUntil = Time.time + 1.0f;
+
+                // Reset movement state for new map
+                MovementSoundPatches.ResetState();
 
                 // Delay entity scan to allow scene to fully initialize
                 CoroutineManager.StartManaged(DelayedInitialScan());
@@ -491,67 +580,30 @@ namespace FFIII_ScreenReader.Core
             {
                 LoggerInstance.Warning($"[ComponentCache] Error caching FieldMap: {ex.Message}");
             }
+
+            // Restart audio loops after scene has settled
+            if (enableWallTones) StartWallToneLoop();
+            if (enableAudioBeacons) StartBeaconLoop();
         }
 
         public override void OnUpdate()
         {
             // Handle all input
             inputManager.Update();
-
-            // Check for map transitions
-            CheckMapTransition();
         }
 
         /// <summary>
-        /// Checks for map transitions and announces the new map name.
+        /// Forces an entity rescan. Called from GameStatePatches on map transitions.
         /// </summary>
-        private void CheckMapTransition()
+        public void ForceEntityRescan()
         {
-            try
-            {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager != null)
-                {
-                    int currentMapId = userDataManager.CurrentMapId;
-                    if (currentMapId != lastAnnouncedMapId && lastAnnouncedMapId != -1)
-                    {
-                        // Map has changed, announce the new map
-                        string mapName = Field.MapNameResolver.GetCurrentMapName();
-                        string fullMessage = $"Entering {mapName}";
-                        SpeakText(fullMessage, interrupt: false);
-                        lastAnnouncedMapId = currentMapId;
-
-                        // Record this announcement for deduplication with FadeMessage
-                        // This prevents "Altar Cave" from being announced twice
-                        Utils.LocationMessageTracker.SetLastMapTransition(fullMessage);
-
-                        // Check if entering interior map - if so, switch to on-foot state
-                        bool isWorldMap = IsCurrentMapWorldMap();
-                        Utils.MoveStateHelper.OnMapTransition(isWorldMap);
-
-                        // Clear vehicle type map on map change so it gets repopulated with new map's vehicles
-                        Field.FieldNavigationHelper.ResetTransportationDebug();
-
-                        // Force entity rescan on map change to clear stale entities from previous map
-                        entityScanner.ForceRescan();
-                    }
-                    else if (lastAnnouncedMapId == -1)
-                    {
-                        // First run, just store the current map without announcing
-                        lastAnnouncedMapId = currentMapId;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Warning($"Error detecting map transition: {ex.Message}");
-            }
+            entityScanner?.ForceRescan();
         }
 
         /// <summary>
         /// Check if the current map is a world map (overworld).
         /// </summary>
-        private bool IsCurrentMapWorldMap()
+        public bool IsCurrentMapWorldMap()
         {
             try
             {
@@ -784,7 +836,7 @@ namespace FFIII_ScreenReader.Core
         /// Returns true if on valid map (ready for entity navigation), false otherwise.
         /// Ported from FF4 to prevent entity navigation on title screen, menus, loading screens.
         /// </summary>
-        private bool EnsureFieldContext()
+        internal bool EnsureFieldContext()
         {
             // Check if FieldMap exists and is active
             var fieldMap = GameObjectCache.Get<FieldMap>();
@@ -878,6 +930,291 @@ namespace FFIII_ScreenReader.Core
             string status = filterMapExits ? "on" : "off";
             SpeakText($"Map exit filter {status}");
         }
+
+        #region Audio Loop Management
+
+        /// <summary>
+        /// Starts the wall tone coroutine loop. Safe to call if already running (no-op).
+        /// </summary>
+        private void StartWallToneLoop()
+        {
+            if (wallToneCoroutine != null) return;
+            wallToneCoroutine = WallToneLoop();
+            CoroutineManager.StartManaged(wallToneCoroutine);
+        }
+
+        /// <summary>
+        /// Stops the wall tone coroutine loop and silences any playing tone.
+        /// </summary>
+        private void StopWallToneLoop()
+        {
+            if (wallToneCoroutine != null)
+            {
+                try { MelonCoroutines.Stop(wallToneCoroutine); }
+                catch { }
+                wallToneCoroutine = null;
+            }
+            if (SoundPlayer.IsWallTonePlaying())
+                SoundPlayer.StopWallTone();
+        }
+
+        /// <summary>
+        /// Starts the audio beacon coroutine loop. Safe to call if already running (no-op).
+        /// </summary>
+        private void StartBeaconLoop()
+        {
+            if (beaconCoroutine != null) return;
+            lastBeaconPlayedAt = Time.time;  // Prevent immediate beacon on first enable
+            beaconCoroutine = BeaconLoop();
+            CoroutineManager.StartManaged(beaconCoroutine);
+        }
+
+        /// <summary>
+        /// Stops the audio beacon coroutine loop.
+        /// </summary>
+        private void StopBeaconLoop()
+        {
+            if (beaconCoroutine != null)
+            {
+                try { MelonCoroutines.Stop(beaconCoroutine); }
+                catch { }
+                beaconCoroutine = null;
+            }
+        }
+
+        /// <summary>
+        /// Coroutine loop that checks for adjacent walls every 100ms and plays looping tones.
+        /// Uses manual time-based waiting (IL2CPP compatible) instead of WaitForSeconds.
+        /// </summary>
+        private IEnumerator WallToneLoop()
+        {
+            // Initial delay for scene stability
+            float startTime = Time.time;
+            while (Time.time - startTime < 0.3f)
+                yield return null;
+
+            float lastCheckTime = Time.time;
+
+            // Clean exit condition - loop while feature is enabled
+            while (enableWallTones)
+            {
+                // Manual time-based waiting (IL2CPP compatible)
+                while (Time.time - lastCheckTime < WALL_TONE_LOOP_INTERVAL)
+                    yield return null;
+                lastCheckTime = Time.time;
+
+                try
+                {
+                    float currentTime = Time.time;
+
+                    // Check if screen is fading (map transition)
+                    if (Patches.MapTransitionPatches.IsScreenFading)
+                    {
+                        if (SoundPlayer.IsWallTonePlaying())
+                            SoundPlayer.StopWallTone();
+                        continue;
+                    }
+
+                    // Detect sub-map transitions and suppress tones briefly
+                    int currentMapId = GetCurrentMapId();
+                    if (currentMapId > 0 && wallToneMapId > 0 && currentMapId != wallToneMapId)
+                    {
+                        wallToneSuppressedUntil = currentTime + 1.0f;
+                        if (SoundPlayer.IsWallTonePlaying())
+                            SoundPlayer.StopWallTone();
+                    }
+                    if (currentMapId > 0)
+                        wallToneMapId = currentMapId;
+
+                    if (currentTime < wallToneSuppressedUntil)
+                    {
+                        if (SoundPlayer.IsWallTonePlaying())
+                            SoundPlayer.StopWallTone();
+                        continue;
+                    }
+
+                    var player = GetFieldPlayer();
+                    if (player == null)
+                    {
+                        if (SoundPlayer.IsWallTonePlaying())
+                            SoundPlayer.StopWallTone();
+                        continue;
+                    }
+
+                    var walls = FieldNavigationHelper.GetNearbyWallsWithDistance(player);
+                    var mapExitPositions = entityScanner?.GetMapExitPositions();
+                    Vector3 playerPos = player.transform.localPosition;
+
+                    // Reuse static buffer to avoid per-cycle allocations
+                    wallDirectionsBuffer.Clear();
+
+                    if (walls.NorthDist == 0 &&
+                        !FieldNavigationHelper.IsDirectionNearMapExit(playerPos, DirNorth, mapExitPositions))
+                        wallDirectionsBuffer.Add(SoundPlayer.Direction.North);
+
+                    if (walls.SouthDist == 0 &&
+                        !FieldNavigationHelper.IsDirectionNearMapExit(playerPos, DirSouth, mapExitPositions))
+                        wallDirectionsBuffer.Add(SoundPlayer.Direction.South);
+
+                    if (walls.EastDist == 0 &&
+                        !FieldNavigationHelper.IsDirectionNearMapExit(playerPos, DirEast, mapExitPositions))
+                        wallDirectionsBuffer.Add(SoundPlayer.Direction.East);
+
+                    if (walls.WestDist == 0 &&
+                        !FieldNavigationHelper.IsDirectionNearMapExit(playerPos, DirWest, mapExitPositions))
+                        wallDirectionsBuffer.Add(SoundPlayer.Direction.West);
+
+                    // Pass buffer directly (no ToArray() - IList<Direction> parameter)
+                    SoundPlayer.PlayWallTonesLooped(wallDirectionsBuffer);
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Warning($"[WallTones] Error: {ex.Message}");
+                }
+            }
+
+            // Clean up when loop exits
+            if (SoundPlayer.IsWallTonePlaying())
+                SoundPlayer.StopWallTone();
+        }
+
+        /// <summary>
+        /// Coroutine loop that plays audio beacon pings every 2 seconds.
+        /// Uses manual time-based waiting (IL2CPP compatible) instead of WaitForSeconds.
+        /// </summary>
+        private IEnumerator BeaconLoop()
+        {
+            // Initial delay for scene stability
+            float startTime = Time.time;
+            while (Time.time - startTime < 0.3f)
+                yield return null;
+
+            float lastCheckTime = Time.time;
+
+            // Clean exit condition - loop while feature is enabled
+            while (enableAudioBeacons)
+            {
+                // Manual time-based waiting (IL2CPP compatible)
+                while (Time.time - lastCheckTime < BEACON_INTERVAL)
+                    yield return null;
+                lastCheckTime = Time.time;
+
+                try
+                {
+                    float currentTime = Time.time;
+
+                    // Check suppression
+                    if (currentTime < beaconSuppressedUntil)
+                        continue;
+
+                    // Debounce check
+                    if (currentTime - lastBeaconPlayedAt < BEACON_INTERVAL * 0.8f)
+                        continue;
+
+                    var entity = entityScanner?.CurrentEntity;
+                    if (entity == null) continue;
+
+                    var playerController = GameObjectCache.Get<FieldPlayerController>();
+                    if (playerController?.fieldPlayer == null) continue;
+
+                    Vector3 playerPos = playerController.fieldPlayer.transform.localPosition;
+                    Vector3 entityPos = entity.Position;
+
+                    // Sanity checks for NaN and extreme positions
+                    if (float.IsNaN(playerPos.x) || float.IsNaN(playerPos.y) ||
+                        float.IsNaN(entityPos.x) || float.IsNaN(entityPos.y))
+                        continue;
+
+                    if (Mathf.Abs(playerPos.x) > 10000f || Mathf.Abs(playerPos.y) > 10000f ||
+                        Mathf.Abs(entityPos.x) > 10000f || Mathf.Abs(entityPos.y) > 10000f)
+                        continue;
+
+                    float distance = Vector3.Distance(playerPos, entityPos);
+                    float maxDist = 500f;
+                    float volumeScale = Mathf.Clamp(1f - (distance / maxDist), 0.15f, 0.60f);
+
+                    float deltaX = entityPos.x - playerPos.x;
+                    float pan = Mathf.Clamp(deltaX / 100f, -1f, 1f) * 0.5f + 0.5f;
+
+                    bool isSouth = entityPos.y < playerPos.y - 8f;
+
+                    SoundPlayer.PlayBeacon(isSouth, pan, volumeScale);
+                    lastBeaconPlayedAt = currentTime;
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Warning($"[Beacon] Error: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the current map ID from FieldMapProvisionInformation.
+        /// Returns -1 if unable to retrieve.
+        /// </summary>
+        private int GetCurrentMapId()
+        {
+            try
+            {
+                var fieldMapInfo = FieldMapProvisionInformation.Instance;
+                if (fieldMapInfo != null)
+                {
+                    return fieldMapInfo.CurrentMapId;
+                }
+            }
+            catch { }
+            return -1;
+        }
+
+        internal void ToggleWallTones()
+        {
+            enableWallTones = !enableWallTones;
+
+            if (enableWallTones)
+                StartWallToneLoop();
+            else
+                StopWallToneLoop();
+
+            // Save to preferences
+            prefWallTones.Value = enableWallTones;
+            prefsCategory.SaveToFile(false);
+
+            string status = enableWallTones ? "on" : "off";
+            SpeakText($"Wall tones {status}");
+        }
+
+        internal void ToggleFootsteps()
+        {
+            enableFootsteps = !enableFootsteps;
+
+            // Save to preferences
+            prefFootsteps.Value = enableFootsteps;
+            prefsCategory.SaveToFile(false);
+
+            string status = enableFootsteps ? "on" : "off";
+            SpeakText($"Footsteps {status}");
+        }
+
+        internal void ToggleAudioBeacons()
+        {
+            enableAudioBeacons = !enableAudioBeacons;
+
+            if (enableAudioBeacons)
+                StartBeaconLoop();
+            else
+                StopBeaconLoop();
+
+            // Save to preferences
+            prefAudioBeacons.Value = enableAudioBeacons;
+            prefsCategory.SaveToFile(false);
+
+            string status = enableAudioBeacons ? "on" : "off";
+            SpeakText($"Audio beacons {status}");
+        }
+
+        internal bool IsFootstepsEnabled() => enableFootsteps;
+
+        #endregion
 
         private void AnnounceCategoryChange()
         {
@@ -1062,15 +1399,8 @@ namespace FFIII_ScreenReader.Core
         /// </summary>
         /// <param name="text">Text to speak</param>
         /// <param name="interrupt">Whether to interrupt current speech (true for user actions, false for game events)</param>
-        public static void SpeakText(string text, bool interrupt = true,
-            [System.Runtime.CompilerServices.CallerMemberName] string callerMember = "",
-            [System.Runtime.CompilerServices.CallerFilePath] string callerFile = "",
-            [System.Runtime.CompilerServices.CallerLineNumber] int callerLine = 0)
+        public static void SpeakText(string text, bool interrupt = true)
         {
-            // DEBUG: Log every speech call with source
-            string fileName = System.IO.Path.GetFileName(callerFile);
-            MelonLogger.Msg($"[SPEECH] \"{text}\" from {fileName}:{callerLine} ({callerMember})");
-
             tolk?.Speak(text, interrupt);
         }
     }
@@ -1080,9 +1410,6 @@ namespace FFIII_ScreenReader.Core
     /// </summary>
     public static class ManualPatches
     {
-        private static string lastDialogueMessage = "";
-        private static string lastSpeaker = "";
-        private static string pendingDialogueText = "";  // Stores dialogue until speaker is announced
 
         /// <summary>
         /// Postfix for cursor navigation methods (NextIndex, PrevIndex, etc.)
@@ -1096,7 +1423,7 @@ namespace FFIII_ScreenReader.Core
                 var cursor = __instance as GameCursor;
                 if (cursor == null) return;
 
-                // DEBUG: Log cursor navigation
+                // Get cursor path for pause menu detection
                 string cursorPath = "";
                 try
                 {
@@ -1106,10 +1433,6 @@ namespace FFIII_ScreenReader.Core
                     if (t?.parent?.parent != null) cursorPath = t.parent.parent.name + "/" + cursorPath;
                 }
                 catch { cursorPath = "error"; }
-                MelonLogger.Msg($"[CursorNav] Index={cursor.Index}, Path={cursorPath}");
-
-                // DEBUG: Log PopupState
-                MelonLogger.Msg($"[CursorNav] PopupState: Active={Patches.PopupState.IsConfirmationPopupActive}, Type={Patches.PopupState.CurrentPopupType}, CmdListOffset={Patches.PopupState.CommandListOffset}");
 
                 // === BATTLE PAUSE MENU SPECIAL CASE ===
                 // Must be checked BEFORE suppression because battle states would suppress it.
@@ -1190,168 +1513,6 @@ namespace FFIII_ScreenReader.Core
             if (exceptMenu != "SaveLoad") Patches.SaveLoadMenuState.ResetState();
             if (exceptMenu != "Popup") Patches.PopupState.Clear();
             if (exceptMenu != "EventItemSelect") Patches.EventItemSelectState.ClearState();
-        }
-
-        /// <summary>
-        /// Postfix for MessageWindowManager.SetContent - reads dialogue text.
-        /// Parameter is List of BaseContent, not string, so it should work.
-        /// </summary>
-        public static void SetContent_Postfix(object __instance)
-        {
-            try
-            {
-                // Use AccessTools for IL2CPP compatibility
-                var managerType = __instance.GetType();
-
-                // Try to get messageList using AccessTools
-                var messageListField = AccessTools.Field(managerType, "messageList");
-                if (messageListField == null)
-                {
-                    // Try property instead
-                    var messageListProp = AccessTools.Property(managerType, "messageList");
-                    if (messageListProp == null)
-                    {
-                        return;
-                    }
-                    var listObj = messageListProp.GetValue(__instance);
-                    ReadMessageList(listObj);
-                    return;
-                }
-
-                var messageList = messageListField.GetValue(__instance);
-                ReadMessageList(messageList);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in SetContent_Postfix: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Reads and announces messages from a message list object.
-        /// </summary>
-        private static void ReadMessageList(object messageListObj)
-        {
-            if (messageListObj == null)
-                return;
-
-            try
-            {
-                // Get Count property
-                var countProp = messageListObj.GetType().GetProperty("Count");
-                if (countProp == null)
-                    return;
-
-                int count = (int)countProp.GetValue(messageListObj);
-                if (count == 0)
-                    return;
-
-                // Get indexer
-                var indexer = messageListObj.GetType().GetProperty("Item");
-                if (indexer == null)
-                    return;
-
-                var sb = new System.Text.StringBuilder();
-                for (int i = 0; i < count; i++)
-                {
-                    var msg = indexer.GetValue(messageListObj, new object[] { i }) as string;
-                    if (!string.IsNullOrWhiteSpace(msg))
-                    {
-                        sb.AppendLine(msg.Trim());
-                    }
-                }
-
-                string fullText = sb.ToString().Trim();
-                if (!string.IsNullOrWhiteSpace(fullText) && fullText != lastDialogueMessage)
-                {
-                    lastDialogueMessage = fullText;
-                    string cleanMessage = TextUtils.StripIconMarkup(fullText);
-                    if (!string.IsNullOrWhiteSpace(cleanMessage))
-                    {
-                        MelonLogger.Msg($"[Dialogue] {cleanMessage}");
-                        // Store pending dialogue - will be spoken after speaker name in Play_Postfix
-                        pendingDialogueText = cleanMessage;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error reading message list: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Postfix for MessageWindowManager.Play - reads speaker name from instance.
-        /// Parameter is bool, not string, so it should work.
-        /// </summary>
-        public static void Play_Postfix(object __instance)
-        {
-            try
-            {
-                // Use AccessTools for IL2CPP compatibility
-                var managerType = __instance.GetType();
-
-                // Try to access the spekerValue field (note: typo in game code - "speker" not "speaker")
-                var spekerField = AccessTools.Field(managerType, "spekerValue");
-                if (spekerField == null)
-                {
-                    // Try property instead
-                    var spekerProp = AccessTools.Property(managerType, "spekerValue");
-                    if (spekerProp != null)
-                    {
-                        var spekerValue = spekerProp.GetValue(__instance) as string;
-                        AnnounceSpeaker(spekerValue);
-                    }
-                    return;
-                }
-
-                var speaker = spekerField.GetValue(__instance) as string;
-                AnnounceSpeaker(speaker);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in Play_Postfix: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Announces a speaker name if it's new, then announces any pending dialogue.
-        /// This ensures speaker name is always spoken before dialogue text.
-        /// </summary>
-        private static void AnnounceSpeaker(string spekerValue)
-        {
-            // First, announce speaker if it's new
-            if (!string.IsNullOrWhiteSpace(spekerValue) && spekerValue != lastSpeaker)
-            {
-                lastSpeaker = spekerValue;
-                string cleanSpeaker = TextUtils.StripIconMarkup(spekerValue);
-                if (!string.IsNullOrWhiteSpace(cleanSpeaker))
-                {
-                    MelonLogger.Msg($"[Speaker] {cleanSpeaker}");
-                    FFIII_ScreenReaderMod.SpeakText(cleanSpeaker, interrupt: false);
-                }
-            }
-
-            // Then, announce any pending dialogue text
-            if (!string.IsNullOrWhiteSpace(pendingDialogueText))
-            {
-                FFIII_ScreenReaderMod.SpeakText(pendingDialogueText, interrupt: false);
-                pendingDialogueText = "";  // Clear after speaking
-            }
-        }
-
-        /// <summary>
-        /// Postfix for MessageWindowManager.Close - clears dialogue deduplication state.
-        /// This ensures the same NPC dialogue can be announced on subsequent interactions.
-        /// Also triggers entity refresh to update NPC/interactive object states.
-        /// </summary>
-        public static void Close_Postfix()
-        {
-            lastDialogueMessage = "";
-            pendingDialogueText = "";
-
-            // Trigger entity refresh after dialogue ends (NPC interaction complete)
-            FFIII_ScreenReaderMod.Instance?.ScheduleEntityRefresh();
         }
 
         /// <summary>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using MelonLoader;
 
@@ -7,10 +8,11 @@ namespace FFIII_ScreenReader.Utils
     /// <summary>
     /// Manages coroutines to prevent memory leaks and crashes.
     /// Limits concurrent coroutines and provides cleanup on mod unload.
+    /// Uses wrapper pattern to auto-remove completed coroutines from tracking.
     /// </summary>
     public static class CoroutineManager
     {
-        private static readonly List<System.Collections.IEnumerator> activeCoroutines = new List<System.Collections.IEnumerator>();
+        private static readonly List<object> activeCoroutines = new List<object>();
         private static readonly object coroutineLock = new object();
         private static int maxConcurrentCoroutines = 20;
 
@@ -41,28 +43,51 @@ namespace FFIII_ScreenReader.Utils
         }
 
         /// <summary>
-        /// Start a managed coroutine with automatic cleanup and limit enforcement.
+        /// Start an untracked coroutine (not tracked in the active list).
+        /// Use for short-lived coroutines that don't need cleanup management.
         /// </summary>
-        public static void StartManaged(System.Collections.IEnumerator coroutine)
+        public static void StartUntracked(IEnumerator coroutine)
+        {
+            try
+            {
+                MelonCoroutines.Start(coroutine);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error starting untracked coroutine: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Start a managed coroutine with automatic cleanup and limit enforcement.
+        /// Uses wrapper pattern to auto-remove from tracking when coroutine completes.
+        /// </summary>
+        public static void StartManaged(IEnumerator coroutine)
         {
             lock (coroutineLock)
             {
-                // Clean up completed coroutines first
-                CleanupCompleted();
-
-                // If we're at the limit, remove the oldest one from tracking
+                // If we're at the limit, stop and remove the oldest coroutine
                 if (activeCoroutines.Count >= maxConcurrentCoroutines)
                 {
-                    MelonLogger.Msg("Too many active coroutines, removing oldest from tracking");
+                    var oldest = activeCoroutines[0];
+                    try
+                    {
+                        MelonCoroutines.Stop(oldest);
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Warning($"Error stopping oldest coroutine: {ex.Message}");
+                    }
                     activeCoroutines.RemoveAt(0);
+                    MelonLogger.Warning("Stopped oldest coroutine due to limit");
                 }
 
-                // Start the new coroutine
+                // Start the wrapped coroutine that auto-removes on completion
                 try
                 {
-                    MelonCoroutines.Start(coroutine);
-                    activeCoroutines.Add(coroutine);
-                    MelonLogger.Msg($"Started coroutine. Active count: {activeCoroutines.Count}");
+                    var wrapper = TrackingWrapper(coroutine);
+                    var handle = MelonCoroutines.Start(wrapper);
+                    activeCoroutines.Add(handle);
                 }
                 catch (Exception ex)
                 {
@@ -72,13 +97,39 @@ namespace FFIII_ScreenReader.Utils
         }
 
         /// <summary>
-        /// Remove completed coroutines from tracking.
-        /// Note: This is a simplified approach - in practice we'd need better completed detection.
-        /// For now we rely on the max limit to prevent accumulation.
+        /// Wrapper coroutine that auto-removes from tracking when inner coroutine completes.
         /// </summary>
-        private static void CleanupCompleted()
+        private static IEnumerator TrackingWrapper(IEnumerator inner)
         {
-            // Simplified: we rely on max limit for now
+            object handle = null;
+
+            // Store the handle for removal (set after MelonCoroutines.Start returns)
+            lock (coroutineLock)
+            {
+                if (activeCoroutines.Count > 0)
+                {
+                    handle = activeCoroutines[activeCoroutines.Count - 1];
+                }
+            }
+
+            try
+            {
+                while (inner.MoveNext())
+                {
+                    yield return inner.Current;
+                }
+            }
+            finally
+            {
+                // Remove from tracking when complete
+                if (handle != null)
+                {
+                    lock (coroutineLock)
+                    {
+                        activeCoroutines.Remove(handle);
+                    }
+                }
+            }
         }
     }
 }

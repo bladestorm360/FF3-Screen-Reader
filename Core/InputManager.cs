@@ -3,6 +3,7 @@ using UnityEngine.EventSystems;
 using MelonLoader;
 using FFIII_ScreenReader.Patches;
 using FFIII_ScreenReader.Menus;
+using FFIII_ScreenReader.Utils;
 using ConfigActualDetailsControllerBase_KeyInput = Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase;
 using ConfigActualDetailsControllerBase_Touch = Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase;
 
@@ -26,6 +27,12 @@ namespace FFIII_ScreenReader.Core
         /// </summary>
         public void Update()
         {
+            // Handle ModMenu input first (uses Windows API, works even without focus)
+            if (ModMenu.HandleInput())
+            {
+                return; // ModMenu consumed the input
+            }
+
             // Early exit if no keys pressed this frame - avoids expensive operations
             if (!Input.anyKeyDown)
             {
@@ -36,6 +43,13 @@ namespace FFIII_ScreenReader.Core
             if (IsInputFieldFocused())
             {
                 // Player is typing text - skip all hotkey processing
+                return;
+            }
+
+            // F8 to open ModMenu
+            if (Input.GetKeyDown(KeyCode.F8) && !ModMenu.IsOpen)
+            {
+                ModMenu.Open();
                 return;
             }
 
@@ -194,10 +208,10 @@ namespace FFIII_ScreenReader.Core
                 }
             }
 
-            // Hotkey: 0 (Alpha0) or Shift+K to reset to All category
+            // Hotkey: 0 (Alpha0) to dump untranslated entity names for current map
             if (Input.GetKeyDown(KeyCode.Alpha0))
             {
-                mod.ResetToAllCategory();
+                DumpUntranslatedEntityNames();
             }
 
             if (Input.GetKeyDown(KeyCode.K) && IsShiftHeld())
@@ -215,6 +229,24 @@ namespace FFIII_ScreenReader.Core
             if (Input.GetKeyDown(KeyCode.Minus))
             {
                 mod.CyclePreviousCategory();
+            }
+
+            // Hotkey: ; (Semicolon) to toggle wall tones
+            if (Input.GetKeyDown(KeyCode.Semicolon))
+            {
+                mod.ToggleWallTones();
+            }
+
+            // Hotkey: ' (Quote) to toggle footsteps
+            if (Input.GetKeyDown(KeyCode.Quote))
+            {
+                mod.ToggleFootsteps();
+            }
+
+            // Hotkey: 9 to toggle audio beacons
+            if (Input.GetKeyDown(KeyCode.Alpha9))
+            {
+                mod.ToggleAudioBeacons();
             }
 
             // Hotkey: V to announce current vehicle/movement mode
@@ -369,6 +401,10 @@ namespace FFIII_ScreenReader.Core
         /// </summary>
         private void AnnounceCurrentVehicle()
         {
+            // Only announce if on field map (not title screen, menus, etc.)
+            if (!mod.EnsureFieldContext())
+                return;
+
             try
             {
                 int moveState = Utils.MoveStateHelper.GetCurrentMoveState();
@@ -379,6 +415,23 @@ namespace FFIII_ScreenReader.Core
             catch (System.Exception ex)
             {
                 MelonLogger.Warning($"Error announcing vehicle state: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Dumps untranslated entity names for the current map to EntityNames.json.
+        /// </summary>
+        private void DumpUntranslatedEntityNames()
+        {
+            try
+            {
+                string result = EntityTranslator.DumpUntranslatedNames();
+                FFIII_ScreenReaderMod.SpeakText(result, true);
+            }
+            catch (System.Exception ex)
+            {
+                MelonLogger.Warning($"Error dumping entity names: {ex.Message}");
+                FFIII_ScreenReaderMod.SpeakText("Failed to dump entity names", true);
             }
         }
 

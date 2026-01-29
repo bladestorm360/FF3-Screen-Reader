@@ -40,10 +40,14 @@ var value = obj.TryCast<TargetType>().Property;
 |-------|---------|
 | `AnnouncementDeduplicator` | Exact-match dedup: `ShouldAnnounce(context, text)` |
 | `LocationMessageTracker` | Map transition dedup (containment check) |
+| `DialogueTracker` | Per-page dialogue state, speaker tracking |
+| `LineFadeMessageTracker` | Per-line story text announcements |
 | `TextUtils` | Strip icon markup, formatting |
 | `MoveStateHelper` | Vehicle/movement state |
 | `GameObjectCache` | Component caching |
 | `CoroutineManager` | Frame-delayed operations |
+| `SoundPlayer` | Windows waveOut API, 4-channel concurrent playback |
+| `EntityTranslator` | Japanese→English entity names via JSON dictionary |
 
 ---
 
@@ -125,6 +129,15 @@ AbilityContentListController.targetCharacterData: 0x98
 | SelectFieldContentData.NameMessageId | 0x18 |
 | SelectFieldContentData.DescriptionMessageId | 0x20 |
 
+### Message Window
+| Field | Offset |
+|-------|--------|
+| MessageWindowManager.messageList | 0x88 |
+| MessageWindowManager.newPageLineList | 0xA0 |
+| MessageWindowManager.spekerValue | 0xA8 |
+| MessageWindowManager.messageLineIndex | 0xB0 |
+| MessageWindowManager.currentPageNumber | 0xF8 |
+
 ---
 
 ## State Machine Values
@@ -168,6 +181,14 @@ SelectAbilityTarget=4, SelectEquipment=5, ConfirmationBuyItem=6
 ---
 
 ## Key Types
+
+### Dialogue
+| Feature | Controller | Patch Method |
+|---------|------------|--------------|
+| Dialogue pages | `MessageWindowManager` | `SetContent`, `PlayingInit` |
+| Speaker name | `MessageWindowManager` | `SetSpeker` |
+| Dialogue close | `MessageWindowManager` | `Close` |
+| Story text | `LineFadeMessageWindowController` | `SetData`, `PlayInit` |
 
 ### Menus
 | Menu | Controller | Patch Method |
@@ -230,78 +251,85 @@ Patch base `Popup.Open()`, use `TryCast<T>()` for type (GetType().Name returns "
 
 ## Working Solutions
 
-### Title Screen
-`SplashController.InitializeTitle()` stores text, `SystemIndicator.Hide()` speaks when loading hides.
-
-### Save/Load Popups
-Patch `SetPopupActive(bool)` - enum params crash like strings.
-
-### Config Menu
-Validate via `activeInHierarchy`. `SetFocus` handles navigation, `SwitchArrowSelectTypeProcess` handles value changes.
-
-### Equipment Job Requirements (I Key)
-`UserDataManager.ReleasedJobs` → `Weapon/Armor.EquipJobGroupId` → `JobGroup.Job{N}Accept` → `Job.MesIdName`
-
-### Vehicle Transitions
-Patch `FieldPlayer.GetOn(int typeId, ...)` and `GetOff(int typeId, ...)`.
-
-### Map Transitions
-Poll `UserDataManager.CurrentMapId`. Use `LocationMessageTracker` for dedup. En-dash separator matches `MSG_LOCATION_STICK`.
+| Feature | Solution |
+|---------|----------|
+| Title Screen | `SplashController.InitializeTitle()` stores text, `SystemIndicator.Hide()` speaks |
+| Save/Load Popups | Patch `SetPopupActive(bool)` - enum params crash |
+| Config Menu | Validate via `activeInHierarchy`. `SetFocus` for nav, `SwitchArrowSelectTypeProcess` for values |
+| Equipment Job Reqs | `UserDataManager.ReleasedJobs` → `Weapon/Armor.EquipJobGroupId` → `JobGroup.Job{N}Accept` → `Job.MesIdName` |
+| Vehicle Transitions | Patch `FieldPlayer.GetOn(int)` and `GetOff(int)` |
+| Map Transitions | Poll `UserDataManager.CurrentMapId`. `LocationMessageTracker` for dedup. En-dash matches `MSG_LOCATION_STICK` |
 
 ---
 
-## Resolved Issues (Key Solutions)
+## Resolved Issues
 
-### Battle System Messages
-**Hook:** `BattleUIManager.SetCommadnMessage(string)` - announces escape, back attack, etc.
+| Issue | Solution |
+|-------|----------|
+| Battle System Messages | Hook `BattleUIManager.SetCommadnMessage(string)` |
+| Vehicle Interior Maps | Skip mapTitle when equals areaName (`MapNameResolver.cs:148`) |
+| New Game Naming | `CharacterContentListController.SetTargetSelectContent(int)`, `NameContentListController.SetFocus(int)`. `NewGamePopup` extends MonoBehaviour - patch `InitStartPopup()` |
+| Battle Action Dedup | Use object-based dedup (`BattleActData` reference) not text-based |
+| Magic Target Selection | Hook `AbilityUseContentListController.SetCursor(Cursor)`, read contentList at 0x50 |
+| Dialogue State Reset | Hook `MessageWindowManager.Close()` → `DialogueTracker.Reset()` |
+| Entity Scanner Refresh | `FieldTresureBox.Open()` and `MessageWindowManager.Close()` trigger 1-frame delayed rescan |
+| Wall Bump Detection | Hook `FieldController.OnPlayerHitCollider(FieldPlayer)`, 300ms cooldown |
+| Battle Pause Menu | Read `isActivePauseMenu` at 0x71. Check submenus BEFORE pause state. Add `uiManager.Initialized` check |
+| Entity Scanner World Map | Call `entityScanner.ForceRescan()` in `CheckMapTransition()` on map ID change |
+| Not on Map Guard | Check `FieldMap.activeInHierarchy` and `FieldPlayerController.fieldPlayer` exist |
+| Vehicle Tracking | Populate VehicleTypeMap from `Transportation.ModelList`. Check BEFORE other types, filter ResidentChara AFTER |
+| Magic Menu States | Use `AccessTools.Method()` for private IL2CPP methods. State machine determines Learn vs Use/Remove |
+| Battle State → Title | Hook `TitleMenuCommandController.SetEnableMainMenu(bool)` → `MenuStateRegistry.ResetAll()` |
+| Battle Popup Buttons | Hook `KeyInput.CommonPopup.UpdateFocus`, read cursor/commandList directly |
+| Duplicate Map Announcements | Use en-dash (U+2013) separator to match `MSG_LOCATION_STICK` format |
+| NPC Event Item Selection | Hook `SelectFieldContentController.SelectContent(int)`, read contentDataList at 0x28 |
 
-### Vehicle Interior Map Names
-**Fix:** `MapNameResolver.cs:148` - skip redundant mapTitle when equals areaName.
+---
 
-### New Game Naming (KeyInput)
-**Controllers:** `CharacterContentListController.SetTargetSelectContent(int)`, `NameContentListController.SetFocus(int)`
-**Suggested Name:** Hook `UpdateView(List<NewGameSelectData>)`, track name changes per slot.
-**Start Popup:** `NewGamePopup` extends MonoBehaviour (not Popup) - patch `InitStartPopup()`.
+## Event-Driven Map Transitions
+Hook `SubSceneManagerMainGame.ChangeState`. Field states (`FieldReady=2`, `Player=3`, `ChangeMap=1`) trigger map announcements and battle state clear.
 
-### Battle Action Dedup
-**Fix:** Use object-based dedup (`BattleActData` reference) not text-based.
+---
 
-### Magic Menu Target Selection
-**Hook:** `AbilityUseContentListController.SetCursor(Cursor)`, read from contentList at 0x50.
+## Per-Page Dialogue System
+Hook `PlayingInit` (fires once per page). Architecture:
+```
+SetContent → Read messageList + newPageLineList via pointer access
+SetSpeker → Store speaker in DialogueTracker
+PlayingInit → Get currentPageNumber, combine lines, announce
+Close → Reset DialogueTracker state
+```
+Multi-line support: `messageList` (0x88) = all lines, `newPageLineList` (0xA0) = page break indices. `GetPageText()` combines lines within page boundaries.
 
-### Dialogue Dedup Reset
-**Hook:** `MessageWindowManager.Close()` - clear `lastDialogueMessage` and `pendingDialogueText`.
+---
 
-### Entity Scanner Refresh
-**Event-driven:** `FieldTresureBox.Open()` and `MessageWindowManager.Close()` trigger 1-frame delayed rescan.
+## LineFade Per-Line Announcements
+`LineFadeMessageTracker` stores messages from `SetData`, tracks line index. `PlayInit` fires per line, announces via `AnnounceNextLine()`.
 
-### Battle Pause Menu
-**Detection:** Read `isActivePauseMenu` at offset 0x71. Cursor path contains `curosr_parent` (game typo).
-**Suppression order:** Check battle submenus BEFORE pause state. Add `uiManager.Initialized` check.
+---
 
-### Entity Scanner World Map
-**Fix:** Call `entityScanner.ForceRescan()` in `CheckMapTransition()` on map ID change.
+## External Sound Player
+Windows waveOut API with 4 channels. Pre-generates WAV tones at init.
 
-### Not on Map Guard
-**Check:** `FieldMap.activeInHierarchy` and `FieldPlayerController.fieldPlayer` exist.
+| Channel | Purpose |
+|---------|---------|
+| Movement | Footsteps |
+| WallBump | Collision thud |
+| WallTone | Looping directional tones (hardware loop, bitmask direction change) |
+| Beacon | Panning ping (unmanaged buffer writes) |
 
-### Vehicle Tracking
-**VehicleTypeMap:** Populate from `Transportation.ModelList` via pointer offsets. Check BEFORE other type detection. Filter ResidentChara AFTER.
+**Wall Bump:** `FieldPlayerKeyController.OnTouchPadCallback` prefix captures position. Coroutine waits 0.08s, checks position delta (< 0.1 = wall). Requires 2 consecutive hits to confirm.
 
-### Magic Menu States
-**Fix:** Use `AccessTools.Method()` for private IL2CPP methods. Use state machine (not boolean flags) to determine Learn vs Use/Remove mode.
+**Wall Tone Loop:** 100ms coroutine checks tiles via `MapRouteSearcher.Search()`. Suppresses near exits (`EntityScanner.GetMapExitPositions()`). 1s suppression on map transitions.
 
-### Battle State on Return to Title
-**Hook:** `TitleMenuCommandController.SetEnableMainMenu(bool)` - call `MenuStateRegistry.ResetAll()`.
+**Audio Beacons:** 2s coroutine pings toward entity. Volume scales with distance (max 500 units), pan from X delta. 400Hz north, 280Hz south.
 
-### Battle Popup Buttons
-**Hook:** `KeyInput.CommonPopup.UpdateFocus` - read cursor/commandList directly.
+---
 
-### Duplicate Map Announcements
-**Fix:** Use en-dash (U+2013) separator in `MapNameResolver` to match `MSG_LOCATION_STICK` format.
+## Entity Translation System
+JSON dictionary (`FF3_translations.json`) in `UserData/FFIII_ScreenReader/`. Called in `EntityScanner.GetEntityNameFromProperty()`. Prefix stripping via regex (removes "6:" or "SC01:" prefixes).
 
-### NPC Event Item Selection
-**Hook:** `SelectFieldContentController.SelectContent(int)` - read from contentDataList at 0x28.
+**Dump:** Hotkey `0` writes `EntityNames.json` with `{ "MapName": { "JapaneseName": "" } }` structure.
 
 ---
 

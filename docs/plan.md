@@ -19,15 +19,24 @@ Screen reader accessibility mod for Final Fantasy III Pixel Remaster. TTS announ
 | Shops & Vehicles | DONE |
 | Popups & Map Transitions | DONE |
 | NPC Event Item Selection | DONE |
+| External Sound Player | DONE |
+| Entity Translation | DONE |
 
 ---
 
 ## FF3-Specific Features
 
+- **Dialogue:** Per-page via `PlayingInit`, multi-line pages, speaker tracking
+- **Story Text:** Per-line via `LineFadeMessageWindowController`
 - **Job Menu:** Job name, level, "Equipped" indicator
-- **Magic:** Per-level MP (8 levels), format: "Spell: MP: X/Y. Description"
-- **Vehicles:** `GetOn()`/`GetOff()` patches, landing detection via `ShowLandingGuide(bool)`
-- **Entity Scanner:** VehicleTypeMap from `Transportation.ModelList`, event-driven refresh
+- **Magic:** 8-level MP system: "Spell: MP: X/Y. Description"
+- **Vehicles:** `GetOn()`/`GetOff()` patches, landing via `ShowLandingGuide(bool)`
+- **Entity Scanner:** VehicleTypeMap from `Transportation.ModelList`, event-driven
+- **Entity Translation:** JSON Japanese→English dictionary with prefix stripping, untranslated dump
+- **Sound Player:** Windows waveOut API, 4 channels (Movement, WallBump, WallTone, Beacon)
+- **Wall Tones:** Looping directional tones, suppressed at exits/doors and map transitions
+- **Footsteps:** Click on tile change via coroutine-based wall bump detection
+- **Audio Beacons:** Periodic pings with distance-based volume/panning
 
 ---
 
@@ -44,6 +53,10 @@ Screen reader accessibility mod for Final Fantasy III Pixel Remaster. TTS announ
 | G | Gil |
 | I | Details (tooltips, stats, job requirements) |
 | V | Vehicle/movement mode |
+| ; | Toggle wall tones |
+| ' | Toggle footsteps |
+| 0 | Dump untranslated entity names |
+| 9 | Toggle audio beacons |
 | Up/Down | Navigate stats (status screen) |
 | Shift+Up/Down | Jump stat group |
 | Ctrl+Up/Down | First/last stat |

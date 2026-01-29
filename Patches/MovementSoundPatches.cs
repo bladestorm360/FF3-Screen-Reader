@@ -7,24 +7,56 @@ using Il2CppLast.Map;
 using Il2CppLast.Entity.Field;
 using Il2CppLast.Management;
 using FFIII_ScreenReader.Utils;
+using FFIII_ScreenReader.Core;
+using FFIII_ScreenReader.Field;
 
 namespace FFIII_ScreenReader.Patches
 {
     /// <summary>
     /// Patches for playing sound effects during player movement (wall bumps).
-    /// Ported from FF5 mod.
+    /// Uses coroutine-based approach: captures position before movement input,
+    /// waits for movement to process, then checks if position changed.
     /// </summary>
     [HarmonyPatch]
     public static class MovementSoundPatches
     {
         // Cooldown to prevent sound spam when holding a direction key against a wall
         private static float lastBumpTime = 0f;
-        private static readonly float BUMP_COOLDOWN = 0.2f; // 200ms between bump sounds
-
-        // Sound ID for wall bump - common collision/error sound
-        private static readonly int BUMP_SOUND_ID = 4;
+        private static readonly float BUMP_COOLDOWN = 0.3f; // 300ms between bump sounds
 
         private static bool hasLoggedPatchActive = false;
+
+        // Track consecutive failed moves to detect real walls vs false positives
+        private static Vector3 lastCollisionPos = Vector3.zero;
+        private static int samePositionCount = 0;
+        private const int REQUIRED_CONSECUTIVE_HITS = 2; // Need 2+ hits at same spot
+        private const float POSITION_TOLERANCE = 1.0f; // Positions within 1 unit considered "same"
+
+        // Prevent multiple wall-check coroutines from stacking up
+        private static bool wallCheckPending = false;
+
+        // Audio feedback cooldowns
+        private const float TILE_SIZE = 16f;
+        private static float lastFootstepTime = 0f;
+        private const float FOOTSTEP_COOLDOWN = 0.15f;
+
+        // Track collision state to suppress footsteps when wall bump plays
+        private static bool collisionDetectedThisFrame = false;
+
+        // Tile position tracking for footsteps
+        private static Vector2Int lastTilePosition = Vector2Int.zero;
+        private static bool tileTrackingInitialized = false;
+
+        /// <summary>
+        /// Converts world position to tile coordinates.
+        /// </summary>
+        private static Vector2Int GetTilePosition(Vector3 worldPos)
+        {
+            return new Vector2Int(
+                Mathf.FloorToInt(worldPos.x / TILE_SIZE),
+                Mathf.FloorToInt(worldPos.y / TILE_SIZE)
+            );
+        }
 
         /// <summary>
         /// Prefix patch to capture player position and check after a frame
@@ -46,18 +78,18 @@ namespace FFIII_ScreenReader.Patches
                 if (!HasMovementInput(axis))
                     return;
 
-                // Check if we're on cooldown
-                float currentTime = Time.time;
-                if (currentTime - lastBumpTime < BUMP_COOLDOWN)
-                    return;
-
                 // Access fieldPlayer directly - IL2CppInterop exposes protected fields
                 if (__instance?.fieldPlayer?.transform == null)
                     return;
 
-                // Store current position and start coroutine to check after a frame
-                Vector3 positionBeforeMovement = __instance.fieldPlayer.transform.localPosition;
-                CoroutineManager.StartManaged(CheckForWallBumpAfterFrame(__instance.fieldPlayer, positionBeforeMovement));
+                // Only start a new coroutine if one isn't already pending
+                // This prevents coroutine spam when holding direction key
+                if (!wallCheckPending)
+                {
+                    wallCheckPending = true;
+                    Vector3 positionBeforeMovement = __instance.fieldPlayer.transform.localPosition;
+                    CoroutineManager.StartManaged(CheckForWallBumpAfterFrame(__instance.fieldPlayer, positionBeforeMovement));
+                }
             }
             catch (Exception ex)
             {
@@ -66,18 +98,22 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Coroutine that waits one frame then checks if position changed
+        /// Coroutine that waits for movement animation to complete then checks position.
+        /// Movement takes ~0.067s per tile at 15 tiles/sec, so we wait 0.08s.
         /// </summary>
         private static IEnumerator CheckForWallBumpAfterFrame(FieldPlayer player, Vector3 positionBefore)
         {
-            // Wait one frame for movement to be processed
-            yield return null;
+            // Wait for movement animation to complete (movement takes ~0.067s per tile)
+            yield return new WaitForSeconds(0.08f);
 
             try
             {
                 // Check if player still exists
                 if (player == null || player.transform == null)
+                {
+                    wallCheckPending = false;
                     yield break;
+                }
 
                 // Get position after movement was processed
                 Vector3 positionAfter = player.transform.localPosition;
@@ -85,17 +121,92 @@ namespace FFIII_ScreenReader.Patches
                 // Calculate distance moved
                 float distanceMoved = Vector3.Distance(positionBefore, positionAfter);
 
+                // Check tile position change for footsteps
+                Vector2Int currentTile = GetTilePosition(positionAfter);
+
+                // Initialize tile tracking if needed
+                if (!tileTrackingInitialized)
+                {
+                    lastTilePosition = currentTile;
+                    tileTrackingInitialized = true;
+                    MelonLogger.Msg($"[Footstep] Tile tracking initialized at ({currentTile.x}, {currentTile.y})");
+                }
+
                 // If position didn't change (within small threshold), player hit a wall
                 if (distanceMoved < 0.1f)
                 {
-                    MelonLogger.Msg($"[WallBump] Wall bump detected! Distance moved: {distanceMoved:F3}");
+                    // Mark collision detected to suppress footstep
+                    collisionDetectedThisFrame = true;
+
+                    // Check if position is same as last collision
+                    float distFromLast = Vector3.Distance(positionBefore, lastCollisionPos);
+
+                    if (distFromLast < POSITION_TOLERANCE)
+                    {
+                        samePositionCount++;
+                    }
+                    else
+                    {
+                        // New position - reset counter
+                        samePositionCount = 1;
+                        lastCollisionPos = positionBefore;
+                    }
+
+                    // Only play sound after confirmed consecutive hits
+                    if (samePositionCount < REQUIRED_CONSECUTIVE_HITS)
+                    {
+                        wallCheckPending = false;
+                        yield break;
+                    }
+
+                    // Check cooldown INSIDE coroutine (after the wait)
+                    // This prevents multiple coroutines from all playing at once
+                    float currentTime = Time.time;
+                    if (currentTime - lastBumpTime < BUMP_COOLDOWN)
+                    {
+                        wallCheckPending = false;
+                        yield break;
+                    }
+
+                    MelonLogger.Msg($"[WallBump] Wall bump confirmed after {samePositionCount} hits");
                     PlayBumpSound();
-                    lastBumpTime = Time.time;
+                    lastBumpTime = currentTime;
                 }
+                else
+                {
+                    // Player successfully moved - reset collision counter
+                    samePositionCount = 0;
+
+                    if (currentTile != lastTilePosition)
+                    {
+                        // Tile changed - play footstep if enabled
+                        MelonLogger.Msg($"[Footstep] Tile changed from ({lastTilePosition.x}, {lastTilePosition.y}) to ({currentTile.x}, {currentTile.y})");
+                        lastTilePosition = currentTile;
+
+                        if (FFIII_ScreenReaderMod.Instance != null && FFIII_ScreenReaderMod.Instance.IsFootstepsEnabled())
+                        {
+                            float currentTime = Time.time;
+                            if (currentTime - lastFootstepTime >= FOOTSTEP_COOLDOWN)
+                            {
+                                MelonLogger.Msg("[Footstep] Playing footstep sound");
+                                SoundPlayer.PlayFootstep();
+                                lastFootstepTime = currentTime;
+                            }
+                        }
+                    }
+                }
+
+                // Reset collision flag at end of coroutine
+                collisionDetectedThisFrame = false;
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error in CheckForWallBumpAfterFrame: {ex.Message}");
+            }
+            finally
+            {
+                // Always reset pending flag so next coroutine can start
+                wallCheckPending = false;
             }
         }
 
@@ -110,22 +221,36 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Plays the wall bump sound effect
+        /// Plays the wall bump sound effect using external procedural tone.
+        /// Uses distinct sound that won't be confused with in-game audio.
         /// </summary>
         private static void PlayBumpSound()
         {
             try
             {
-                var audioManager = AudioManager.Instance;
-                if (audioManager != null)
-                {
-                    audioManager.PlaySe(BUMP_SOUND_ID);
-                }
+                // Use external procedural tone (distinct from in-game sounds)
+                SoundPlayer.PlayWallBump();
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error playing bump sound: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Resets all static state. Called on map transitions to prevent stale
+        /// collision/footstep data from the previous map.
+        /// </summary>
+        public static void ResetState()
+        {
+            lastBumpTime = 0f;
+            lastCollisionPos = Vector3.zero;
+            samePositionCount = 0;
+            wallCheckPending = false;
+            lastFootstepTime = 0f;
+            collisionDetectedThisFrame = false;
+            lastTilePosition = Vector2Int.zero;
+            tileTrackingInitialized = false;
         }
     }
 }

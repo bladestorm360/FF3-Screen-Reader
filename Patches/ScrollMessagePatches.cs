@@ -9,12 +9,105 @@ using LineFadeMessageManager = Il2CppLast.Message.LineFadeMessageManager;
 using ScrollMessageManager = Il2CppLast.Message.ScrollMessageManager;
 using ScrollMessageClient = Il2CppLast.Management.ScrollMessageClient;
 using MessageManager = Il2CppLast.Management.MessageManager;
+using LineFadeMessageWindowController = Il2CppLast.UI.Message.LineFadeMessageWindowController;
 
 namespace FFIII_ScreenReader.Patches
 {
+    // ============================================================
+    // LineFade Per-Line Announcement System
+    // Announces each line of story text as it appears on screen,
+    // using the game's internal timing via PlayInit hook.
+    // ============================================================
+
+    /// <summary>
+    /// Tracks LineFade message state for per-line announcements.
+    /// Used for auto-scrolling story text, credits, etc.
+    /// </summary>
+    public static class LineFadeMessageTracker
+    {
+        private static string[] storedMessages = null;
+        private static int currentLineIndex = 0;
+
+        /// <summary>
+        /// Store messages when SetData is called.
+        /// </summary>
+        public static void SetMessages(object messagesObj)
+        {
+            if (messagesObj == null)
+            {
+                storedMessages = null;
+                currentLineIndex = 0;
+                return;
+            }
+
+            try
+            {
+                var countProp = messagesObj.GetType().GetProperty("Count");
+                if (countProp == null) return;
+
+                int count = (int)countProp.GetValue(messagesObj);
+                if (count == 0)
+                {
+                    storedMessages = null;
+                    currentLineIndex = 0;
+                    return;
+                }
+
+                var indexer = messagesObj.GetType().GetProperty("Item");
+                if (indexer == null) return;
+
+                storedMessages = new string[count];
+                for (int i = 0; i < count; i++)
+                {
+                    storedMessages[i] = indexer.GetValue(messagesObj, new object[] { i }) as string;
+                }
+                currentLineIndex = 0;
+
+                MelonLogger.Msg($"[LineFadeTracker] Stored {count} lines");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error storing LineFade messages: {ex.Message}");
+                storedMessages = null;
+                currentLineIndex = 0;
+            }
+        }
+
+        /// <summary>
+        /// Get and announce the next line. Called when PlayInit fires.
+        /// </summary>
+        public static void AnnounceNextLine()
+        {
+            if (storedMessages == null || currentLineIndex >= storedMessages.Length)
+            {
+                return;
+            }
+
+            string line = storedMessages[currentLineIndex];
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                string cleanLine = line.Trim();
+                MelonLogger.Msg($"[LineFade Line {currentLineIndex + 1}/{storedMessages.Length}] {cleanLine}");
+                FFIII_ScreenReaderMod.SpeakText(cleanLine, interrupt: false);
+            }
+
+            currentLineIndex++;
+        }
+
+        /// <summary>
+        /// Reset the tracker.
+        /// </summary>
+        public static void Reset()
+        {
+            storedMessages = null;
+            currentLineIndex = 0;
+        }
+    }
+
     /// <summary>
     /// Patches for scrolling intro/outro messages.
     /// The intro uses ScrollMessageWindowController which displays scrolling text.
+    /// LineFadeMessageWindowController provides per-line announcements for story text.
     /// </summary>
     public static class ScrollMessagePatches
     {
@@ -111,6 +204,38 @@ namespace FFIII_ScreenReader.Patches
                     MelonLogger.Warning("ScrollMessageClient.PlayMessageValue method not found");
                 }
 
+                // Patch LineFadeMessageWindowController for per-line announcements
+                Type lineFadeControllerType = typeof(LineFadeMessageWindowController);
+                MelonLogger.Msg($"Found LineFadeMessageWindowController: {lineFadeControllerType.FullName}");
+
+                // Patch SetData to store messages
+                var setDataMethod = AccessTools.Method(lineFadeControllerType, "SetData");
+                if (setDataMethod != null)
+                {
+                    var postfix = typeof(ScrollMessagePatches).GetMethod("LineFadeController_SetData_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(setDataMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("Patched LineFadeMessageWindowController.SetData");
+                }
+                else
+                {
+                    MelonLogger.Warning("LineFadeMessageWindowController.SetData not found");
+                }
+
+                // Patch PlayInit to announce each line
+                var playInitMethod = AccessTools.Method(lineFadeControllerType, "PlayInit");
+                if (playInitMethod != null)
+                {
+                    var postfix = typeof(ScrollMessagePatches).GetMethod("LineFadeController_PlayInit_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(playInitMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("Patched LineFadeMessageWindowController.PlayInit");
+                }
+                else
+                {
+                    MelonLogger.Warning("LineFadeMessageWindowController.PlayInit not found");
+                }
+
                 MelonLogger.Msg("Scroll/Fade message patches applied successfully");
             }
             catch (Exception ex)
@@ -130,14 +255,10 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                // Debug: Log that postfix was called
-                MelonLogger.Msg($"[Fade Message] Postfix called, __0 type: {__0?.GetType()?.Name ?? "null"}, value: {__0?.ToString() ?? "null"}");
-
                 // __0 is the first parameter (message string)
                 string message = __0?.ToString();
                 if (string.IsNullOrEmpty(message))
                 {
-                    MelonLogger.Msg("[Fade Message] Message was null or empty, skipping");
                     return;
                 }
 
@@ -362,6 +483,42 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
+        /// Postfix for LineFadeMessageWindowController.SetData - stores messages for per-line announcement.
+        /// </summary>
+        public static void LineFadeController_SetData_Postfix(object __0)
+        {
+            try
+            {
+                // __0 is the messages parameter (List<string>)
+                LineFadeMessageTracker.SetMessages(__0);
+
+                // Clear speaker context so next regular dialogue re-announces the speaker
+                // This re-establishes context after auto-scrolling text events
+                DialogueTracker.ClearLastAnnouncedSpeaker();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error in LineFadeController_SetData_Postfix: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Postfix for LineFadeMessageWindowController.PlayInit - announces each line as it appears.
+        /// PlayInit is called once per line by the game's internal state machine.
+        /// </summary>
+        public static void LineFadeController_PlayInit_Postfix()
+        {
+            try
+            {
+                LineFadeMessageTracker.AnnounceNextLine();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error in LineFadeController_PlayInit_Postfix: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Reads message from controller's executionData and announces it.
         /// </summary>
         private static void ReadAndAnnounceMessage(object controller)
@@ -369,32 +526,20 @@ namespace FFIII_ScreenReader.Patches
             // Get executionData field which contains the message
             var execDataField = AccessTools.Field(controller.GetType(), "executionData");
             if (execDataField == null)
-            {
-                MelonLogger.Msg("[DEBUG] executionData field not found");
                 return;
-            }
 
             var execData = execDataField.GetValue(controller);
             if (execData == null)
-            {
-                MelonLogger.Msg("[DEBUG] executionData is null");
                 return;
-            }
 
             // Get Message property from ExecutionData
             var messageProp = AccessTools.Property(execData.GetType(), "Message");
             if (messageProp == null)
-            {
-                MelonLogger.Msg("[DEBUG] Message property not found on ExecutionData");
                 return;
-            }
 
             string message = messageProp.GetValue(execData) as string;
             if (string.IsNullOrEmpty(message))
-            {
-                MelonLogger.Msg("[DEBUG] Message is null or empty");
                 return;
-            }
 
             // Avoid duplicate announcements
             if (message == lastScrollMessage)
@@ -501,40 +646,25 @@ namespace FFIII_ScreenReader.Patches
             // Get view field (FadeMessageWindowView)
             var viewField = AccessTools.Field(controller.GetType(), "view");
             if (viewField == null)
-            {
-                MelonLogger.Msg("[DEBUG] FadeMessageWindowController.view field not found");
                 return;
-            }
 
             var view = viewField.GetValue(controller);
             if (view == null)
-            {
-                MelonLogger.Msg("[DEBUG] FadeMessageWindowController.view is null");
                 return;
-            }
 
             // Get messageText field from FadeMessageWindowView
             var messageTextField = AccessTools.Field(view.GetType(), "messageText");
             if (messageTextField == null)
-            {
-                MelonLogger.Msg("[DEBUG] FadeMessageWindowView.messageText field not found");
                 return;
-            }
 
             var messageText = messageTextField.GetValue(view);
             if (messageText == null)
-            {
-                MelonLogger.Msg("[DEBUG] FadeMessageWindowView.messageText is null");
                 return;
-            }
 
             // Get text property from UnityEngine.UI.Text
             var textProp = AccessTools.Property(messageText.GetType(), "text");
             if (textProp == null)
-            {
-                MelonLogger.Msg("[DEBUG] Text.text property not found");
                 return;
-            }
 
             string message = textProp.GetValue(messageText) as string;
             if (string.IsNullOrEmpty(message))
@@ -570,17 +700,11 @@ namespace FFIII_ScreenReader.Patches
             // Get view field (LineFadeMessageWindowView)
             var viewField = AccessTools.Field(controller.GetType(), "view");
             if (viewField == null)
-            {
-                MelonLogger.Msg("[DEBUG] LineFadeMessageWindowController.view field not found");
                 return;
-            }
 
             var view = viewField.GetValue(controller);
             if (view == null)
-            {
-                MelonLogger.Msg("[DEBUG] LineFadeMessageWindowController.view is null");
                 return;
-            }
 
             // Get LineTexts property from LineFadeMessageWindowView (it's a public property)
             var lineTextsProp = AccessTools.Property(view.GetType(), "LineTexts");
@@ -589,10 +713,7 @@ namespace FFIII_ScreenReader.Patches
                 // Try the field directly
                 var lineTextsField = AccessTools.Field(view.GetType(), "lineTexts");
                 if (lineTextsField == null)
-                {
-                    MelonLogger.Msg("[DEBUG] LineFadeMessageWindowView.lineTexts not found");
                     return;
-                }
 
                 var lineTextsFromField = lineTextsField.GetValue(view);
                 if (lineTextsFromField != null)
@@ -610,8 +731,6 @@ namespace FFIII_ScreenReader.Patches
                     return;
                 }
             }
-
-            MelonLogger.Msg("[DEBUG] Could not read line texts from LineFadeMessageWindowView");
         }
 
         /// <summary>

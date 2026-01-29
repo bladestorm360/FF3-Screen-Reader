@@ -40,13 +40,13 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void ResetTracking(BattleResultData data)
         {
-            // ShouldAnnounce returns true if this is a different object (new battle result)
-            if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_DATA, data))
-            {
-                announcedPoints = false;
-                announcedItems = false;
-                announcedLevelUps.Clear();
-            }
+            // Always clear tracking state first to prevent HashSet memory leak
+            announcedPoints = false;
+            announcedItems = false;
+            announcedLevelUps.Clear();
+
+            // Then track for deduplication
+            AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_DATA, data);
         }
 
         /// <summary>
@@ -137,7 +137,7 @@ namespace FFIII_ScreenReader.Patches
                     if (string.IsNullOrEmpty(itemName)) continue;
 
                     // Strip any icon markup (e.g., <ic_item>)
-                    itemName = StripIconMarkup(itemName);
+                    itemName = TextUtils.StripIconMarkup(itemName);
                     if (string.IsNullOrEmpty(itemName)) continue;
 
                     string announcement;
@@ -299,42 +299,27 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Strip icon markup tags from text (e.g., removes <ic_item> tags)
+        /// Process all level ups and job level ups for all characters in the result data.
+        /// Shared helper used by multiple patch classes.
         /// </summary>
-        private static string StripIconMarkup(string text)
+        public static void ProcessAllLevelUps(BattleResultData data)
         {
-            if (string.IsNullOrEmpty(text)) return text;
+            if (data?.CharacterList == null) return;
 
-            // Remove <ic_XXX> style tags
-            int startIdx;
-            while ((startIdx = text.IndexOf("<ic_", StringComparison.OrdinalIgnoreCase)) >= 0)
+            foreach (var charResult in data.CharacterList)
             {
-                int endIdx = text.IndexOf(">", startIdx);
-                if (endIdx > startIdx)
+                if (charResult == null) continue;
+
+                if (charResult.IsLevelUp)
                 {
-                    text = text.Remove(startIdx, endIdx - startIdx + 1);
+                    AnnounceLevelUp(charResult);
                 }
-                else
+
+                if (charResult.IsJobLevelUp)
                 {
-                    break;
+                    AnnounceJobLevelUp(charResult);
                 }
             }
-
-            // Also handle <IC_XXX> uppercase variant
-            while ((startIdx = text.IndexOf("<IC_", StringComparison.OrdinalIgnoreCase)) >= 0)
-            {
-                int endIdx = text.IndexOf(">", startIdx);
-                if (endIdx > startIdx)
-                {
-                    text = text.Remove(startIdx, endIdx - startIdx + 1);
-                }
-                else
-                {
-                    break;
-                }
-            }
-
-            return text.Trim();
         }
     }
 
@@ -448,25 +433,7 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                var data = __instance.targetData;
-                if (data?.CharacterList == null) return;
-
-                foreach (var charResult in data.CharacterList)
-                {
-                    if (charResult == null) continue;
-
-                    // Announce level up with stats
-                    if (charResult.IsLevelUp)
-                    {
-                        BattleResultPatches.AnnounceLevelUp(charResult);
-                    }
-
-                    // Announce job level up
-                    if (charResult.IsJobLevelUp)
-                    {
-                        BattleResultPatches.AnnounceJobLevelUp(charResult);
-                    }
-                }
+                BattleResultPatches.ProcessAllLevelUps(__instance.targetData);
             }
             catch (Exception ex)
             {
@@ -483,25 +450,7 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                var data = __instance.targetData;
-                if (data?.CharacterList == null) return;
-
-                foreach (var charResult in data.CharacterList)
-                {
-                    if (charResult == null) continue;
-
-                    // Announce level up with stats
-                    if (charResult.IsLevelUp)
-                    {
-                        BattleResultPatches.AnnounceLevelUp(charResult);
-                    }
-
-                    // Announce job level up
-                    if (charResult.IsJobLevelUp)
-                    {
-                        BattleResultPatches.AnnounceJobLevelUp(charResult);
-                    }
-                }
+                BattleResultPatches.ProcessAllLevelUps(__instance.targetData);
             }
             catch (Exception ex)
             {
@@ -523,22 +472,7 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                if (data?.CharacterList == null) return;
-
-                foreach (var charResult in data.CharacterList)
-                {
-                    if (charResult == null) continue;
-
-                    if (charResult.IsLevelUp)
-                    {
-                        BattleResultPatches.AnnounceLevelUp(charResult);
-                    }
-
-                    if (charResult.IsJobLevelUp)
-                    {
-                        BattleResultPatches.AnnounceJobLevelUp(charResult);
-                    }
-                }
+                BattleResultPatches.ProcessAllLevelUps(data);
             }
             catch (Exception ex)
             {
@@ -555,22 +489,7 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                if (data?.CharacterList == null) return;
-
-                foreach (var charResult in data.CharacterList)
-                {
-                    if (charResult == null) continue;
-
-                    if (charResult.IsLevelUp)
-                    {
-                        BattleResultPatches.AnnounceLevelUp(charResult);
-                    }
-
-                    if (charResult.IsJobLevelUp)
-                    {
-                        BattleResultPatches.AnnounceJobLevelUp(charResult);
-                    }
-                }
+                BattleResultPatches.ProcessAllLevelUps(data);
             }
             catch (Exception ex)
             {
