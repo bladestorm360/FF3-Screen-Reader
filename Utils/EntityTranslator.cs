@@ -210,7 +210,7 @@ namespace FFIII_ScreenReader.Utils
         /// <summary>
         /// Checks if a string contains Japanese characters (hiragana, katakana, or kanji).
         /// </summary>
-        private static bool ContainsJapanese(string text)
+        public static bool ContainsJapanese(string text)
         {
             if (string.IsNullOrEmpty(text))
                 return false;

@@ -343,6 +343,14 @@ JSON dictionary (`FF3_translations.json`) in `UserData/FFIII_ScreenReader/`. Cal
 
 **Dump:** Hotkey `0` writes `EntityNames.json` with `{ "MapName": { "JapaneseName": "" } }` structure.
 
+**Current Translations:**
+| Japanese | English | Location |
+|----------|---------|----------|
+| 風水師 | Geomancer | Duster |
+| 商人2 | Merchant 2 | Duster |
+| 商人4 | Merchant 4 | Duster |
+| 吟遊詩人2 | Bard 2 | Duster |
+
 ---
 
 ## Game Code Typos

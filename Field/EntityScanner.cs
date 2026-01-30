@@ -809,6 +809,12 @@ namespace FFIII_ScreenReader.Field
                     }
                 }
 
+                // If name contains Japanese characters, always translate (for tracking)
+                if (Utils.EntityTranslator.ContainsJapanese(name))
+                {
+                    return Utils.EntityTranslator.Translate(name);
+                }
+
                 // If name looks like a readable name (not a code), use it directly
                 if (!name.Contains("_") && !name.All(c => char.IsLower(c)))
                 {
