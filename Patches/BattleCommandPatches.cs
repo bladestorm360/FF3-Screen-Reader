@@ -17,62 +17,24 @@ namespace FFIII_ScreenReader.Patches
     /// State tracker for battle command menu.
     /// Prevents generic cursor from double-reading commands.
     /// </summary>
-    public static class BattleCommandState
+    internal static class BattleCommandState
     {
-        /// <summary>
-        /// True when battle command menu is actively handling announcements.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_COMMAND);
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_COMMAND);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.BATTLE_COMMAND, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
-        // State machine offset for BattleCommandSelectController (from dump.cs)
-        private const int OFFSET_STATE_MACHINE = 0x48;
-
-        // BattleCommandSelectController.State values (from dump.cs line 435181)
-        private const int STATE_NONE = 0;
-        private const int STATE_NORMAL = 1;     // Main command menu (Attack, Magic, etc.)
-        private const int STATE_EXTRA = 2;      // Sub-commands (White Magic, Black Magic, etc.)
-        private const int STATE_MANIPULATE = 3; // Enemy manipulation commands
-
-        /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// Simply returns IsActive - flag is cleared explicitly at battle end via BattleResultPatches.
-        /// This prevents false clears during state transitions within battle.
-        /// </summary>
-        public static bool ShouldSuppress()
-        {
-            return IsActive;
-        }
-
-        /// <summary>
-        /// Reads the current state from BattleCommandSelectController's state machine.
-        /// Returns -1 if unable to read.
-        /// </summary>
-        private static int GetCurrentState(BattleCommandSelectController controller)
-        {
-            if (controller == null)
-                return -1;
-            return StateReaderHelper.ReadStateTag(controller.Pointer, OFFSET_STATE_MACHINE);
-        }
-
-        /// <summary>
-        /// Clears battle command state.
-        /// </summary>
-        public static void ClearState()
-        {
-            IsActive = false;
-        }
+        public static bool ShouldSuppress() => IsActive;
     }
 
     /// <summary>
     /// Patch for SetCommandData - announces when a character's turn becomes active.
     /// </summary>
     [HarmonyPatch(typeof(BattleCommandSelectController), nameof(BattleCommandSelectController.SetCommandData))]
-    public static class BattleCommandSelectController_SetCommandData_Patch
+    internal static class BattleCommandSelectController_SetCommandData_Patch
     {
         private static int lastCharacterId = -1;
 
@@ -99,7 +61,6 @@ namespace FFIII_ScreenReader.Patches
                 GlobalBattleMessageTracker.ClearFleeInProgress();
 
                 string announcement = $"{characterName}'s turn";
-                MelonLogger.Msg($"[Battle Turn] {announcement}");
                 // Turn announcements can interrupt
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
@@ -120,9 +81,9 @@ namespace FFIII_ScreenReader.Patches
     /// Uses string method name since SetCursor is private.
     /// </summary>
     [HarmonyPatch(typeof(BattleCommandSelectController), "SetCursor", new Type[] { typeof(int) })]
-    public static class BattleCommandSelectController_SetCursor_Patch
+    internal static class BattleCommandSelectController_SetCursor_Patch
     {
-        private const string CONTEXT_CURSOR = "BattleCommand.Cursor";
+        private const string CONTEXT_CURSOR = AnnouncementContexts.BATTLE_COMMAND_CURSOR;
 
         [HarmonyPostfix]
         public static void Postfix(BattleCommandSelectController __instance, int index)
@@ -133,19 +94,14 @@ namespace FFIII_ScreenReader.Patches
 
                 // Mark battle command menu as active for suppression
                 // Also clear other menu states to prevent conflicts
-                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("BattleCommand");
-                BattleCommandState.IsActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_COMMAND);
 
                 // Actively check target selection state (more reliable than just reading the flag)
                 bool targetActive = BattleTargetPatches.CheckAndUpdateTargetSelectionActive();
 
-                // Log EVERY SetCursor call to understand what's happening
-                MelonLogger.Msg($"[Battle Command] SetCursor called: index={index}, TargetActive={targetActive}");
-
                 // SUPPRESSION: If targeting is active, do not announce commands
                 if (targetActive)
                 {
-                    MelonLogger.Msg($"[Battle Command] SUPPRESSED - target selection active");
                     return;
                 }
 
@@ -153,14 +109,12 @@ namespace FFIII_ScreenReader.Patches
                 // This prevents "Defend" being announced when flee action resets cursor to index 0
                 if (GlobalBattleMessageTracker.IsFleeInProgress)
                 {
-                    MelonLogger.Msg($"[Battle Command] SUPPRESSED - flee in progress");
                     return;
                 }
 
                 // Skip duplicate announcements
                 if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_CURSOR, index))
                 {
-                    MelonLogger.Msg($"[Battle Command] SUPPRESSED - duplicate index");
                     return;
                 }
 
@@ -181,7 +135,6 @@ namespace FFIII_ScreenReader.Patches
                 if (string.IsNullOrWhiteSpace(commandName)) return;
 
                 // Immediate speech - no delay needed since we actively check target selection state
-                MelonLogger.Msg($"[Battle Command] Speaking: {commandName}");
                 FFIII_ScreenReaderMod.SpeakText(commandName, interrupt: false);
             }
             catch (Exception ex)
@@ -199,20 +152,26 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Tracks battle target selection state.
     /// </summary>
-    public static class BattleTargetPatches
+    internal static class BattleTargetPatches
     {
-        private const string CONTEXT_PLAYER = "BattleTarget.Player";
-        private const string CONTEXT_ENEMY = "BattleTarget.Enemy";
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_TARGET, AnnouncementContexts.BATTLE_TARGET_PLAYER, AnnouncementContexts.BATTLE_TARGET_ENEMY);
+        private const string CONTEXT_PLAYER = AnnouncementContexts.BATTLE_TARGET_PLAYER;
+        private const string CONTEXT_ENEMY = AnnouncementContexts.BATTLE_TARGET_ENEMY;
 
-        /// <summary>
-        /// True when target selection is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsTargetSelectionActive
+        static BattleTargetPatches()
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_TARGET);
-            private set => MenuStateRegistry.SetActive(MenuStateRegistry.BATTLE_TARGET, value);
+            _helper.RegisterResetHandler();
         }
 
+        public static bool IsTargetSelectionActive
+        {
+            get => _helper.IsActive;
+            private set => _helper.IsActive = value;
+        }
+
+        /// <summary>
+        /// Resets dedup contexts between turns without deactivating target selection.
+        /// </summary>
         public static void ResetState()
         {
             AnnouncementDeduplicator.Reset(CONTEXT_PLAYER, CONTEXT_ENEMY);
@@ -241,7 +200,7 @@ namespace FFIII_ScreenReader.Patches
                 // Try cached reference first
                 if (cachedTargetController == null || cachedTargetController.gameObject == null)
                 {
-                    cachedTargetController = UnityEngine.Object.FindObjectOfType<BattleTargetSelectController>();
+                    cachedTargetController = GameObjectCache.GetOrFind<BattleTargetSelectController>();
                 }
 
                 if (cachedTargetController == null)
@@ -280,7 +239,6 @@ namespace FFIII_ScreenReader.Patches
 
         public static void SetTargetSelectionActive(bool active)
         {
-            MelonLogger.Msg($"[Battle Target] SetTargetSelectionActive: {active}");
             IsTargetSelectionActive = active;
             if (active)
             {
@@ -303,7 +261,7 @@ namespace FFIII_ScreenReader.Patches
             try
             {
                 // Validate target selection controller is still active
-                var controller = UnityEngine.Object.FindObjectOfType<BattleTargetSelectController>();
+                var controller = GameObjectCache.GetOrFind<BattleTargetSelectController>();
                 if (controller == null || !controller.gameObject.activeInHierarchy)
                 {
                     // Controller gone (battle ended) - clear stuck flag
@@ -371,7 +329,6 @@ namespace FFIII_ScreenReader.Patches
 
                 // Note: FF3 uses spell charges per level, not MP
                 string announcement = $"{name}: HP {currentHp}/{maxHp}";
-                MelonLogger.Msg($"[Battle Target] {announcement}");
                 // Target selection SHOULD interrupt - user confirmed a command and wants to hear the target
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
@@ -459,7 +416,7 @@ namespace FFIII_ScreenReader.Patches
                 }
 
                 // Apply HP display format based on user preference
-                int hpMode = FFIII_ScreenReaderMod.EnemyHPDisplay;
+                int hpMode = PreferencesManager.EnemyHPDisplay;
                 switch (hpMode)
                 {
                     case 0: // Numbers
@@ -473,7 +430,6 @@ namespace FFIII_ScreenReader.Patches
                         break; // No HP appended
                 }
 
-                MelonLogger.Msg($"[Battle Target] {announcement}");
                 // Target selection SHOULD interrupt - user confirmed a command and wants to hear the target
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
@@ -490,12 +446,11 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     [HarmonyPatch(typeof(BattleTargetSelectController), "SelectContent",
         new Type[] { typeof(Il2CppSystem.Collections.Generic.IEnumerable<BattlePlayerData>), typeof(int) })]
-    public static class BattleTargetSelectController_SelectContent_Player_Patch
+    internal static class BattleTargetSelectController_SelectContent_Player_Patch
     {
         [HarmonyPrefix]
         public static void Prefix()
         {
-            MelonLogger.Msg("[Battle Target] SelectContent(Player) Prefix - setting flag true");
             BattleTargetPatches.SetTargetSelectionActive(true);
         }
 
@@ -520,12 +475,11 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     [HarmonyPatch(typeof(BattleTargetSelectController), "SelectContent",
         new Type[] { typeof(Il2CppSystem.Collections.Generic.IEnumerable<BattleEnemyData>), typeof(int) })]
-    public static class BattleTargetSelectController_SelectContent_Enemy_Patch
+    internal static class BattleTargetSelectController_SelectContent_Enemy_Patch
     {
         [HarmonyPrefix]
         public static void Prefix()
         {
-            MelonLogger.Msg("[Battle Target] SelectContent(Enemy) Prefix - setting flag true");
             BattleTargetPatches.SetTargetSelectionActive(true);
         }
 
@@ -549,19 +503,18 @@ namespace FFIII_ScreenReader.Patches
     /// Use BattleTargetShowWindowManualPatch instead (applied via TryPatchBattleTargetShowWindow).
     /// </summary>
     // [HarmonyPatch(typeof(BattleTargetSelectController), nameof(BattleTargetSelectController.ShowWindow))]
-    // public static class BattleTargetSelectController_ShowWindow_Patch { ... }
+    // internal static class BattleTargetSelectController_ShowWindow_Patch { ... }
 
     /// <summary>
     /// Manual patch for ShowWindow to track when target selection window is shown/hidden.
     /// Applied via FFIII_ScreenReaderMod.TryPatchBattleTargetShowWindow().
     /// </summary>
-    public static class BattleTargetShowWindowManualPatch
+    internal static class BattleTargetShowWindowManualPatch
     {
         public static void Prefix(object __instance, bool isShow)
         {
             try
             {
-                MelonLogger.Msg($"[Battle Target] ShowWindow Manual Prefix: isShow={isShow}");
                 BattleTargetPatches.SetTargetSelectionActive(isShow);
             }
             catch (Exception ex)

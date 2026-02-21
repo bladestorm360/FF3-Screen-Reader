@@ -10,7 +10,7 @@ namespace FFIII_ScreenReader.Utils
     /// Helper for accessing party and character data.
     /// Consolidates character lookup patterns across multiple files.
     /// </summary>
-    public static class CharacterDataHelper
+    internal static class CharacterDataHelper
     {
         /// <summary>
         /// Gets the row position (Front/Back) for a character.

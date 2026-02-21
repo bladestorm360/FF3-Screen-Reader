@@ -22,14 +22,12 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Manual patch application for battle magic menu.
     /// </summary>
-    public static class BattleMagicPatchesApplier
+    internal static class BattleMagicPatchesApplier
     {
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
             try
             {
-                MelonLogger.Msg("[Battle Magic] Applying battle magic menu patches...");
-
                 var controllerType = typeof(BattleFrequencyAbilityInfomationController);
 
                 // Find SelectContent(List<BattleAbilityInfomationContentController>, int, Cursor)
@@ -44,7 +42,6 @@ namespace FFIII_ScreenReader.Patches
                         if (parameters.Length >= 2 && parameters[1].ParameterType == typeof(int))
                         {
                             selectContentMethod = m;
-                            MelonLogger.Msg($"[Battle Magic] Found SelectContent method");
                             break;
                         }
                     }
@@ -56,7 +53,7 @@ namespace FFIII_ScreenReader.Patches
                         .GetMethod("Postfix", BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(selectContentMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Magic] Patched SelectContent successfully");
+                    MelonLogger.Msg("[Battle Magic] Patches applied");
                 }
                 else
                 {
@@ -73,37 +70,23 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// State tracking for battle magic menu.
     /// </summary>
-    public static class BattleMagicMenuState
+    internal static class BattleMagicMenuState
     {
-        /// <summary>
-        /// True when battle magic menu is active and handling announcements.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_MAGIC, "BattleMagic.Select");
+
+        static BattleMagicMenuState()
+        {
+            _helper.RegisterResetHandler(() => { CurrentPlayer = null; });
+        }
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_MAGIC);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.BATTLE_MAGIC, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
-        /// <summary>
-        /// Returns true if generic cursor reading should be suppressed.
-        /// State is cleared by BattleResultPatches when battle ends.
-        /// </summary>
         public static bool ShouldSuppress() => IsActive;
-
-        private const string CONTEXT = "BattleMagic.Select";
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT, announcement);
-        }
-
-        public static void Reset()
-        {
-            IsActive = false;
-            AnnouncementDeduplicator.Reset(CONTEXT);
-            CurrentPlayer = null;
-        }
+        public static bool ShouldAnnounce(string announcement) => _helper.ShouldAnnounce(announcement);
 
         // Cache the current player data for charge lookup
         public static BattlePlayerData CurrentPlayer { get; set; } = null;
@@ -114,7 +97,7 @@ namespace FFIII_ScreenReader.Patches
     /// Announces spell name, charges, and description when navigating magic in battle.
     /// SelectContent signature: SelectContent(List&lt;BattleAbilityInfomationContentController&gt; contents, int index, Cursor targetCursor)
     /// </summary>
-    public static class BattleMagicSelectContent_Patch
+    internal static class BattleMagicSelectContent_Patch
     {
         public static void Postfix(
             object __instance,
@@ -130,14 +113,9 @@ namespace FFIII_ScreenReader.Patches
                 if (__instance == null || contents == null)
                     return;
 
-                MelonLogger.Msg($"[Battle Magic] SelectContent called, index: {index}, contents count: {contents.Count}");
-
                 // Validate index
                 if (index < 0 || index >= contents.Count)
-                {
-                    MelonLogger.Msg($"[Battle Magic] Index {index} out of range");
                     return;
-                }
 
                 // Get content at index
                 var contentController = contents[index];
@@ -146,9 +124,7 @@ namespace FFIII_ScreenReader.Patches
                     // Empty slot
                     if (BattleMagicMenuState.ShouldAnnounce("Empty"))
                     {
-                        FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("BattleMagic");
-                        BattleMagicMenuState.IsActive = true;
-                        MelonLogger.Msg("[Battle Magic] Announcing: Empty");
+                        MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
                         FFIII_ScreenReaderMod.SpeakText("Empty", interrupt: true);
                     }
                     return;
@@ -161,9 +137,7 @@ namespace FFIII_ScreenReader.Patches
                     // Empty slot
                     if (BattleMagicMenuState.ShouldAnnounce("Empty"))
                     {
-                        FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("BattleMagic");
-                        BattleMagicMenuState.IsActive = true;
-                        MelonLogger.Msg("[Battle Magic] Announcing: Empty");
+                        MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
                         FFIII_ScreenReaderMod.SpeakText("Empty", interrupt: true);
                     }
                     return;
@@ -180,10 +154,8 @@ namespace FFIII_ScreenReader.Patches
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 // Also clear other menu states to prevent conflicts
-                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("BattleMagic");
-                BattleMagicMenuState.IsActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
 
-                MelonLogger.Msg($"[Battle Magic] Announcing: {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -255,7 +227,7 @@ namespace FFIII_ScreenReader.Patches
                 if (player == null)
                 {
                     // Try to find from scene
-                    var controller = UnityEngine.Object.FindObjectOfType<BattleFrequencyAbilityInfomationController>();
+                    var controller = GameObjectCache.GetOrFind<BattleFrequencyAbilityInfomationController>();
                     if (controller != null)
                     {
                         // Read selectedBattlePlayerData from base class at offset 0x28 (KeyInput variant)

@@ -5,7 +5,7 @@ namespace FFIII_ScreenReader.Core.Filters
     /// <summary>
     /// Specifies when a filter should be evaluated.
     /// </summary>
-    public enum FilterTiming
+    internal enum FilterTiming
     {
         /// <summary>
         /// Filter runs during entity addition and list rebuilds.
@@ -29,7 +29,7 @@ namespace FFIII_ScreenReader.Core.Filters
     /// Interface for filters that check individual entities.
     /// Applied during entity addition and navigation list rebuilds.
     /// </summary>
-    public interface IEntityFilter
+    internal interface IEntityFilter
     {
         /// <summary>
         /// Whether this filter is currently enabled.

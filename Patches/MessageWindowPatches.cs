@@ -22,7 +22,7 @@ namespace FFIII_ScreenReader.Patches
     /// Stores content from SetContent, announces via PlayingInit hook.
     /// Handles multi-line pages by combining lines within page boundaries.
     /// </summary>
-    public static class DialogueTracker
+    internal static class DialogueTracker
     {
         // Store message list for page-by-page reading
         private static List<string> currentMessageList = new List<string>();
@@ -244,7 +244,7 @@ namespace FFIII_ScreenReader.Patches
     /// Uses per-page announcement via PlayingInit hook.
     /// Uses pointer-based access for IL2CPP fields.
     /// </summary>
-    public static class MessageWindowPatches
+    internal static class MessageWindowPatches
     {
         // Memory offsets for MessageWindowManager (from dump.cs)
         private const int OFFSET_MESSAGE_LIST = 0x88;        // List<string> messageList

@@ -9,7 +9,7 @@ namespace FFIII_ScreenReader.Utils
     /// Helper for applying common Harmony patches.
     /// Consolidates the repeated SetActive/SetNextState patching boilerplate across multiple files.
     /// </summary>
-    public static class HarmonyPatchHelper
+    internal static class HarmonyPatchHelper
     {
         private const BindingFlags PublicInstance = BindingFlags.Instance | BindingFlags.Public;
         private const BindingFlags AllInstance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -47,8 +47,6 @@ namespace FFIII_ScreenReader.Utils
                 }
 
                 harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                if (logPrefix != null)
-                    MelonLogger.Msg($"{logPrefix} Patched SetActive for menu state tracking");
                 return true;
             }
             catch (Exception ex)
@@ -106,8 +104,6 @@ namespace FFIII_ScreenReader.Utils
                 }
 
                 harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
-                if (logPrefix != null)
-                    MelonLogger.Msg($"{logPrefix} Patched SetNextState for state transition detection");
                 return true;
             }
             catch (Exception ex)
@@ -150,8 +146,6 @@ namespace FFIII_ScreenReader.Utils
                 }
 
                 harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                if (logPrefix != null)
-                    MelonLogger.Msg($"{logPrefix} Patched SetCursor for cursor tracking");
                 return true;
             }
             catch (Exception ex)
@@ -197,8 +191,6 @@ namespace FFIII_ScreenReader.Utils
                 }
 
                 harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                if (logPrefix != null)
-                    MelonLogger.Msg($"{logPrefix} Patched SelectContent for selection tracking");
                 return true;
             }
             catch (Exception ex)
@@ -251,8 +243,6 @@ namespace FFIII_ScreenReader.Utils
                 }
 
                 harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                if (logPrefix != null)
-                    MelonLogger.Msg($"{logPrefix} Patched {methodName}");
                 return true;
             }
             catch (Exception ex)

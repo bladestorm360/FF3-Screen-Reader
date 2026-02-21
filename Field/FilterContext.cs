@@ -12,7 +12,7 @@ namespace FFIII_ScreenReader.Field
     /// Auto-populates from the current game state when constructed.
     /// Uses FieldPlayerController (like FF5) for direct access to mapHandle and fieldPlayer.
     /// </summary>
-    public class FilterContext
+    internal class FilterContext
     {
         /// <summary>
         /// Reference to the FieldPlayerController (provides mapHandle and fieldPlayer).

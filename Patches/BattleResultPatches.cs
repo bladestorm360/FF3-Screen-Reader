@@ -26,9 +26,9 @@ namespace FFIII_ScreenReader.Patches
     /// Patches for battle result announcements (XP, gil, items, level ups)
     /// Implements phased announcements that sync with on-screen text boxes
     /// </summary>
-    public static class BattleResultPatches
+    internal static class BattleResultPatches
     {
-        private const string CONTEXT_DATA = "BattleResult.Data";
+        private const string CONTEXT_DATA = AnnouncementContexts.BATTLE_RESULT_DATA;
 
         // Track what we've announced to prevent duplicates
         private static bool announcedPoints = false;
@@ -55,12 +55,11 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void ClearAllBattleMenuFlags()
         {
-            BattleCommandState.ClearState();
+            BattleCommandState.IsActive = false;
             BattleTargetPatches.SetTargetSelectionActive(false);
-            BattleItemMenuState.Reset();
-            BattleMagicMenuState.Reset();
+            BattleItemMenuState.IsActive = false;
+            BattleMagicMenuState.IsActive = false;
             BattlePausePatches.Reset();
-            MelonLogger.Msg("[Battle Result] Cleared all battle menu flags");
         }
 
         /// <summary>
@@ -78,7 +77,6 @@ namespace FFIII_ScreenReader.Patches
             if (gil > 0)
             {
                 string gilAnnouncement = $"Gained {gil:N0} gil";
-                MelonLogger.Msg($"[Victory] {gilAnnouncement}");
                 FFIII_ScreenReaderMod.SpeakText(gilAnnouncement, interrupt: true);
             }
 
@@ -100,7 +98,6 @@ namespace FFIII_ScreenReader.Patches
                     if (charExp > 0)
                     {
                         string expAnnouncement = $"{charName} gained {charExp:N0} XP";
-                        MelonLogger.Msg($"[Victory] {expAnnouncement}");
                         FFIII_ScreenReaderMod.SpeakText(expAnnouncement, interrupt: false);
                     }
                 }
@@ -151,7 +148,6 @@ namespace FFIII_ScreenReader.Patches
                         announcement = $"Found {itemName}";
                     }
 
-                    MelonLogger.Msg($"[Victory] {announcement}");
                     FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
@@ -212,7 +208,6 @@ namespace FFIII_ScreenReader.Patches
             }
 
             string announcement = string.Join(", ", parts);
-            MelonLogger.Msg($"[Victory] {announcement}");
             FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
         }
 
@@ -266,7 +261,6 @@ namespace FFIII_ScreenReader.Patches
             {
                 announcement = $"{charName} job level up";
             }
-            MelonLogger.Msg($"[Victory] {announcement}");
             FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
         }
 
@@ -328,7 +322,7 @@ namespace FFIII_ScreenReader.Patches
     // ========================================
 
     [HarmonyPatch(typeof(ResultMenuController_KeyInput), "ShowPointsInit")]
-    public static class ResultMenuController_KeyInput_ShowPointsInit_Patch
+    internal static class ResultMenuController_KeyInput_ShowPointsInit_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(ResultMenuController_KeyInput __instance)
@@ -352,7 +346,7 @@ namespace FFIII_ScreenReader.Patches
     }
 
     [HarmonyPatch(typeof(ResultMenuController_Touch), "ShowPointsInit")]
-    public static class ResultMenuController_Touch_ShowPointsInit_Patch
+    internal static class ResultMenuController_Touch_ShowPointsInit_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(ResultMenuController_Touch __instance)
@@ -380,7 +374,7 @@ namespace FFIII_ScreenReader.Patches
     // ========================================
 
     [HarmonyPatch(typeof(ResultMenuController_KeyInput), "ShowGetItemsInit")]
-    public static class ResultMenuController_KeyInput_ShowGetItemsInit_Patch
+    internal static class ResultMenuController_KeyInput_ShowGetItemsInit_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(ResultMenuController_KeyInput __instance)
@@ -401,7 +395,7 @@ namespace FFIII_ScreenReader.Patches
     }
 
     [HarmonyPatch(typeof(ResultMenuController_Touch), "ShowGetItemsInit")]
-    public static class ResultMenuController_Touch_ShowGetItemsInit_Patch
+    internal static class ResultMenuController_Touch_ShowGetItemsInit_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(ResultMenuController_Touch __instance)
@@ -426,7 +420,7 @@ namespace FFIII_ScreenReader.Patches
     // ========================================
 
     [HarmonyPatch(typeof(ResultMenuController_KeyInput), "ShowStatusUpInit")]
-    public static class ResultMenuController_KeyInput_ShowStatusUpInit_Patch
+    internal static class ResultMenuController_KeyInput_ShowStatusUpInit_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(ResultMenuController_KeyInput __instance)
@@ -443,7 +437,7 @@ namespace FFIII_ScreenReader.Patches
     }
 
     [HarmonyPatch(typeof(ResultMenuController_Touch), "ShowStatusUpInit")]
-    public static class ResultMenuController_Touch_ShowStatusUpInit_Patch
+    internal static class ResultMenuController_Touch_ShowStatusUpInit_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(ResultMenuController_Touch __instance)
@@ -465,7 +459,7 @@ namespace FFIII_ScreenReader.Patches
     // ========================================
 
     [HarmonyPatch(typeof(ResultSkillController_KeyInput), "ShowLevelUp")]
-    public static class ResultSkillController_KeyInput_ShowLevelUp_Patch
+    internal static class ResultSkillController_KeyInput_ShowLevelUp_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(BattleResultData data, bool isNext)
@@ -482,7 +476,7 @@ namespace FFIII_ScreenReader.Patches
     }
 
     [HarmonyPatch(typeof(ResultSkillController_Touch), "ShowLevelUp")]
-    public static class ResultSkillController_Touch_ShowLevelUp_Patch
+    internal static class ResultSkillController_Touch_ShowLevelUp_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(BattleResultData data, bool isNext)
@@ -504,7 +498,7 @@ namespace FFIII_ScreenReader.Patches
     // ========================================
 
     [HarmonyPatch(typeof(ResultMenuController_KeyInput), nameof(ResultMenuController_KeyInput.Show))]
-    public static class ResultMenuController_KeyInput_Show_Patch
+    internal static class ResultMenuController_KeyInput_Show_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(BattleResultData data, bool isReverse)
@@ -524,7 +518,7 @@ namespace FFIII_ScreenReader.Patches
     }
 
     [HarmonyPatch(typeof(ResultMenuController_Touch), nameof(ResultMenuController_Touch.Show))]
-    public static class ResultMenuController_Touch_Show_Patch
+    internal static class ResultMenuController_Touch_Show_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(BattleResultData data, bool isReverse)

@@ -4,7 +4,6 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using HarmonyLib;
 using MelonLoader;
-using UnityEngine;
 using UnityEngine.UI;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
@@ -22,53 +21,37 @@ using KeyInputInfomationPopup = Il2CppLast.UI.KeyInput.InfomationPopup;
 using KeyInputInputPopup = Il2CppLast.UI.KeyInput.InputPopup;
 using KeyInputChangeNamePopup = Il2CppLast.UI.KeyInput.ChangeNamePopup;
 using KeyInputShopController = Il2CppLast.UI.KeyInput.ShopController;
-using KeyInputTitleWindowController = Il2CppLast.UI.KeyInput.TitleWindowController;
 
 // Type aliases for IL2CPP types - Touch Popups
 using TouchCommonPopup = Il2CppLast.UI.Touch.CommonPopup;
-using TouchJobChangePopup = Il2CppLast.UI.Touch.JobChangePopup;
-using TouchChangeMagicStonePopup = Il2CppLast.UI.Touch.ChangeMagicStonePopup;
-using TouchGameOverSelectPopup = Il2CppLast.UI.Touch.GameOverSelectPopup;
-using TouchTitleWindowController = Il2CppLast.UI.Touch.TitleWindowController;
-using TouchTitleWindowView = Il2CppLast.UI.Touch.TitleWindowView;
-using KeyInputTitleWindowView = Il2CppLast.UI.KeyInput.TitleWindowView;
-using KeyInputTitleMenuCommandController = Il2CppLast.UI.KeyInput.TitleMenuCommandController;
-using TouchTitleMenuCommandController = Il2CppLast.UI.Touch.TitleMenuCommandController;
-
-// Splash/Title screen
-using SplashController = Il2CppLast.UI.SplashController;
-using SplashLogoView = Il2CppLast.UI.SplashLogoView;
 
 namespace FFIII_ScreenReader.Patches
 {
     /// <summary>
     /// Tracks popup state for handling in CursorNavigation.
     /// </summary>
-    public static class PopupState
+    internal static class PopupState
     {
-        /// <summary>
-        /// True when a confirmation popup is active.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
-        public static bool IsConfirmationPopupActive
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.POPUP);
+
+        static PopupState()
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.POPUP);
-            private set => MenuStateRegistry.SetActive(MenuStateRegistry.POPUP, value);
+            _helper.RegisterResetHandler(() =>
+            {
+                CurrentPopupType = null;
+                ActivePopupPtr = IntPtr.Zero;
+                CommandListOffset = -1;
+            });
         }
 
-        /// <summary>
-        /// The type name of the current popup.
-        /// </summary>
+        public static bool IsConfirmationPopupActive
+        {
+            get => _helper.IsActive;
+            private set => _helper.IsActive = value;
+        }
+
         public static string CurrentPopupType { get; private set; }
-
-        /// <summary>
-        /// Pointer to the active popup instance.
-        /// </summary>
         public static IntPtr ActivePopupPtr { get; private set; }
-
-        /// <summary>
-        /// Offset to commandList field (-1 if popup has no buttons).
-        /// </summary>
         public static int CommandListOffset { get; private set; }
 
         public static void SetActive(string typeName, IntPtr ptr, int cmdListOffset)
@@ -77,20 +60,13 @@ namespace FFIII_ScreenReader.Patches
             CurrentPopupType = typeName;
             ActivePopupPtr = ptr;
             CommandListOffset = cmdListOffset;
-            MelonLogger.Msg($"[Popup] State set: {typeName}, hasButtons={cmdListOffset >= 0}");
         }
 
         public static void Clear()
         {
             IsConfirmationPopupActive = false;
-            CurrentPopupType = null;
-            ActivePopupPtr = IntPtr.Zero;
-            CommandListOffset = -1;
         }
 
-        /// <summary>
-        /// Returns true if popup with buttons is active (suppress MenuTextDiscovery).
-        /// </summary>
         public static bool ShouldSuppress() => IsConfirmationPopupActive && CommandListOffset >= 0;
     }
 
@@ -109,7 +85,7 @@ namespace FFIII_ScreenReader.Patches
     ///
     /// EXCLUDES: Shop popups (handled by ShopPatches).
     /// </summary>
-    public static class PopupPatches
+    internal static class PopupPatches
     {
         private static bool isPatched = false;
 
@@ -149,15 +125,6 @@ namespace FFIII_ScreenReader.Patches
         // ChangeNamePopup - line 461995
         private const int CHANGENAME_DESC_OFFSET = 0x30;   // Text
 
-        // TitleWindowController (KeyInput) - line 467502
-        private const int TITLE_VIEW_OFFSET_KEYINPUT = 0x48;  // TitleWindowView
-
-        // TitleWindowController (Touch) - line 432043
-        private const int TITLE_VIEW_OFFSET_TOUCH = 0x50;     // TitleWindowView
-
-        // TitleWindowView - line 467772
-        private const int TITLEVIEW_STARTTEXT_OFFSET = 0x30;  // Text
-
         /// <summary>
         /// Apply manual Harmony patches for popups.
         /// </summary>
@@ -169,7 +136,8 @@ namespace FFIII_ScreenReader.Patches
             try
             {
                 TryPatchBasePopup(harmony);
-                TryPatchTitleScreen(harmony);
+                GameOverPatches.ApplyPatches(harmony);
+                TitleScreenPatches.ApplyPatches(harmony);
                 isPatched = true;
                 MelonLogger.Msg("[Popup] All popup patches applied successfully");
             }
@@ -188,14 +156,12 @@ namespace FFIII_ScreenReader.Patches
             {
                 Type popupType = typeof(BasePopup);
 
-                // Use AccessTools.Method for IL2CPP compatibility
                 var openMethod = AccessTools.Method(popupType, "Open");
                 if (openMethod != null)
                 {
                     var openPostfix = typeof(PopupPatches).GetMethod(nameof(PopupOpen_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(openMethod, postfix: new HarmonyMethod(openPostfix));
-                    MelonLogger.Msg("[Popup] Patched base Popup.Open");
                 }
 
                 var closeMethod = AccessTools.Method(popupType, "Close");
@@ -204,143 +170,11 @@ namespace FFIII_ScreenReader.Patches
                     var closePostfix = typeof(PopupPatches).GetMethod(nameof(PopupClose_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(closeMethod, postfix: new HarmonyMethod(closePostfix));
-                    MelonLogger.Msg("[Popup] Patched base Popup.Close");
                 }
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Popup] Error patching base Popup: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Patch title screen "Press any button" using combination approach:
-        /// 1. SplashController.InitializeTitle - stores text silently (fires early during loading)
-        /// 2. SystemIndicator.Show - tracks when title loading starts
-        /// 3. SystemIndicator.Hide - speaks stored text when loading completes (indicator hidden)
-        /// </summary>
-        private static void TryPatchTitleScreen(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                // Step 1: Patch SplashController.InitializeTitle to capture and store the text
-                Type splashControllerType = typeof(SplashController);
-                var initTitleMethod = AccessTools.Method(splashControllerType, "InitializeTitle");
-
-                if (initTitleMethod != null)
-                {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(SplashController_InitializeTitle_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(initTitleMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Popup] Patched SplashController.InitializeTitle (stores text)");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Popup] SplashController.InitializeTitle method not found");
-                }
-
-                // Step 2 & 3: Patch SystemIndicator.Show and Hide
-                // SystemIndicator is internal in Last.Systems.Indicator namespace, need runtime lookup
-                Type systemIndicatorType = null;
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    try
-                    {
-                        systemIndicatorType = asm.GetType("Il2CppLast.Systems.Indicator.SystemIndicator");
-                        if (systemIndicatorType != null)
-                        {
-                            MelonLogger.Msg($"[Popup] Found SystemIndicator in {asm.GetName().Name}");
-                            break;
-                        }
-                    }
-                    catch { }
-                }
-
-                if (systemIndicatorType == null)
-                {
-                    MelonLogger.Warning("[Popup] SystemIndicator type not found");
-                    return;
-                }
-
-                // Patch Show(Mode) to track when title loading starts
-                var showMethod = AccessTools.Method(systemIndicatorType, "Show");
-                if (showMethod != null)
-                {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(SystemIndicator_Show_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(showMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Popup] Patched SystemIndicator.Show (tracks title loading)");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Popup] SystemIndicator.Show method not found");
-                }
-
-                // Patch Hide() to speak when loading completes
-                var hideMethod = AccessTools.Method(systemIndicatorType, "Hide");
-                if (hideMethod != null)
-                {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(SystemIndicator_Hide_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(hideMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Popup] Patched SystemIndicator.Hide (speaks when loading done)");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Popup] SystemIndicator.Hide method not found");
-                }
-
-                // Step 4: Patch TitleMenuCommandController.SetEnableMainMenu to clear state when title menu becomes active
-                // This is called when user presses button on "Press any button" screen
-                TryPatchTitleMenuCommand(harmony);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Popup] Error patching title screen: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Patch TitleMenuCommandController.SetEnableMainMenu(bool) in both KeyInput and Touch namespaces.
-        /// Clears all menu states when title menu becomes enabled (after "Press any button").
-        /// </summary>
-        private static void TryPatchTitleMenuCommand(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                // Patch KeyInput version
-                Type keyInputType = typeof(KeyInputTitleMenuCommandController);
-                var keyInputMethod = AccessTools.Method(keyInputType, "SetEnableMainMenu", new[] { typeof(bool) });
-                if (keyInputMethod != null)
-                {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(TitleMenuCommand_SetEnableMainMenu_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(keyInputMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Popup] Patched KeyInput.TitleMenuCommandController.SetEnableMainMenu (clears state on title menu)");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Popup] KeyInput.TitleMenuCommandController.SetEnableMainMenu not found");
-                }
-
-                // Patch Touch version
-                Type touchType = typeof(TouchTitleMenuCommandController);
-                var touchMethod = AccessTools.Method(touchType, "SetEnableMainMenu", new[] { typeof(bool) });
-                if (touchMethod != null)
-                {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(TitleMenuCommand_SetEnableMainMenu_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(touchMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Popup] Patched Touch.TitleMenuCommandController.SetEnableMainMenu (clears state on title menu)");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Popup] Touch.TitleMenuCommandController.SetEnableMainMenu not found");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Popup] Error patching TitleMenuCommandController: {ex.Message}");
             }
         }
 
@@ -351,7 +185,7 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                var shopController = UnityEngine.Object.FindObjectOfType<KeyInputShopController>();
+                var shopController = GameObjectCache.GetOrFind<KeyInputShopController>();
                 return shopController != null && shopController.IsOpne;
             }
             catch
@@ -473,13 +307,11 @@ namespace FFIII_ScreenReader.Patches
             {
                 if (PopupState.ActivePopupPtr == IntPtr.Zero)
                 {
-                    MelonLogger.Msg("[Popup] ReadCurrentButton - no active popup");
                     return;
                 }
 
                 if (PopupState.CommandListOffset < 0)
                 {
-                    MelonLogger.Msg("[Popup] ReadCurrentButton - popup has no buttons");
                     return;
                 }
 
@@ -491,12 +323,7 @@ namespace FFIII_ScreenReader.Patches
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     buttonText = TextUtils.StripIconMarkup(buttonText);
-                    MelonLogger.Msg($"[Popup] Button: {buttonText}");
                     FFIII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
-                }
-                else
-                {
-                    MelonLogger.Msg($"[Popup] No button text at index {cursor.Index}");
                 }
             }
             catch (Exception ex)
@@ -545,28 +372,20 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[Popup] ========== PopupOpen_Postfix CALLED ==========");
-                MelonLogger.Msg($"[Popup] Instance pointer: 0x{__instance?.Pointer.ToInt64():X}");
-
                 if (__instance == null)
                 {
-                    MelonLogger.Msg("[Popup] Instance is null, returning");
                     return;
                 }
                 if (IsShopActive())
                 {
-                    MelonLogger.Msg("[Popup] Skipping - shop is active");
                     return;
                 }
 
-                MelonLogger.Msg("[Popup] Starting TryCast type detection...");
                 // Use TryCast for IL2CPP-safe type detection
                 // KeyInput types first (more common for keyboard/gamepad)
 
                 // CommonPopup - general confirmations
-                MelonLogger.Msg("[Popup] TryCast: KeyInputCommonPopup...");
                 var commonPopup = __instance.TryCast<KeyInputCommonPopup>();
-                MelonLogger.Msg($"[Popup] TryCast result: {(commonPopup != null ? "MATCH" : "null")}");
                 if (commonPopup != null)
                 {
                     HandlePopupDetected("CommonPopup", commonPopup.Pointer, COMMON_CMDLIST_OFFSET,
@@ -575,9 +394,7 @@ namespace FFIII_ScreenReader.Patches
                 }
 
                 // JobChangePopup
-                MelonLogger.Msg("[Popup] TryCast: KeyInputJobChangePopup...");
                 var jobChange = __instance.TryCast<KeyInputJobChangePopup>();
-                MelonLogger.Msg($"[Popup] TryCast result: {(jobChange != null ? "MATCH" : "null")}");
                 if (jobChange != null)
                 {
                     HandlePopupDetected("JobChangePopup", jobChange.Pointer, JOBCHANGE_CMDLIST_OFFSET,
@@ -646,8 +463,6 @@ namespace FFIII_ScreenReader.Patches
                     return;
                 }
 
-                // Unknown popup type
-                MelonLogger.Msg($"[Popup] Unknown popup type opened (base Popup)");
             }
             catch (Exception ex)
             {
@@ -660,7 +475,6 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         private static void HandlePopupDetected(string typeName, IntPtr ptr, int cmdListOffset, Func<string> readFunc)
         {
-            MelonLogger.Msg($"[Popup] Detected: {typeName}");
             PopupState.SetActive(typeName, ptr, cmdListOffset);
             CoroutineManager.StartManaged(DelayedPopupRead(ptr, typeName, readFunc));
         }
@@ -679,12 +493,7 @@ namespace FFIII_ScreenReader.Patches
                 string announcement = readFunc();
                 if (!string.IsNullOrEmpty(announcement))
                 {
-                    MelonLogger.Msg($"[Popup] {typeName}: {announcement}");
                     FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
-                }
-                else
-                {
-                    MelonLogger.Msg($"[Popup] {typeName} - no text found");
                 }
             }
             catch (Exception ex)
@@ -702,179 +511,15 @@ namespace FFIII_ScreenReader.Patches
             {
                 if (PopupState.IsConfirmationPopupActive)
                 {
-                    MelonLogger.Msg($"[Popup] Close - clearing state for {PopupState.CurrentPopupType}");
                     PopupState.Clear();
                 }
+
+                // Reset GameOverLoadPopup button dedup state
+                AnnouncementDeduplicator.Reset(AnnouncementContexts.POPUP_GAMEOVER_LOAD_BUTTON);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Popup] Error in Close postfix: {ex.Message}");
-            }
-        }
-
-        #endregion
-
-        #region Title Screen (Press Any Button) - SystemIndicator Approach
-
-        /// <summary>
-        /// Stores the "Press any button" text captured during InitializeTitle.
-        /// Spoken when SystemIndicator.Hide() is called (loading indicator hidden).
-        ///
-        /// KNOWN ISSUE: Speech occurs ~1 second before user input is actually available.
-        /// No hookable method exists that fires exactly when input becomes available.
-        /// </summary>
-        private static string pendingTitleText = null;
-
-        /// <summary>
-        /// Guard flag: only true when we've captured title screen text and are waiting to speak it.
-        /// This ensures speech only triggers for title screen, not other loading sequences.
-        /// Set true ONLY by InitializeTitle, cleared when speech occurs.
-        /// </summary>
-        private static bool isTitleScreenTextPending = false;
-
-        /// <summary>
-        /// Postfix for SplashController.InitializeTitle.
-        /// Called when entering the Title state - captures and stores the text but does NOT speak.
-        /// The text will be spoken later by SystemIndicator.Hide when loading completes.
-        /// </summary>
-        public static void SplashController_InitializeTitle_Postfix(SplashController __instance)
-        {
-            try
-            {
-                MelonLogger.Msg("[Popup] SplashController_InitializeTitle_Postfix called - storing text silently");
-
-                // Note: State clearing moved to TitleMenuCommand_SetEnableMainMenu_Postfix
-                // which fires when title menu actually becomes enabled (after button press)
-
-                if (__instance == null)
-                {
-                    MelonLogger.Msg("[Popup] SplashController is null");
-                    return;
-                }
-
-                // Try to read the localized "Press any button" text from UiMessageConstants
-                string pressText = null;
-
-                try
-                {
-                    // Access UiMessageConstants via reflection since it's in root namespace
-                    var uiMsgType = Type.GetType("Il2CppUiMessageConstants, Assembly-CSharp")
-                                 ?? Type.GetType("UiMessageConstants, Assembly-CSharp");
-
-                    if (uiMsgType != null)
-                    {
-                        var field = uiMsgType.GetField("MENU_TITLE_PRESS_TEXT", BindingFlags.Public | BindingFlags.Static);
-                        if (field != null)
-                        {
-                            pressText = field.GetValue(null) as string;
-                            MelonLogger.Msg($"[Popup] MENU_TITLE_PRESS_TEXT = \"{pressText}\"");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Msg($"[Popup] Could not read MENU_TITLE_PRESS_TEXT: {ex.Message}");
-                }
-
-                if (!string.IsNullOrWhiteSpace(pressText))
-                {
-                    pendingTitleText = TextUtils.StripIconMarkup(pressText.Trim());
-                    MelonLogger.Msg($"[Popup] Stored pending title text: {pendingTitleText}");
-                }
-                else
-                {
-                    // Fallback to hardcoded text
-                    pendingTitleText = "Press any button";
-                    MelonLogger.Msg("[Popup] Using fallback, stored: Press any button");
-                }
-
-                // Set the guard flag - this ensures only title screen triggers speech
-                isTitleScreenTextPending = true;
-                MelonLogger.Msg("[Popup] Title screen text pending flag set to true");
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Popup] Error in SplashController.InitializeTitle postfix: {ex.Message}");
-                pendingTitleText = "Press any button";
-                isTitleScreenTextPending = true;
-            }
-        }
-
-        /// <summary>
-        /// Postfix for SystemIndicator.Show(Mode).
-        /// Just logs for debugging.
-        /// </summary>
-        public static void SystemIndicator_Show_Postfix(int mode)
-        {
-            try
-            {
-                MelonLogger.Msg($"[Popup] SystemIndicator_Show_Postfix called with mode={mode}");
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Popup] Error in SystemIndicator.Show postfix: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Postfix for SystemIndicator.Hide().
-        /// Called when loading indicator is hidden (loading complete).
-        /// If we have pending title text AND the guard flag is set, speaks immediately.
-        ///
-        /// KNOWN ISSUE: This fires ~1 second before user input is actually available.
-        /// </summary>
-        public static void SystemIndicator_Hide_Postfix()
-        {
-            try
-            {
-                MelonLogger.Msg($"[Popup] SystemIndicator_Hide_Postfix called, flag={isTitleScreenTextPending}, text={pendingTitleText ?? "null"}");
-
-                // Only proceed if BOTH the guard flag is set AND we have valid text
-                // This ensures we only speak for the title screen, not other loading sequences
-                if (isTitleScreenTextPending && !string.IsNullOrWhiteSpace(pendingTitleText))
-                {
-                    MelonLogger.Msg($"[Popup] Speaking title text: {pendingTitleText}");
-                    FFIII_ScreenReaderMod.SpeakText(pendingTitleText, interrupt: false);
-
-                    // Clear BOTH to prevent any re-triggering
-                    pendingTitleText = null;
-                    isTitleScreenTextPending = false;
-                }
-                else
-                {
-                    MelonLogger.Msg("[Popup] Guard flag not set or no text - not title screen loading, skipping");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Popup] Error in SystemIndicator.Hide postfix: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Postfix for TitleMenuCommandController.SetEnableMainMenu(bool).
-        /// Called when title menu becomes enabled/disabled.
-        /// Clears all menu states when isEnable=true (title menu becoming active after button press).
-        /// </summary>
-        public static void TitleMenuCommand_SetEnableMainMenu_Postfix(bool isEnable)
-        {
-            try
-            {
-                MelonLogger.Msg($"[Popup] TitleMenuCommand_SetEnableMainMenu_Postfix called with isEnable={isEnable}");
-
-                if (isEnable)
-                {
-                    // Title menu is becoming active - clear all battle/menu states
-                    // This happens after user presses button on "Press any button" screen
-                    MelonLogger.Msg("[Popup] Title menu enabled - clearing all menu states");
-                    MenuStateRegistry.ResetAll();
-                    BattleResultPatches.ClearAllBattleMenuFlags();
-                    MelonLogger.Msg("[Popup] All menu states cleared for title screen");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Popup] Error in SetEnableMainMenu postfix: {ex.Message}");
             }
         }
 

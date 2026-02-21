@@ -8,7 +8,7 @@ namespace FFIII_ScreenReader.Core.Filters
     /// Filters entities by whether they have a valid path from the player.
     /// This is an expensive filter as it runs pathfinding for each entity.
     /// </summary>
-    public class PathfindingFilter : IEntityFilter
+    internal class PathfindingFilter : IEntityFilter
     {
         private bool isEnabled = false;
 

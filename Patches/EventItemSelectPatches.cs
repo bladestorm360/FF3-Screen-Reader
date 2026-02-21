@@ -16,46 +16,34 @@ namespace FFIII_ScreenReader.Patches
 {
     /// <summary>
     /// State tracking for NPC event item selection menu.
-    /// This menu appears when NPCs request the player to use/select an item or key item.
     /// </summary>
-    public static class EventItemSelectState
+    internal static class EventItemSelectState
     {
-        /// <summary>
-        /// True when NPC item selection menu is active.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.EVENT_ITEM_SELECT);
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.EVENT_ITEM_SELECT);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.EVENT_ITEM_SELECT, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
         /// <summary>
         /// Returns true if generic cursor reading should be suppressed.
-        /// The dedicated patch handles item announcements with descriptions.
+        /// Validates the manager is actually open.
         /// </summary>
         public static bool ShouldSuppress()
         {
             if (!IsActive)
                 return false;
 
-            // Validate the manager is actually open
             var manager = SelectFieldContentManager.Instance;
             if (manager == null)
             {
-                ClearState();
+                IsActive = false;
                 return false;
             }
 
             return true;
-        }
-
-        /// <summary>
-        /// Clears the event item select state.
-        /// </summary>
-        public static void ClearState()
-        {
-            IsActive = false;
         }
     }
 
@@ -63,15 +51,8 @@ namespace FFIII_ScreenReader.Patches
     /// Patches for NPC event item selection menu.
     /// Handles item selection with descriptions when NPCs request item use.
     /// </summary>
-    public static class EventItemSelectPatches
+    internal static class EventItemSelectPatches
     {
-        // Memory offsets from SelectFieldContentControllerBase
-        private const int OFFSET_CONTENT_DATA_LIST = 0x28;  // List<SelectFieldContentData>
-        private const int OFFSET_SELECT_CURSOR = 0x30;      // Cursor
-
-        // Memory offsets from SelectFieldContentData
-        private const int OFFSET_NAME_MESSAGE_ID = 0x18;        // string
-        private const int OFFSET_DESCRIPTION_MESSAGE_ID = 0x20; // string
 
         private static string lastAnnouncement = "";
 
@@ -82,8 +63,6 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[Event Item Select] Applying patches...");
-
                 // Patch SelectContent on KeyInput.SelectFieldContentController
                 PatchSelectContent(harmony);
 
@@ -118,7 +97,6 @@ namespace FFIII_ScreenReader.Patches
                     BindingFlags.Public | BindingFlags.Static);
 
                 harmony.Patch(selectContentMethod, postfix: new HarmonyMethod(postfix));
-                MelonLogger.Msg("[Event Item Select] Patched SelectContent successfully");
             }
             catch (Exception ex)
             {
@@ -143,7 +121,6 @@ namespace FFIII_ScreenReader.Patches
                     BindingFlags.Public | BindingFlags.Static);
 
                 harmony.Patch(closeMethod, postfix: new HarmonyMethod(postfix));
-                MelonLogger.Msg("[Event Item Select] Patched SelectFieldContentManager.Close successfully");
             }
             catch (Exception ex)
             {
@@ -169,7 +146,7 @@ namespace FFIII_ScreenReader.Patches
                     return;
 
                 // Read contentDataList from offset 0x28
-                IntPtr dataListPtr = Marshal.ReadIntPtr(controllerPtr + OFFSET_CONTENT_DATA_LIST);
+                IntPtr dataListPtr = Marshal.ReadIntPtr(controllerPtr + IL2CppOffsets.EventItemSelect.OFFSET_CONTENT_DATA_LIST);
                 if (dataListPtr == IntPtr.Zero)
                     return;
 
@@ -228,7 +205,6 @@ namespace FFIII_ScreenReader.Patches
                     return;
                 lastAnnouncement = announcement;
 
-                MelonLogger.Msg($"[Event Item Select] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -242,9 +218,8 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void Manager_Close_Postfix()
         {
-            EventItemSelectState.ClearState();
+            EventItemSelectState.IsActive = false;
             lastAnnouncement = "";
-            MelonLogger.Msg("[Event Item Select] Menu closed, state cleared");
         }
     }
 }

@@ -5,6 +5,7 @@
 - **No per-frame patches** - use event methods: `SetCursor`, `SelectContent`, `OnSelect`
 - **No git commands** - user manages git
 - **Update docs after fixes** - `plan.md` (features), `debug.md` (technical)
+- **NEVER use PowerShell `Set-Content`, `Out-File`, or any PowerShell file-writing cmdlet on source files** - these destroy Unicode encoding (Japanese characters, arrows, special symbols). Always use the Edit tool for file modifications, which preserves encoding. This rule applies to ALL batch operations across multiple files. If a bulk change is needed, use the Edit tool on each file individually.
 
 ## Build
 ```

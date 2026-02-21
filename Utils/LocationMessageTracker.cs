@@ -7,7 +7,7 @@ namespace FFIII_ScreenReader.Utils
     /// Uses content-based matching (no timers) to prevent duplicates.
     /// E.g., "Altar Cave" is skipped if "Entering Altar Cave" was just announced.
     /// </summary>
-    public static class LocationMessageTracker
+    internal static class LocationMessageTracker
     {
         private static string lastMapTransitionMessage = "";
         private static bool inMapTransition = false;

@@ -26,49 +26,27 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Helper state for status menu announcements.
     /// </summary>
-    public static class StatusMenuState
+    internal static class StatusMenuState
     {
-        /// <summary>
-        /// True when status/character selection menu is active and handling announcements.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.STATUS_MENU, "StatusMenu.Select");
+
+        static StatusMenuState()
+        {
+            _helper.RegisterResetHandler();
+        }
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.STATUS_MENU);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.STATUS_MENU, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
-        private const string CONTEXT = "StatusMenu.Select";
-
-        public static void ResetState()
-        {
-            IsActive = false;
-            AnnouncementDeduplicator.Reset(CONTEXT);
-        }
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT, announcement);
-        }
-
-        /// <summary>
-        /// Returns true if generic cursor reading should be suppressed.
-        /// Called by CursorNavigation_Postfix to prevent double-reading.
-        /// State is cleared by transition patches when menu closes.
-        /// </summary>
+        public static bool ShouldAnnounce(string announcement) => _helper.ShouldAnnounce(announcement);
         public static bool ShouldSuppress() => IsActive;
 
-        /// <summary>
-        /// Gets the row (Front/Back) for a character.
-        /// Delegates to CharacterDataHelper.
-        /// </summary>
         public static string GetCharacterRow(OwnedCharacterData characterData)
             => CharacterDataHelper.GetCharacterRow(characterData);
 
-        /// <summary>
-        /// Gets the localized job name for a character's current job.
-        /// Delegates to CharacterDataHelper.
-        /// </summary>
         public static string GetCurrentJobName(OwnedCharacterData characterData)
             => CharacterDataHelper.GetCurrentJobName(characterData);
     }
@@ -77,21 +55,14 @@ namespace FFIII_ScreenReader.Patches
     /// Helper state for status details screen (individual character stats view).
     /// Separate from StatusMenuState to allow proper state transitions.
     /// </summary>
-    public static class StatusDetailsState
+    internal static class StatusDetailsState
     {
-        /// <summary>
-        /// True when status details screen is active and handling announcements.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.STATUS_DETAILS);
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.STATUS_DETAILS);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.STATUS_DETAILS, value);
-        }
-
-        public static void ResetState()
-        {
-            IsActive = false;
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
         /// <summary>
@@ -102,21 +73,19 @@ namespace FFIII_ScreenReader.Patches
         {
             if (!IsActive) return false;
 
-            // Validate that status details controller is actually visible
             try
             {
-                var controller = UnityEngine.Object.FindObjectOfType<KeyInputStatusDetailsController>();
+                var controller = GameObjectCache.GetOrFind<KeyInputStatusDetailsController>();
                 if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
                 {
-                    // Controller not visible, clear state
-                    ResetState();
+                    IsActive = false;
                     return false;
                 }
                 return true;
             }
             catch
             {
-                ResetState();
+                IsActive = false;
                 return false;
             }
         }
@@ -126,7 +95,7 @@ namespace FFIII_ScreenReader.Patches
     /// Patches for status menu - announces character with row information.
     /// Uses manual Harmony patching due to FF3's IL2CPP constraints.
     /// </summary>
-    public static class StatusMenuPatches
+    internal static class StatusMenuPatches
     {
         private static bool isPatched = false;
 
@@ -167,7 +136,7 @@ namespace FFIII_ScreenReader.Patches
         {
             if (!isActive)
             {
-                StatusMenuState.ResetState();
+                StatusMenuState.IsActive = false;
             }
         }
 
@@ -195,8 +164,6 @@ namespace FFIII_ScreenReader.Patches
                             string param0Type = parameters[0].ParameterType.Name;
                             string param1Type = parameters[1].ParameterType.Name;
 
-                            MelonLogger.Msg($"[Status Menu] Found SelectContent: params[0]={param0Type}, params[1]={param1Type}");
-
                             if (param0Type.Contains("List") && param1Type == "Int32")
                             {
                                 targetMethod = method;
@@ -212,20 +179,10 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Status Menu] Patched SelectContent successfully");
                 }
                 else
                 {
                     MelonLogger.Warning("[Status Menu] Could not find SelectContent method");
-
-                    // Log available methods for debugging
-                    foreach (var method in methods)
-                    {
-                        if (method.Name.Contains("Select") || method.Name.Contains("Content"))
-                        {
-                            MelonLogger.Msg($"[Status Menu] Available method: {method.Name}");
-                        }
-                    }
                 }
             }
             catch (Exception ex)
@@ -292,8 +249,7 @@ namespace FFIII_ScreenReader.Patches
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 // Also clear other menu states to prevent conflicts
-                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Status");
-                StatusMenuState.IsActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.STATUS_MENU);
 
                 // Build announcement
                 string charName = characterData.Name;
@@ -338,7 +294,6 @@ namespace FFIII_ScreenReader.Patches
                 if (!StatusMenuState.ShouldAnnounce(announcement))
                     return;
 
-                MelonLogger.Msg($"[Status Menu] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -352,7 +307,7 @@ namespace FFIII_ScreenReader.Patches
     /// Patches for status details screen - enables stat navigation.
     /// Uses manual Harmony patching due to FF3's IL2CPP constraints.
     /// </summary>
-    public static class StatusDetailsPatches
+    internal static class StatusDetailsPatches
     {
         private static bool isPatched = false;
 
@@ -398,7 +353,6 @@ namespace FFIII_ScreenReader.Patches
                         if (parameters.Length == 0)
                         {
                             targetMethod = method;
-                            MelonLogger.Msg($"[Status Details] Found InitDisplay()");
                             break;
                         }
                     }
@@ -410,7 +364,6 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Status Details] Patched InitDisplay successfully");
                 }
                 else
                 {
@@ -444,7 +397,6 @@ namespace FFIII_ScreenReader.Patches
                         if (parameters.Length == 0)
                         {
                             targetMethod = method;
-                            MelonLogger.Msg($"[Status Details] Found ExitDisplay()");
                             break;
                         }
                     }
@@ -456,7 +408,6 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Status Details] Patched ExitDisplay successfully");
                 }
                 else
                 {
@@ -505,7 +456,7 @@ namespace FFIII_ScreenReader.Patches
 
                 // Clear all other menu states to prevent suppression conflicts
                 // This ensures only StatusDetailsState is active when viewing status details
-                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("StatusDetails");
+                MenuStateRegistry.ResetAllExcept(MenuStateRegistry.STATUS_DETAILS);
 
                 // Get character data
                 var characterData = StatusDetailsHelpers.GetCharacterDataFromController(controller);
@@ -535,11 +486,8 @@ namespace FFIII_ScreenReader.Patches
                 string statusText = StatusDetailsReader.ReadStatusDetails(controller);
                 if (!string.IsNullOrWhiteSpace(statusText))
                 {
-                    MelonLogger.Msg($"[Status Details] {statusText}");
                     FFIII_ScreenReaderMod.SpeakText(statusText);
                 }
-
-                MelonLogger.Msg("[Status Details] Navigation initialized - use Up/Down arrows to browse stats");
             }
             catch (Exception ex)
             {
@@ -561,11 +509,10 @@ namespace FFIII_ScreenReader.Patches
                 StatusNavigationTracker.Instance.Reset();
 
                 // Clear status details state
-                StatusDetailsState.ResetState();
+                StatusDetailsState.IsActive = false;
 
                 // Clear user-opened flag (also clear StatusMenuState since we're exiting details)
                 StatusMenuState.IsActive = false;
-                MelonLogger.Msg("[Status Details] Menu exited, state cleared");
             }
             catch (Exception ex)
             {
@@ -577,7 +524,7 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Helper methods for status screen patches
     /// </summary>
-    public static class StatusDetailsHelpers
+    internal static class StatusDetailsHelpers
     {
         /// <summary>
         /// Extract character data from the StatusDetailsController.
@@ -617,7 +564,6 @@ namespace FFIII_ScreenReader.Patches
                 var characterData = new OwnedCharacterData(targetDataPtr);
                 if (characterData != null)
                 {
-                    MelonLogger.Msg($"[Status Details] Got character data: {characterData.Name}");
                     return characterData;
                 }
             }
@@ -635,7 +581,6 @@ namespace FFIII_ScreenReader.Patches
                     var charData = userDataManager.GetMemberData(0);
                     if (charData != null)
                     {
-                        MelonLogger.Msg("[Status Details] Got character data from GetMemberData fallback");
                         return charData;
                     }
                 }

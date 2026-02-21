@@ -14,16 +14,22 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// State tracking for config menu.
     /// </summary>
-    public static class ConfigMenuState
+    internal static class ConfigMenuState
     {
-        /// <summary>
-        /// True when config menu is active and handling announcements.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.CONFIG_MENU,
+            AnnouncementContexts.CONFIG_TEXT, AnnouncementContexts.CONFIG_SETTING, AnnouncementContexts.CONFIG_ARROW,
+            AnnouncementContexts.CONFIG_SLIDER, AnnouncementContexts.CONFIG_SLIDER_CONTROLLER,
+            AnnouncementContexts.CONFIG_TOUCH_ARROW, AnnouncementContexts.CONFIG_TOUCH_SLIDER, AnnouncementContexts.CONFIG_TOUCH_SLIDER_CONTROLLER);
+
+        static ConfigMenuState()
+        {
+            _helper.RegisterResetHandler();
+        }
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.CONFIG_MENU);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.CONFIG_MENU, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
         /// <summary>
@@ -37,11 +43,11 @@ namespace FFIII_ScreenReader.Patches
                 return false;
 
             // Validate config UI is actually visible (handles title screen config menu case)
-            var configController = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.ConfigController>();
+            var configController = GameObjectCache.GetOrFind<Il2CppLast.UI.KeyInput.ConfigController>();
             if (configController != null && configController.gameObject.activeInHierarchy)
                 return true;
 
-            var commandController = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.ConfigCommandController>();
+            var commandController = GameObjectCache.GetOrFind<Il2CppLast.UI.KeyInput.ConfigCommandController>();
             if (commandController != null && commandController.gameObject.activeInHierarchy)
                 return true;
 
@@ -52,7 +58,7 @@ namespace FFIII_ScreenReader.Patches
 
         public static void ResetState()
         {
-            IsActive = false;
+            _helper.IsActive = false;
         }
     }
 
@@ -61,10 +67,10 @@ namespace FFIII_ScreenReader.Patches
     /// Announces menu items directly from ConfigCommandController when navigating with up/down arrows.
     /// </summary>
     [HarmonyPatch(typeof(Il2CppLast.UI.KeyInput.ConfigCommandController), nameof(Il2CppLast.UI.KeyInput.ConfigCommandController.SetFocus))]
-    public static class ConfigCommandController_SetFocus_Patch
+    internal static class ConfigCommandController_SetFocus_Patch
     {
-        private const string CONTEXT_TEXT = "ConfigMenu.Text";
-        private const string CONTEXT_SETTING = "ConfigMenu.Setting";
+        private const string CONTEXT_TEXT = AnnouncementContexts.CONFIG_TEXT;
+        private const string CONTEXT_SETTING = AnnouncementContexts.CONFIG_SETTING;
 
         [HarmonyPostfix]
         public static void Postfix(Il2CppLast.UI.KeyInput.ConfigCommandController __instance, bool isFocus)
@@ -74,9 +80,7 @@ namespace FFIII_ScreenReader.Patches
                 // Set active state when config menu is in use
                 if (isFocus)
                 {
-                    // Clear other menu states to prevent conflicts
-                    FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Config");
-                    ConfigMenuState.IsActive = true;
+                    MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.CONFIG_MENU);
                 }
 
                 // Only announce when gaining focus (not losing it)
@@ -98,7 +102,7 @@ namespace FFIII_ScreenReader.Patches
                 }
 
                 // Verify this controller is actually the selected one by checking the parent ConfigActualDetailsControllerBase
-                var configDetailsController = UnityEngine.Object.FindObjectOfType<ConfigActualDetailsControllerBase_KeyInput>();
+                var configDetailsController = GameObjectCache.GetOrFind<ConfigActualDetailsControllerBase_KeyInput>();
                 if (configDetailsController != null)
                 {
                     var selectedCommand = configDetailsController.SelectedCommand;
@@ -166,13 +170,6 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        /// <summary>
-        /// Resets the duplicate tracker (call when exiting config menu)
-        /// </summary>
-        public static void ResetState()
-        {
-            AnnouncementDeduplicator.Reset(CONTEXT_TEXT, CONTEXT_SETTING);
-        }
     }
 
     /// <summary>
@@ -180,9 +177,9 @@ namespace FFIII_ScreenReader.Patches
     /// Only announces when the value actually changes.
     /// </summary>
     [HarmonyPatch(typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchArrowSelectTypeProcess")]
-    public static class ConfigActualDetails_SwitchArrowSelectType_Patch
+    internal static class ConfigActualDetails_SwitchArrowSelectType_Patch
     {
-        private const string CONTEXT_ARROW = "ConfigMenu.Arrow";
+        private const string CONTEXT_ARROW = AnnouncementContexts.CONFIG_ARROW;
 
         [HarmonyPostfix]
         public static void Postfix(
@@ -257,10 +254,10 @@ namespace FFIII_ScreenReader.Patches
     /// Only announces when the value actually changes for the SAME option.
     /// </summary>
     [HarmonyPatch(typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess")]
-    public static class ConfigActualDetails_SwitchSliderType_Patch
+    internal static class ConfigActualDetails_SwitchSliderType_Patch
     {
-        private const string CONTEXT_SLIDER = "ConfigMenu.Slider";
-        private const string CONTEXT_SLIDER_CONTROLLER = "ConfigMenu.SliderController";
+        private const string CONTEXT_SLIDER = AnnouncementContexts.CONFIG_SLIDER;
+        private const string CONTEXT_SLIDER_CONTROLLER = AnnouncementContexts.CONFIG_SLIDER_CONTROLLER;
 
         [HarmonyPostfix]
         public static void Postfix(
@@ -309,9 +306,9 @@ namespace FFIII_ScreenReader.Patches
     /// Only announces when the value actually changes.
     /// </summary>
     [HarmonyPatch(typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchArrowTypeProcess")]
-    public static class ConfigActualDetailsTouch_SwitchArrowType_Patch
+    internal static class ConfigActualDetailsTouch_SwitchArrowType_Patch
     {
-        private const string CONTEXT_TOUCH_ARROW = "ConfigMenu.TouchArrow";
+        private const string CONTEXT_TOUCH_ARROW = AnnouncementContexts.CONFIG_TOUCH_ARROW;
 
         [HarmonyPostfix]
         public static void Postfix(
@@ -385,10 +382,10 @@ namespace FFIII_ScreenReader.Patches
     /// Only announces when the value actually changes for the SAME option.
     /// </summary>
     [HarmonyPatch(typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess")]
-    public static class ConfigActualDetailsTouch_SwitchSliderType_Patch
+    internal static class ConfigActualDetailsTouch_SwitchSliderType_Patch
     {
-        private const string CONTEXT_TOUCH_SLIDER = "ConfigMenu.TouchSlider";
-        private const string CONTEXT_TOUCH_SLIDER_CONTROLLER = "ConfigMenu.TouchSliderController";
+        private const string CONTEXT_TOUCH_SLIDER = AnnouncementContexts.CONFIG_TOUCH_SLIDER;
+        private const string CONTEXT_TOUCH_SLIDER_CONTROLLER = AnnouncementContexts.CONFIG_TOUCH_SLIDER_CONTROLLER;
 
         [HarmonyPostfix]
         public static void Postfix(
@@ -440,7 +437,7 @@ namespace FFIII_ScreenReader.Patches
     /// Legacy static class for manual patch application.
     /// Now only used for registering with the main mod's harmony instance.
     /// </summary>
-    public static class ConfigMenuPatches
+    internal static class ConfigMenuPatches
     {
         /// <summary>
         /// Applies config menu patches using manual Harmony patching.

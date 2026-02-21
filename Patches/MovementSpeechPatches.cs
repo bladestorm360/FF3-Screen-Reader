@@ -18,7 +18,7 @@ namespace FFIII_ScreenReader.Patches
     /// 2. FieldPlayer.ChangeMoveState - Backup, catches state machine transitions
     /// 3. FieldPlayer.GetOn/GetOff - Secondary, specific boarding/disembarking events
     /// </summary>
-    public static class MovementSpeechPatches
+    internal static class MovementSpeechPatches
     {
         private static bool isPatched = false;
 
@@ -105,7 +105,6 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MoveState] Patched ChangeTransportation successfully");
                 }
                 else
                 {
@@ -211,7 +210,6 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MoveState] Patched ChangeMoveState successfully");
                 }
                 else
                 {
@@ -318,7 +316,6 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MoveState] Patched GetOn successfully");
                 }
                 else
                 {
@@ -363,7 +360,6 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MoveState] Patched GetOff successfully");
                 }
                 else
                 {
@@ -469,7 +465,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(MovementSpeechPatches).GetMethod(nameof(SetDashFlag_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MoveState] Patched SetDashFlag successfully");
                 }
                 else
                 {

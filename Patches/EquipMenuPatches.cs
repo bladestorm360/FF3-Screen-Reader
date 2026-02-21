@@ -21,16 +21,19 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Helper for equipment menu announcements.
     /// </summary>
-    public static class EquipMenuState
+    internal static class EquipMenuState
     {
-        /// <summary>
-        /// True when equipment menu is active and handling announcements.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.EQUIP_MENU, "EquipMenu.Select");
+
+        static EquipMenuState()
+        {
+            _helper.RegisterResetHandler();
+        }
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.EQUIP_MENU);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.EQUIP_MENU, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
         /// <summary>
@@ -42,33 +45,17 @@ namespace FFIII_ScreenReader.Patches
             if (!IsActive)
                 return false;
 
-            // Validate we're actually in a submenu, not command bar
             int state = GetWindowControllerState();
-            if (state == STATE_COMMAND || state == STATE_NONE)
+            if (state == IL2CppOffsets.Equipment.STATE_COMMAND || state == IL2CppOffsets.Equipment.STATE_NONE)
             {
-                // At command bar or menu closing - clear state and don't suppress
-                ClearState();
+                IsActive = false;
                 return false;
             }
 
             return true;
         }
 
-        /// <summary>
-        /// Clears equipment menu state.
-        /// </summary>
-        public static void ClearState()
-        {
-            IsActive = false;
-            AnnouncementDeduplicator.Reset(CONTEXT);
-        }
-
-        private const string CONTEXT = "EquipMenu.Select";
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT, announcement);
-        }
+        public static bool ShouldAnnounce(string announcement) => _helper.ShouldAnnounce(announcement);
 
         public static string GetSlotName(EquipSlotType slot)
         {
@@ -99,41 +86,14 @@ namespace FFIII_ScreenReader.Patches
 
         private static bool transitionPatchApplied = false;
 
-        // EquipmentWindowController.State enum values (from dump.cs)
-        private const int STATE_NONE = 0;    // Menu closed
-        private const int STATE_COMMAND = 1; // Command bar (Equip/Remove/etc.)
-        private const int STATE_INFO = 2;    // Slot selection
-        private const int STATE_SELECT = 3;  // Item selection
-
-        // State machine offset for EquipmentWindowController
-        private const int OFFSET_STATE_MACHINE = 0x60;
-
-        /// <summary>
-        /// Gets the current state from EquipmentWindowController's state machine.
-        /// Returns -1 if unable to read state.
-        /// </summary>
         public static int GetWindowControllerState()
         {
-            var windowController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentWindowController>();
+            var windowController = GameObjectCache.GetOrFind<KeyInputEquipmentWindowController>();
             if (windowController == null || !windowController.gameObject.activeInHierarchy)
                 return -1;
-            return StateReaderHelper.ReadStateTag(windowController.Pointer, OFFSET_STATE_MACHINE);
+            return StateReaderHelper.ReadStateTag(windowController.Pointer, IL2CppOffsets.Equipment.OFFSET_STATE_MACHINE);
         }
 
-        /// <summary>
-        /// Returns true if current state allows setting the active flag.
-        /// Only allows Info (2) and Select (3) states - not Command (1) or None (0).
-        /// COMMENTED OUT: State machine validation was unreliable. State clearing now handled by SetNextState_Postfix.
-        /// </summary>
-        // public static bool IsInSubmenuState()
-        // {
-        //     int state = GetWindowControllerState();
-        //     return state == STATE_INFO || state == STATE_SELECT;
-        // }
-
-        /// <summary>
-        /// Apply manual Harmony patches for equipment menu transitions.
-        /// </summary>
         public static void ApplyTransitionPatches(HarmonyLib.Harmony harmony)
         {
             if (transitionPatchApplied) return;
@@ -141,15 +101,10 @@ namespace FFIII_ScreenReader.Patches
             try
             {
                 Type controllerType = typeof(KeyInputEquipmentWindowController);
-
-                // Patch SetActive for menu close detection
                 HarmonyPatchHelper.PatchSetActive(harmony, controllerType, typeof(EquipMenuState),
                     logPrefix: "[Equipment Menu]");
-
-                // Patch SetNextState for state transition detection (back to command bar)
                 HarmonyPatchHelper.PatchSetNextState(harmony, controllerType, typeof(EquipMenuState),
                     logPrefix: "[Equipment Menu]");
-
                 transitionPatchApplied = true;
             }
             catch (Exception ex)
@@ -158,31 +113,16 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        /// <summary>
-        /// Postfix for SetActive - clears state when menu closes.
-        /// </summary>
         public static void SetActive_Postfix(bool isActive)
         {
             if (!isActive)
-            {
-                ClearState();
-            }
+                IsActive = false;
         }
 
-        /// <summary>
-        /// Postfix for SetNextState - clears state when returning to command bar or closing.
-        /// States: None=0, Command=1, Info=2, Select=3
-        /// </summary>
         public static void SetNextState_Postfix(int state)
         {
-            MelonLogger.Msg($"[Equipment Menu] SetNextState called with state={state}, IsActive={IsActive}");
-
-            // Clear state when returning to command bar (1) or menu closing (0)
-            if ((state == STATE_NONE || state == STATE_COMMAND) && IsActive)
-            {
-                MelonLogger.Msg($"[Equipment Menu] Clearing state - transitioning to command bar or closing");
-                ClearState();
-            }
+            if ((state == IL2CppOffsets.Equipment.STATE_NONE || state == IL2CppOffsets.Equipment.STATE_COMMAND) && IsActive)
+                IsActive = false;
         }
     }
 
@@ -192,7 +132,7 @@ namespace FFIII_ScreenReader.Patches
     /// Uses same approach as FF5 - direct contentList access.
     /// </summary>
     [HarmonyPatch(typeof(KeyInputEquipmentInfoWindowController), "SelectContent", new Type[] { typeof(GameCursor) })]
-    public static class EquipmentInfoWindowController_SelectContent_Patch
+    internal static class EquipmentInfoWindowController_SelectContent_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(KeyInputEquipmentInfoWindowController __instance, GameCursor targetCursor)
@@ -299,11 +239,9 @@ namespace FFIII_ScreenReader.Patches
                 // COMMENTED OUT: State validation was unreliable
                 // if (EquipMenuState.IsInSubmenuState())
                 // {
-                FFIII_ScreenReaderMod.ClearOtherMenuStates("Equip");
-                EquipMenuState.IsActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.EQUIP_MENU);
                 // }
 
-                MelonLogger.Msg($"[Equipment Slot] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -319,7 +257,7 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     [HarmonyPatch(typeof(KeyInputEquipmentSelectWindowController), "SelectContent",
         new Type[] { typeof(GameCursor), typeof(CustomScrollViewWithinRangeType) })]
-    public static class EquipmentSelectWindowController_SelectContent_Patch
+    internal static class EquipmentSelectWindowController_SelectContent_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(KeyInputEquipmentSelectWindowController __instance, GameCursor targetCursor)
@@ -392,11 +330,9 @@ namespace FFIII_ScreenReader.Patches
                 // COMMENTED OUT: State validation was unreliable
                 // if (EquipMenuState.IsInSubmenuState())
                 // {
-                FFIII_ScreenReaderMod.ClearOtherMenuStates("Equip");
-                EquipMenuState.IsActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.EQUIP_MENU);
                 // }
 
-                MelonLogger.Msg($"[Equipment Item] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)

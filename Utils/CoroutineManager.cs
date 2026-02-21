@@ -8,16 +8,25 @@ namespace FFIII_ScreenReader.Utils
     /// <summary>
     /// Manages coroutines to prevent memory leaks and crashes.
     /// Limits concurrent coroutines and provides cleanup on mod unload.
-    /// Uses wrapper pattern to auto-remove completed coroutines from tracking.
+    /// Completed coroutines self-remove via ManagedWrapper.
     /// </summary>
     public static class CoroutineManager
     {
-        private static readonly List<object> activeCoroutines = new List<object>();
+        private static readonly List<IEnumerator> activeCoroutines = new List<IEnumerator>();
+        private static readonly Dictionary<IEnumerator, IEnumerator> originalToWrapper = new Dictionary<IEnumerator, IEnumerator>();
+        private static readonly Dictionary<IEnumerator, IEnumerator> wrapperToOriginal = new Dictionary<IEnumerator, IEnumerator>();
         private static readonly object coroutineLock = new object();
         private static int maxConcurrentCoroutines = 20;
 
+        private class WrapperRef
+        {
+            public IEnumerator Wrapper;
+            public IEnumerator Original;
+        }
+
         /// <summary>
         /// Cleanup all active coroutines.
+        /// Should be called when the mod is unloaded.
         /// </summary>
         public static void CleanupAll()
         {
@@ -25,7 +34,6 @@ namespace FFIII_ScreenReader.Utils
             {
                 if (activeCoroutines.Count > 0)
                 {
-                    MelonLogger.Msg($"Cleaning up {activeCoroutines.Count} active coroutines");
                     foreach (var coroutine in activeCoroutines)
                     {
                         try
@@ -38,56 +46,54 @@ namespace FFIII_ScreenReader.Utils
                         }
                     }
                     activeCoroutines.Clear();
+                    originalToWrapper.Clear();
+                    wrapperToOriginal.Clear();
                 }
             }
         }
 
         /// <summary>
-        /// Start an untracked coroutine (not tracked in the active list).
-        /// Use for short-lived coroutines that don't need cleanup management.
+        /// Start an untracked coroutine (fire-and-forget, no leak tracking).
+        /// Use for short one-frame-delay coroutines that complete quickly.
         /// </summary>
         public static void StartUntracked(IEnumerator coroutine)
         {
-            try
-            {
-                MelonCoroutines.Start(coroutine);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"Error starting untracked coroutine: {ex.Message}");
-            }
+            try { MelonCoroutines.Start(coroutine); }
+            catch (Exception ex) { MelonLogger.Error($"Error starting coroutine: {ex.Message}"); }
         }
 
         /// <summary>
         /// Start a managed coroutine with automatic cleanup and limit enforcement.
-        /// Uses wrapper pattern to auto-remove from tracking when coroutine completes.
+        /// The coroutine is wrapped so it self-removes from tracking on completion.
         /// </summary>
         public static void StartManaged(IEnumerator coroutine)
         {
             lock (coroutineLock)
             {
-                // If we're at the limit, stop and remove the oldest coroutine
                 if (activeCoroutines.Count >= maxConcurrentCoroutines)
                 {
                     var oldest = activeCoroutines[0];
-                    try
-                    {
-                        MelonCoroutines.Stop(oldest);
-                    }
-                    catch (Exception ex)
-                    {
-                        MelonLogger.Warning($"Error stopping oldest coroutine: {ex.Message}");
-                    }
                     activeCoroutines.RemoveAt(0);
-                    MelonLogger.Warning("Stopped oldest coroutine due to limit");
+                    if (wrapperToOriginal.TryGetValue(oldest, out var original))
+                    {
+                        originalToWrapper.Remove(original);
+                        wrapperToOriginal.Remove(oldest);
+                    }
+                    try { MelonCoroutines.Stop(oldest); }
+                    catch (Exception ex) { MelonLogger.Error($"Error stopping evicted coroutine: {ex.Message}"); }
                 }
 
-                // Start the wrapped coroutine that auto-removes on completion
+                var holder = new WrapperRef();
+                var wrapper = ManagedWrapper(coroutine, holder);
+                holder.Wrapper = wrapper;
+                holder.Original = coroutine;
+
                 try
                 {
-                    var wrapper = TrackingWrapper(coroutine);
-                    var handle = MelonCoroutines.Start(wrapper);
-                    activeCoroutines.Add(handle);
+                    MelonCoroutines.Start(wrapper);
+                    activeCoroutines.Add(wrapper);
+                    originalToWrapper[coroutine] = wrapper;
+                    wrapperToOriginal[wrapper] = coroutine;
                 }
                 catch (Exception ex)
                 {
@@ -97,37 +103,44 @@ namespace FFIII_ScreenReader.Utils
         }
 
         /// <summary>
-        /// Wrapper coroutine that auto-removes from tracking when inner coroutine completes.
+        /// Stops a managed coroutine by its original IEnumerator reference.
+        /// This correctly looks up and stops the wrapper that's actually running.
         /// </summary>
-        private static IEnumerator TrackingWrapper(IEnumerator inner)
+        public static void StopManaged(IEnumerator original)
         {
-            object handle = null;
+            if (original == null) return;
 
-            // Store the handle for removal (set after MelonCoroutines.Start returns)
             lock (coroutineLock)
             {
-                if (activeCoroutines.Count > 0)
+                if (originalToWrapper.TryGetValue(original, out var wrapper))
                 {
-                    handle = activeCoroutines[activeCoroutines.Count - 1];
+                    originalToWrapper.Remove(original);
+                    wrapperToOriginal.Remove(wrapper);
+                    activeCoroutines.Remove(wrapper);
+                    try { MelonCoroutines.Stop(wrapper); }
+                    catch (Exception ex) { MelonLogger.Error($"Error stopping managed coroutine: {ex.Message}"); }
                 }
             }
+        }
 
+        private static IEnumerator ManagedWrapper(IEnumerator inner, WrapperRef holder)
+        {
             try
             {
                 while (inner.MoveNext())
-                {
                     yield return inner.Current;
-                }
             }
             finally
             {
-                // Remove from tracking when complete
-                if (handle != null)
+                lock (coroutineLock)
                 {
-                    lock (coroutineLock)
+                    if (holder.Wrapper != null)
                     {
-                        activeCoroutines.Remove(handle);
+                        activeCoroutines.Remove(holder.Wrapper);
+                        wrapperToOriginal.Remove(holder.Wrapper);
                     }
+                    if (holder.Original != null)
+                        originalToWrapper.Remove(holder.Original);
                 }
             }
         }

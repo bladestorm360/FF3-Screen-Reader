@@ -19,12 +19,12 @@ namespace FFIII_ScreenReader.Patches
     /// FF3 has multiple suggested names per character that players can cycle through.
     /// Uses event-driven hooks (SetFocusContent, SetForcusIndex) instead of per-frame patches.
     /// </summary>
-    public static class NewGameNamingPatches
+    internal static class NewGameNamingPatches
     {
-        private const string CONTEXT_NAME = "NewGame.Name";
-        private const string CONTEXT_AUTO_INDEX = "NewGame.AutoNameIndex";
-        private const string CONTEXT_SELECTED = "NewGame.SelectedIndex";
-        private const string CONTEXT_SLOT_NAME = "NewGame.SlotName";
+        private const string CONTEXT_NAME = AnnouncementContexts.NEW_GAME_NAME;
+        private const string CONTEXT_AUTO_INDEX = AnnouncementContexts.NEW_GAME_AUTO_NAME_INDEX;
+        private const string CONTEXT_SELECTED = AnnouncementContexts.NEW_GAME_SELECTED_INDEX;
+        private const string CONTEXT_SLOT_NAME = AnnouncementContexts.NEW_GAME_SLOT_NAME;
 
         // Reference to the current NewGameWindowController for accessing data
         private static object currentController = null;
@@ -41,11 +41,8 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("Applying New Game naming screen patches...");
-
                 // Use typeof() directly - much faster than assembly scanning
                 Type controllerType = typeof(NewGameWindowController);
-                MelonLogger.Msg($"Found NewGameWindowController: {controllerType.FullName}");
 
                 // Log available methods for debugging
                 LogAvailableMethods(controllerType);
@@ -57,7 +54,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(NewGameNamingPatches).GetMethod("InitNameSelect_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(initNameSelectMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("Patched InitNameSelect");
                 }
                 else
                 {
@@ -71,7 +67,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(NewGameNamingPatches).GetMethod("InitNameInput_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(initNameInputMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("Patched InitNameInput");
                 }
                 else
                 {
@@ -85,7 +80,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(NewGameNamingPatches).GetMethod("InitSelect_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(initSelectMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("Patched InitSelect");
                 }
                 else
                 {
@@ -100,7 +94,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(NewGameNamingPatches).GetMethod("InitStartPopup_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(initStartPopupMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("Patched InitStartPopup");
                 }
                 else
                 {
@@ -117,7 +110,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(NewGameNamingPatches).GetMethod("SetTargetSelectContent_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setTargetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("Patched CharacterContentListController.SetTargetSelectContent (event-driven)");
                 }
                 else
                 {
@@ -134,7 +126,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(NewGameNamingPatches).GetMethod("SetFocus_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setFocusMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("Patched NameContentListController.SetFocus (event-driven)");
                 }
                 else
                 {
@@ -150,7 +141,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(NewGameNamingPatches).GetMethod("UpdateView_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(updateViewMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("Patched CharacterContentListController.UpdateView (event-driven)");
                 }
                 else
                 {
@@ -198,7 +188,6 @@ namespace FFIII_ScreenReader.Patches
 
                 // Only announce mode entry - slot will be announced on first navigation
                 string announcement = "Character selection";
-                MelonLogger.Msg($"[New Game] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement);
             }
             catch (Exception ex)
@@ -235,7 +224,6 @@ namespace FFIII_ScreenReader.Patches
                         string message = popup.Message;
                         if (!string.IsNullOrEmpty(message))
                         {
-                            MelonLogger.Msg($"[New Game] Start popup: {message}");
                             FFIII_ScreenReaderMod.SpeakText(message);
                         }
                     }
@@ -277,7 +265,6 @@ namespace FFIII_ScreenReader.Patches
                             lastSlotNames[index] = nameOnly;
                         }
 
-                        MelonLogger.Msg($"[New Game] {slotInfo}");
                         FFIII_ScreenReaderMod.SpeakText(slotInfo);
                     }
                 }
@@ -397,7 +384,6 @@ namespace FFIII_ScreenReader.Patches
                     AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_NAME, suggestedName);
                 }
 
-                MelonLogger.Msg($"[New Game] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement);
             }
             catch (Exception ex)
@@ -430,7 +416,6 @@ namespace FFIII_ScreenReader.Patches
                 if (!string.IsNullOrEmpty(currentName) &&
                     AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_NAME, currentName))
                 {
-                    MelonLogger.Msg($"[New Game] Name: {currentName}");
                     FFIII_ScreenReaderMod.SpeakText(currentName);
                 }
             }
@@ -453,8 +438,6 @@ namespace FFIII_ScreenReader.Patches
                 // (reading from instance offset was unreliable)
                 int currentSlot = lastTargetIndex;
 
-                MelonLogger.Msg($"[New Game] UpdateView called: currentSlot={currentSlot}");
-
                 // Skip if no slot selected yet
                 if (currentSlot < 0 || currentSlot >= 4)
                 {
@@ -465,13 +448,10 @@ namespace FFIII_ScreenReader.Patches
                 string currentName = GetCharacterSlotNameOnly(__instance, currentSlot);
                 string lastName = lastSlotNames[currentSlot];
 
-                MelonLogger.Msg($"[New Game] UpdateView: slot={currentSlot}, currentName='{currentName}', lastName='{lastName}'");
-
                 // Announce if name exists and is different from last known name for this slot
                 if (!string.IsNullOrEmpty(currentName) && currentName != lastName)
                 {
                     lastSlotNames[currentSlot] = currentName;
-                    MelonLogger.Msg($"[New Game] Name changed: {currentName}");
                     FFIII_ScreenReaderMod.SpeakText(currentName);
                 }
             }
@@ -556,7 +536,6 @@ namespace FFIII_ScreenReader.Patches
                     announcement = "Enter name using keyboard";
                 }
 
-                MelonLogger.Msg($"[New Game] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement);
             }
             catch (Exception ex)

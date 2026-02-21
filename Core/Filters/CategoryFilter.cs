@@ -5,7 +5,7 @@ namespace FFIII_ScreenReader.Core.Filters
     /// <summary>
     /// Filters entities by category (NPCs, Chests, Map Exits, etc.).
     /// </summary>
-    public class CategoryFilter : IEntityFilter
+    internal class CategoryFilter : IEntityFilter
     {
         private bool isEnabled = true;
 

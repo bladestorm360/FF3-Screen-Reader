@@ -11,7 +11,7 @@ namespace FFIII_ScreenReader.Menus
     /// Called by MenuTextDiscovery when navigating the ability command bar.
     /// Prevents fallback text search from finding spell names instead of command names.
     /// </summary>
-    public static class AbilityCommandReader
+    internal static class AbilityCommandReader
     {
         /// <summary>
         /// Try to read ability command menu text.

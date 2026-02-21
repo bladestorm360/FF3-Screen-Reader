@@ -11,7 +11,7 @@ namespace FFIII_ScreenReader.Field
     /// Uses the game's MasterManager and MessageManager to convert map IDs
     /// to localized display names (e.g., "Altar Cave 1F").
     /// </summary>
-    public static class MapNameResolver
+    internal static class MapNameResolver
     {
         /// <summary>
         /// Gets the name of the current map the player is on.
@@ -145,7 +145,7 @@ namespace FFIII_ScreenReader.Field
                     // Skip redundant mapTitle if it equals areaName (e.g., vehicle interiors)
                     if (mapTitle == areaName)
                         return areaName;
-                    return $"{areaName} â€“ {mapTitle}";  // en-dash U+2013
+                    return $"{areaName} â€?{mapTitle}";  // en-dash U+2013
                 }
                 else if (!string.IsNullOrEmpty(areaName))
                 {

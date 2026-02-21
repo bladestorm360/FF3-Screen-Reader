@@ -29,28 +29,32 @@ namespace FFIII_ScreenReader.Patches
     /// Uses state machine validation to only suppress during item list navigation,
     /// not during command menu (Buy/Sell/Exit) navigation.
     /// </summary>
-    public static class ShopMenuTracker
+    internal static class ShopMenuTracker
     {
-        /// <summary>
-        /// True when shop menu is active.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.SHOP_MENU);
+
+        static ShopMenuTracker()
+        {
+            _helper.RegisterResetHandler(() =>
+            {
+                LastItemName = null;
+                LastItemDescription = null;
+                LastItemPrice = null;
+                LastItemStats = null;
+                ShopPatches.ResetShopTracking();
+            });
+        }
+
         public static bool IsShopMenuActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.SHOP_MENU);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.SHOP_MENU, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
+
         public static string LastItemName { get; set; }
         public static string LastItemDescription { get; set; }
         public static string LastItemPrice { get; set; }
         public static string LastItemStats { get; set; }
-
-        // ShopController.State enum values (from dump.cs line 466830)
-        private const int STATE_NONE = 0;           // Menu closed
-        private const int STATE_SELECT_COMMAND = 1; // Command bar (Buy/Sell/Equipment/Back)
-
-        // State machine offset for ShopController
-        private const int OFFSET_STATE_MACHINE = 0x98;
 
         /// <summary>
         /// Returns true if generic cursor reading should be suppressed.
@@ -61,38 +65,22 @@ namespace FFIII_ScreenReader.Patches
             if (!IsShopMenuActive)
                 return false;
 
-            // Validate we're actually in a submenu, not command bar
             int state = GetShopControllerState();
-            if (state == STATE_SELECT_COMMAND || state == STATE_NONE)
+            if (state == IL2CppOffsets.Shop.STATE_SELECT_COMMAND || state == IL2CppOffsets.Shop.STATE_NONE)
             {
-                // At command bar or menu closing - clear state and don't suppress
-                ClearState();
+                IsShopMenuActive = false;
                 return false;
             }
 
             return true;
         }
 
-        /// <summary>
-        /// Gets the current state from ShopController's state machine.
-        /// Returns -1 if unable to read state.
-        /// </summary>
         private static int GetShopControllerState()
         {
-            var shopController = UnityEngine.Object.FindObjectOfType<KeyInputShopController>();
+            var shopController = GameObjectCache.GetOrFind<KeyInputShopController>();
             if (shopController == null || !shopController.gameObject.activeInHierarchy)
                 return -1;
-            return StateReaderHelper.ReadStateTag(shopController.Pointer, OFFSET_STATE_MACHINE);
-        }
-
-        public static void ClearState()
-        {
-            IsShopMenuActive = false;
-            LastItemName = null;
-            LastItemDescription = null;
-            LastItemPrice = null;
-            LastItemStats = null;
-            ShopPatches.ResetShopTracking();
+            return StateReaderHelper.ReadStateTag(shopController.Pointer, IL2CppOffsets.Shop.OFFSET_STATE_MACHINE);
         }
     }
 
@@ -101,7 +89,7 @@ namespace FFIII_ScreenReader.Patches
     /// Announces stats first, then description.
     /// Format: "Defense 3, Magic Defense 1. Armor made of leather."
     /// </summary>
-    public static class ShopDetailsAnnouncer
+    internal static class ShopDetailsAnnouncer
     {
         public static void AnnounceCurrentItemDetails()
         {
@@ -142,7 +130,6 @@ namespace FFIII_ScreenReader.Patches
                     announcement = "No item details available";
                 }
 
-                MelonLogger.Msg($"[Shop Details] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement);
             }
             catch (Exception ex)
@@ -158,7 +145,7 @@ namespace FFIII_ScreenReader.Patches
     /// CRITICAL: FF3 crashes with methods that have string parameters.
     /// All patches here use methods with non-string params only.
     /// </summary>
-    public static class ShopPatches
+    internal static class ShopPatches
     {
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
@@ -192,7 +179,7 @@ namespace FFIII_ScreenReader.Patches
         {
             if (!isActive)
             {
-                ShopMenuTracker.ClearState();
+                ShopMenuTracker.IsShopMenuActive = false;
             }
         }
 
@@ -211,8 +198,6 @@ namespace FFIII_ScreenReader.Patches
 
                 harmony.Patch(setFocusMethod,
                     postfix: new HarmonyMethod(typeof(ShopPatches), nameof(SetFocus_Postfix)));
-
-                MelonLogger.Msg("[Shop] Patched ShopListItemContentController.SetFocus");
             }
             catch (Exception ex)
             {
@@ -233,7 +218,6 @@ namespace FFIII_ScreenReader.Patches
                 {
                     harmony.Patch(updateMethod,
                         postfix: new HarmonyMethod(typeof(ShopPatches), nameof(UpdateCotroller_Postfix)));
-                    MelonLogger.Msg("[Shop] Patched ShopTradeWindowController.UpdateCotroller");
                 }
                 else
                 {
@@ -248,8 +232,8 @@ namespace FFIII_ScreenReader.Patches
 
         // ============ Postfix Methods ============
 
-        private const string CONTEXT_ITEM = "Shop.Item";
-        private const string CONTEXT_QUANTITY = "Shop.Quantity";
+        private const string CONTEXT_ITEM = AnnouncementContexts.SHOP_ITEM;
+        private const string CONTEXT_QUANTITY = AnnouncementContexts.SHOP_QUANTITY;
 
         /// <summary>
         /// Called when an item in the shop list gains/loses focus.
@@ -263,8 +247,7 @@ namespace FFIII_ScreenReader.Patches
                     return;
 
                 // Mark shop as active and clear other menu states
-                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Shop");
-                ShopMenuTracker.IsShopMenuActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.SHOP_MENU);
 
                 // Get item name from iconTextView
                 string itemName = null;
@@ -323,7 +306,6 @@ namespace FFIII_ScreenReader.Patches
                     return;
                 }
 
-                MelonLogger.Msg($"[Shop Item] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement);
             }
             catch (Exception ex)
@@ -463,13 +445,7 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        // Memory offsets for ShopTradeWindowController (KeyInput version)
-        private const int OFFSET_TRADE_VIEW = 0x30;           // ShopTradeWindowView
-        private const int OFFSET_SELECTED_COUNT = 0x3C;       // int selectedCount
 
-        // Memory offsets for ShopTradeWindowView (KeyInput version)
-        private const int OFFSET_SELECT_COUNT_TEXT = 0x68;    // Text selectCountText
-        private const int OFFSET_TOTAL_PRICE_TEXT = 0x70;     // Text totarlPriceText
 
         /// <summary>
         /// Called when the trade window updates (after quantity changes).
@@ -496,7 +472,6 @@ namespace FFIII_ScreenReader.Patches
                     ? selectedCount.ToString()
                     : $"{selectedCount}, {totalPrice}";
 
-                MelonLogger.Msg($"[Shop Quantity] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement);
             }
             catch (Exception ex)
@@ -517,7 +492,7 @@ namespace FFIII_ScreenReader.Patches
                     IntPtr ptr = controller.Pointer;
                     if (ptr != IntPtr.Zero)
                     {
-                        return *(int*)((byte*)ptr.ToPointer() + OFFSET_SELECTED_COUNT);
+                        return *(int*)((byte*)ptr.ToPointer() + IL2CppOffsets.Shop.OFFSET_SELECTED_COUNT);
                     }
                 }
             }
@@ -555,11 +530,11 @@ namespace FFIII_ScreenReader.Patches
                         if (controllerPtr == IntPtr.Zero) return null;
 
                         // Read view pointer at offset 0x30
-                        IntPtr viewPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_TRADE_VIEW);
+                        IntPtr viewPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Shop.OFFSET_TRADE_VIEW);
                         if (viewPtr == IntPtr.Zero) return null;
 
                         // Read totarlPriceText pointer at offset 0x70
-                        IntPtr textPtr = *(IntPtr*)((byte*)viewPtr.ToPointer() + OFFSET_TOTAL_PRICE_TEXT);
+                        IntPtr textPtr = *(IntPtr*)((byte*)viewPtr.ToPointer() + IL2CppOffsets.Shop.OFFSET_TOTAL_PRICE_TEXT);
                         if (textPtr == IntPtr.Zero) return null;
 
                         // Wrap as Text component and read text property
@@ -574,7 +549,7 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// Resets the shop tracking when leaving the shop menu.
-        /// Called from ShopMenuTracker.ClearState().
+        /// Called from ShopMenuTracker's reset handler.
         /// </summary>
         public static void ResetShopTracking()
         {

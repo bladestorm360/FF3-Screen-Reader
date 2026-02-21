@@ -21,29 +21,24 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Tracks save/load menu state for suppression.
     /// </summary>
-    public static class SaveLoadMenuState
+    internal static class SaveLoadMenuState
     {
-        /// <summary>
-        /// True when save/load menu is active.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.SAVE_LOAD_MENU);
+
+        static SaveLoadMenuState()
+        {
+            _helper.RegisterResetHandler(() => { IsInConfirmation = false; });
+        }
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.SAVE_LOAD_MENU);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.SAVE_LOAD_MENU, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
+
         public static bool IsInConfirmation { get; set; } = false;
 
-        public static bool ShouldSuppress()
-        {
-            return IsActive && IsInConfirmation;
-        }
-
-        public static void ResetState()
-        {
-            IsActive = false;
-            IsInConfirmation = false;
-        }
+        public static bool ShouldSuppress() => IsActive && IsInConfirmation;
     }
 
     /// <summary>
@@ -56,7 +51,7 @@ namespace FFIII_ScreenReader.Patches
     ///
     /// All use SavePopup with messageText at 0x40, commandList at 0x60.
     /// </summary>
-    public static class SaveLoadPatches
+    internal static class SaveLoadPatches
     {
         // SavePopup field offsets (from dump.cs line 458107)
         private const int SAVE_POPUP_MESSAGE_TEXT_OFFSET = 0x40;
@@ -102,7 +97,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(SaveLoadPatches).GetMethod(nameof(TitleLoadSetPopupActive_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[SaveLoad] Patched TitleLoadController.SetPopupActive");
                 }
                 else
                 {
@@ -130,7 +124,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(SaveLoadPatches).GetMethod(nameof(MainMenuLoadSetPopupActive_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[SaveLoad] Patched MainMenuLoadController.SetPopupActive");
                 }
                 else
                 {
@@ -158,7 +151,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(SaveLoadPatches).GetMethod(nameof(MainMenuSaveSetPopupActive_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[SaveLoad] Patched MainMenuSaveController.SetPopupActive");
                 }
                 else
                 {
@@ -186,7 +178,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(SaveLoadPatches).GetMethod(nameof(InterruptionSetEnablePopup_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[SaveLoad] Patched InterruptionController.SetEnablePopup (QuickSave)");
                 }
                 else
                 {
@@ -205,8 +196,6 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[SaveLoad] TitleLoad.SetPopupActive called with isEnable={isEnable}");
-
                 if (isEnable)
                 {
                     var controller = __instance as TitleLoadController;
@@ -230,8 +219,6 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[SaveLoad] MainMenuLoad.SetPopupActive called with isEnable={isEnable}");
-
                 if (isEnable)
                 {
                     var controller = __instance as MainMenuLoadController;
@@ -255,8 +242,6 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[SaveLoad] MainMenuSave.SetPopupActive called with isEnable={isEnable}");
-
                 if (isEnable)
                 {
                     var controller = __instance as MainMenuSaveController;
@@ -280,8 +265,6 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[SaveLoad] Interruption.SetEnablePopup called with isEnable={isEnable}");
-
                 if (isEnable)
                 {
                     var controller = __instance as InterruptionController;
@@ -324,8 +307,6 @@ namespace FFIII_ScreenReader.Patches
                         MelonLogger.Warning($"[SaveLoad] {context}: SavePopup pointer is null");
                         return;
                     }
-
-                    MelonLogger.Msg($"[SaveLoad] {context}: SavePopup at 0x{popupPtr.ToInt64():X}");
 
                     // Set state for button navigation immediately
                     SaveLoadMenuState.IsActive = true;
@@ -370,7 +351,6 @@ namespace FFIII_ScreenReader.Patches
                     {
                         // Strip Unity rich text tags (like <color=#ff4040>...</color>)
                         message = StripRichTextTags(message);
-                        MelonLogger.Msg($"[SaveLoad] {context}: {message}");
                         FFIII_ScreenReaderMod.SpeakText(message);
                     }
                     else
@@ -400,9 +380,8 @@ namespace FFIII_ScreenReader.Patches
 
         private static void ClearPopupState()
         {
-            SaveLoadMenuState.ResetState();
+            SaveLoadMenuState.IsActive = false;
             PopupState.Clear();
-            MelonLogger.Msg("[SaveLoad] Popup closed, state cleared");
         }
     }
 }

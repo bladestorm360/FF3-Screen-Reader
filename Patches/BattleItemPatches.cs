@@ -20,14 +20,12 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Manual patch application for battle item menu.
     /// </summary>
-    public static class BattleItemPatchesApplier
+    internal static class BattleItemPatchesApplier
     {
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
             try
             {
-                MelonLogger.Msg("[Battle Item] Applying battle item menu patches...");
-
                 var controllerType = typeof(BattleItemInfomationController);
 
                 // Find SelectContent(Cursor, WithinRangeType) - called when navigating items
@@ -42,7 +40,6 @@ namespace FFIII_ScreenReader.Patches
                         if (parameters.Length >= 1 && parameters[0].ParameterType.Name == "Cursor")
                         {
                             selectContentMethod = m;
-                            MelonLogger.Msg($"[Battle Item] Found SelectContent with Cursor parameter");
                             break;
                         }
                     }
@@ -54,7 +51,7 @@ namespace FFIII_ScreenReader.Patches
                         .GetMethod("Postfix", BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(selectContentMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Item] Patched SelectContent successfully");
+                    MelonLogger.Msg("[Battle Item] Patches applied");
                 }
                 else
                 {
@@ -71,36 +68,23 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// State tracking for battle item menu.
     /// </summary>
-    public static class BattleItemMenuState
+    internal static class BattleItemMenuState
     {
-        /// <summary>
-        /// True when battle item menu is active and handling announcements.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_ITEM, "BattleItem.Select");
+
+        static BattleItemMenuState()
+        {
+            _helper.RegisterResetHandler();
+        }
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_ITEM);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.BATTLE_ITEM, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
-        /// <summary>
-        /// Returns true if generic cursor reading should be suppressed.
-        /// State is cleared by BattleResultPatches when battle ends.
-        /// </summary>
         public static bool ShouldSuppress() => IsActive;
-
-        private const string CONTEXT = "BattleItem.Select";
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT, announcement);
-        }
-
-        public static void Reset()
-        {
-            IsActive = false;
-            AnnouncementDeduplicator.Reset(CONTEXT);
-        }
+        public static bool ShouldAnnounce(string announcement) => _helper.ShouldAnnounce(announcement);
     }
 
     /// <summary>
@@ -108,7 +92,7 @@ namespace FFIII_ScreenReader.Patches
     /// Announces item name and description when navigating items in battle.
     /// Patches SelectContent(Cursor, WithinRangeType) which is called during navigation.
     /// </summary>
-    public static class BattleItemSelectContent_Patch
+    internal static class BattleItemSelectContent_Patch
     {
         public static void Postfix(object __instance, GameCursor targetCursor)
         {
@@ -125,16 +109,12 @@ namespace FFIII_ScreenReader.Patches
                     return;
 
                 int cursorIndex = targetCursor.Index;
-                MelonLogger.Msg($"[Battle Item] SelectContent called, cursor index: {cursorIndex}");
 
                 // Try to get item data from the content list
                 string announcement = TryGetItemFromContentList(controller, cursorIndex);
 
                 if (string.IsNullOrEmpty(announcement))
-                {
-                    MelonLogger.Msg("[Battle Item] Could not get item from content list");
                     return;
-                }
 
                 // Skip duplicates
                 if (!BattleItemMenuState.ShouldAnnounce(announcement))
@@ -142,11 +122,9 @@ namespace FFIII_ScreenReader.Patches
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 // Also clear other menu states to prevent conflicts
-                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("BattleItem");
-                BattleItemMenuState.IsActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_ITEM);
 
                 // Immediate speech - no delay needed
-                MelonLogger.Msg($"[Battle Item] Announcing: {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -182,16 +160,10 @@ namespace FFIII_ScreenReader.Patches
 
                 if (contentList == null)
                 {
-                    // Try using Il2CppInterop field access
-                    // Access via the boxed pointer pattern
-                    MelonLogger.Msg("[Battle Item] contentList property not found, trying alternative...");
-
                     // Try finding all active content controllers in scene
                     var allContentControllers = UnityEngine.Object.FindObjectsOfType<BattleItemInfomationContentController>();
                     if (allContentControllers != null && allContentControllers.Length > 0)
                     {
-                        MelonLogger.Msg($"[Battle Item] Found {allContentControllers.Length} content controllers in scene");
-
                         // Find the one at cursor index (they should be in order)
                         foreach (var cc in allContentControllers)
                         {
@@ -223,8 +195,6 @@ namespace FFIII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Msg($"[Battle Item] contentList found with {contentList.Count} items");
-
                     if (cursorIndex >= 0 && cursorIndex < contentList.Count)
                     {
                         var contentController = contentList[cursorIndex];
@@ -264,7 +234,20 @@ namespace FFIII_ScreenReader.Patches
                     // Description not available
                 }
 
-                return AnnouncementBuilder.FormatWithDescription(data.Name, description);
+                // Format: "Item Name quantity: description"
+                string itemName = TextUtils.StripIconMarkup(data.Name);
+                int quantity = data.Count;
+                string announcement = quantity > 0 ? $"{itemName} {quantity}" : itemName;
+
+                if (!string.IsNullOrWhiteSpace(description))
+                {
+                    description = TextUtils.StripIconMarkup(description);
+                    if (!string.IsNullOrWhiteSpace(description))
+                    {
+                        announcement += $": {description}";
+                    }
+                }
+                return announcement;
             }
             catch (Exception ex)
             {

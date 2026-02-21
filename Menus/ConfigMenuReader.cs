@@ -12,7 +12,7 @@ using ConfigActualDetailsControllerBase_Touch = Il2CppLast.UI.Touch.ConfigActual
 
 namespace FFIII_ScreenReader.Menus
 {
-    public static class ConfigMenuReader
+    internal static class ConfigMenuReader
     {
         /// <summary>
         /// Find config value directly from a ConfigCommandController instance.

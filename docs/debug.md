@@ -36,22 +36,31 @@ var value = obj.TryCast<TargetType>().Property;
 
 ## Utility Classes
 
-| Class | Purpose |
-|-------|---------|
-| `AnnouncementDeduplicator` | Exact-match dedup: `ShouldAnnounce(context, text)` |
-| `LocationMessageTracker` | Map transition dedup (containment check) |
-| `DialogueTracker` | Per-page dialogue state, speaker tracking |
-| `LineFadeMessageTracker` | Per-line story text announcements |
-| `TextUtils` | Strip icon markup, formatting |
-| `MoveStateHelper` | Vehicle/movement state |
-| `GameObjectCache` | Component caching |
-| `CoroutineManager` | Frame-delayed operations |
-| `SoundPlayer` | Windows waveOut API, 4-channel concurrent playback |
-| `EntityTranslator` | Japanese→English entity names via JSON dictionary |
+| Class | Location | Purpose |
+|-------|----------|---------|
+| `AnnouncementDeduplicator` | Utils/ | Exact-match dedup: `ShouldAnnounce(context, text)` |
+| `LocationMessageTracker` | Utils/ | Map transition dedup (containment check) |
+| `DialogueTracker` | Patches/MessageWindowPatches.cs | Per-page dialogue state, speaker tracking |
+| `LineFadeMessageTracker` | Patches/LineFadeMessagePatches.cs | Per-line story text announcements |
+| `TextUtils` | Utils/ | Strip icon markup, formatting |
+| `MoveStateHelper` | Utils/ | Vehicle/movement state |
+| `GameObjectCache` | Utils/ | Component caching via `GetOrFind<T>()` (replaces `FindObjectOfType`) |
+| `CoroutineManager` | Utils/ | Frame-delayed operations |
+| `SoundPlayer` | Utils/ | Windows waveOut API, 4-channel concurrent playback |
+| `EntityTranslator` | Utils/ | Japanese→English entity names via JSON dictionary |
+| `MenuStateRegistry` | Utils/ | Centralized menu state tracking; `SetActiveExclusive()` |
+| `MenuStateHelper` | Utils/ | Boilerplate reduction for 15 state classes |
+| `IL2CppOffsets` | Utils/ | Centralized IL2CPP memory offsets (nested classes by system) |
+| `DirectionHelper` | Utils/ | Shared direction calculations (NavigableEntity + WaypointEntity) |
+| `CollectionHelper` | Utils/ | IL2CPP collection iteration utilities |
+| `PlayerPositionHelper` | Utils/ | Player position access helpers |
+| `WindowsFocusHelper` | Utils/ | Windows focus state detection |
 
 ---
 
 ## Memory Offsets
+
+> All offsets are centralized in `Utils/IL2CppOffsets.cs`. The sections below are a readable reference.
 
 ### State Machines
 ```
@@ -84,6 +93,11 @@ AbilityContentListController.targetCharacterData: 0x98
 | JobChangePopup | 0x50 |
 | ChangeMagicStonePopup | 0x58 |
 | GameOverSelectPopup | 0x40 |
+| GameOverLoadPopup (message) | 0x40 |
+| GameOverLoadPopup (selectCursor) | 0x58 |
+| GameOverLoadPopup (commandList) | 0x60 |
+| GameOverPopupController.view | 0x30 |
+| GameOverPopupView.loadPopup | 0x18 |
 | SavePopup (message) | 0x40 |
 | SavePopup (commandList) | 0x60 |
 
@@ -150,6 +164,8 @@ AbilityContentListController.targetCharacterData: 0x98
 ---
 
 ## State Machine Values
+
+> Canonical source: `Utils/IL2CppOffsets.cs`. Tables below are for quick reference.
 
 ### ItemWindowController.State
 ```
@@ -240,21 +256,58 @@ int max = param.ConfirmedMaxMpCount((AbilityLevelType)spellLevel);
 
 ## Architecture Patterns
 
-### Suppression Pattern
+### MenuStateHelper Pattern
+Boilerplate reduction for all 15 state classes:
 ```csharp
-public static bool ShouldSuppress() => IsActive;
-
-public static void SetActive_Postfix(bool isActive) {
-    if (!isActive) MyMenuState.ClearState();
-}
+private static readonly MenuStateHelper _helper = new(MenuStateRegistry.X_MENU, "Context.Name");
+static MyMenuState() { _helper.RegisterResetHandler(); }
+public static bool IsActive { get => _helper.IsActive; set => _helper.IsActive = value; }
 ```
-Add `activeInHierarchy` validation when state might persist.
+
+### SetActiveExclusive Pattern
+Replaces manual `ClearOtherMenuStates` calls:
+```csharp
+MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.X_MENU);
+```
+
+### GameObjectCache Pattern
+Replaces `FindObjectOfType` with cached lookups:
+```csharp
+var controller = GameObjectCache.GetOrFind<SomeController>();
+```
 
 ### Popup Detection
 Patch base `Popup.Open()`, use `TryCast<T>()` for type (GetType().Name returns "Popup" in IL2CPP).
 
 ### Battle State Clearing
 `BattleResultPatches.ClearAllBattleMenuFlags()` at victory. Submenus validate `BattleCommandSelectController` state machine.
+
+---
+
+## File Organization
+
+| Directory | Contents |
+|-----------|----------|
+| `Core/` | Main mod, input manager, audio loops, preferences, waypoints, entity navigation, game info announcer |
+| `Core/Filters/` | Entity filter interface (`IEntityFilter`) and implementations: `PathfindingFilter`, `ToLayerFilter`, `CategoryFilter` |
+| `Field/` | Entity scanner, navigable entities, waypoint entities, field navigation/pathfinding, filter context |
+| `Menus/` | Menu text readers: config, shop, status, save, character selection, ability commands |
+| `Patches/` | All Harmony patches organized by game system (battle, menus, field, popups, messages, etc.) |
+| `Utils/` | Shared utilities: IL2CPP offsets, state registry, announcement dedup, sound player, text utils, etc. |
+
+---
+
+## Key Refactoring Patterns
+
+| Pattern | Purpose |
+|---------|---------|
+| `MenuStateHelper` | Boilerplate reduction for 15 state classes via shared helper |
+| `MenuStateRegistry.SetActiveExclusive()` | Replaced manual `ClearOtherMenuStates` across all state classes |
+| `GameObjectCache.GetOrFind<T>()` | Replaced 19 `FindObjectOfType` calls with cached lookups |
+| `IL2CppOffsets` nested classes | Centralized offsets from 12+ patch files into one source of truth |
+| `FieldNavigationHelper.GetPathDescription()` | Shared path description logic (NavigableEntity + WaypointEntity) |
+| `EntityScanner.ForceRescan()` | Clears `entityMap` cache on scene transitions |
+| `EntityScanner.mapExitPositionBuffer` | Reusable buffer for wall tone suppression near exits |
 
 ---
 
@@ -295,6 +348,9 @@ Patch base `Popup.Open()`, use `TryCast<T>()` for type (GetType().Name returns "
 | Walk/Run (F1) | Patch `FieldKeyController.SetDashFlag` to cache flag. XOR with `ConfigSaveData.isAutoDash` to get effective run state |
 | Encounters (F3) | Read `CheatSettingsData.IsEnableEncount` property directly |
 | Enemy HP Display (F5) | `FFIII_ScreenReaderMod.EnemyHPDisplay` property (0=Numbers, 1=Percentage, 2=Hidden). Block toggle during battle via `MenuStateRegistry` |
+| Placeholder Entities | `IsPlaceholderEntity()` filters decorative/non-interactive overworld entities (stone statues, vehicle spawns, barrier markers, location markers tracked via map exits). 浮遊大陸 (Floating Continent) NOT filtered |
+| Item Quantity Display | `ItemMenuPatches.cs` and `BattleItemPatches.cs` format items as "Name quantity: Description" using `ItemListContentData.Count` |
+| Waypoint Name Default | New waypoint text field starts blank (not pre-filled with "Waypoint N"). Rename still shows current name |
 
 ---
 

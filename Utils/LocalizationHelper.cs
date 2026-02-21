@@ -8,7 +8,7 @@ namespace FFIII_ScreenReader.Utils
     /// Helper for retrieving localized text from the game's MessageManager.
     /// Consolidates the repeated MessageManager lookup pattern across multiple files.
     /// </summary>
-    public static class LocalizationHelper
+    internal static class LocalizationHelper
     {
         /// <summary>
         /// Gets localized text from MessageManager by message ID.

@@ -14,13 +14,8 @@ namespace FFIII_ScreenReader.Patches
     /// Hooks SubSceneManagerMainGame.ChangeState for event-driven map transition
     /// and battle state management instead of per-frame polling.
     /// </summary>
-    public static class GameStatePatches
+    internal static class GameStatePatches
     {
-        // Field states that indicate player is on the field map
-        private const int STATE_CHANGE_MAP = 1;
-        private const int STATE_FIELD_READY = 2;
-        private const int STATE_PLAYER = 3;
-        private const int STATE_BATTLE = 13;
 
         private static int lastAnnouncedMapId = -1;
 
@@ -39,7 +34,7 @@ namespace FFIII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(GameStatePatches), nameof(ChangeState_Postfix));
                     harmony.Patch(changeStateMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[GameState] Patched SubSceneManagerMainGame.ChangeState (event-driven map/battle transitions)");
+                    MelonLogger.Msg("[GameState] Patches applied");
                 }
                 else
                 {
@@ -63,7 +58,7 @@ namespace FFIII_ScreenReader.Patches
                 int stateValue = (int)state;
 
                 // When transitioning to field states, check for map changes and clear battle state
-                if (stateValue == STATE_FIELD_READY || stateValue == STATE_PLAYER || stateValue == STATE_CHANGE_MAP)
+                if (stateValue == IL2CppOffsets.GameState.STATE_FIELD_READY || stateValue == IL2CppOffsets.GameState.STATE_PLAYER || stateValue == IL2CppOffsets.GameState.STATE_CHANGE_MAP)
                 {
                     // Clear battle state when returning to field
                     ClearAllBattleState();
@@ -113,8 +108,6 @@ namespace FFIII_ScreenReader.Patches
 
                     // Force entity rescan to clear stale entities from previous map
                     FFIII_ScreenReaderMod.Instance?.ForceEntityRescan();
-
-                    MelonLogger.Msg($"[GameState] Map changed to {mapName} (ID: {currentMapId}), entities rescanned");
                 }
                 else if (lastAnnouncedMapId == -1)
                 {
@@ -133,10 +126,10 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         private static void ClearAllBattleState()
         {
-            BattleCommandState.ClearState();
+            BattleCommandState.IsActive = false;
             BattleTargetPatches.SetTargetSelectionActive(false);
-            BattleItemMenuState.Reset();
-            BattleMagicMenuState.Reset();
+            BattleItemMenuState.IsActive = false;
+            BattleMagicMenuState.IsActive = false;
         }
 
         /// <summary>

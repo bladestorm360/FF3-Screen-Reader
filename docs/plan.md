@@ -64,6 +64,27 @@ Screen reader accessibility mod for Final Fantasy III Pixel Remaster. TTS announ
 | F1 | Walk/Run toggle announcement |
 | F3 | Encounters on/off announcement |
 | F5 | Enemy HP display (Numbers/Percentage/Hidden) |
+| ` | Cycle waypoints |
+| Shift+` | Previous waypoint |
+| Ctrl+` | Navigate to waypoint |
+| Shift+/ | Add waypoint (blank name field) |
+| Ctrl+. | Rename waypoint |
+| Ctrl+/ | Delete waypoint |
+
+---
+
+## Architecture
+
+Post-refactoring file organization (~70 C# files):
+
+| Directory | Purpose | Key Files |
+|-----------|---------|-----------|
+| `Core/` | Main mod, input, audio, preferences, waypoints | `FFIII_ScreenReaderMod.cs`, `InputManager.cs`, `AudioLoopManager.cs`, `PreferencesManager.cs`, `WaypointController.cs`, `GameInfoAnnouncer.cs` |
+| `Core/Filters/` | Entity filter interface and implementations | `IEntityFilter.cs`, `PathfindingFilter.cs`, `ToLayerFilter.cs`, `CategoryFilter.cs` |
+| `Field/` | Entity scanning, navigation, pathfinding | `EntityScanner.cs`, `NavigableEntity.cs`, `WaypointEntity.cs`, `FieldNavigationHelper.cs`, `FilterContext.cs` |
+| `Menus/` | Menu text readers | `ConfigMenuReader.cs`, `ShopCommandReader.cs`, `StatusDetailsReader.cs`, `SaveSlotReader.cs` |
+| `Patches/` | All Harmony patches by game system | `BattleCommandPatches.cs`, `PopupPatches.cs`, `MessageWindowPatches.cs`, `MapTransitionPatches.cs`, etc. |
+| `Utils/` | Shared utilities | `IL2CppOffsets.cs`, `MenuStateRegistry.cs`, `MenuStateHelper.cs`, `GameObjectCache.cs`, `SoundPlayer.cs`, `AnnouncementDeduplicator.cs` |
 
 ---
 

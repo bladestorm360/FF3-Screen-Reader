@@ -22,7 +22,7 @@ namespace FFIII_ScreenReader.Menus
     /// Used in menus like Status, Magic, Equipment, etc.
     /// Extracts and announces: character name, job, level, HP, MP.
     /// </summary>
-    public static class CharacterSelectionReader
+    internal static class CharacterSelectionReader
     {
         /// <summary>
         /// Try to read character information from the current cursor position.

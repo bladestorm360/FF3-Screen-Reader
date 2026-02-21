@@ -9,7 +9,7 @@ namespace FFIII_ScreenReader.Utils
     /// Objects must be manually registered via Register() or RegisterMultiple() (e.g., in Awake/OnEnable).
     /// Thread-safe with automatic validation.
     /// </summary>
-    public static class GameObjectCache
+    internal static class GameObjectCache
     {
         // Cache for single instances (one per type)
         private static Dictionary<Type, UnityEngine.Object> singleCache = new Dictionary<Type, UnityEngine.Object>();
@@ -168,6 +168,32 @@ namespace FFIII_ScreenReader.Utils
                 }
 
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Gets a cached instance or falls back to FindObjectOfType and caches the result.
+        /// Use this to replace direct FindObjectOfType calls with cached versions.
+        /// </summary>
+        public static T GetOrFind<T>() where T : UnityEngine.Object
+        {
+            lock (lockObject)
+            {
+                Type type = typeof(T);
+
+                if (singleCache.TryGetValue(type, out var cached) && IsValid(cached))
+                {
+                    return cached as T;
+                }
+
+                // Cache miss or invalid - find and cache
+                singleCache.Remove(type);
+                T found = UnityEngine.Object.FindObjectOfType<T>();
+                if (found != null)
+                {
+                    singleCache[type] = found;
+                }
+                return found;
             }
         }
 

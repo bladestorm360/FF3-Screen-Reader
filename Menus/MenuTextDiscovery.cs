@@ -12,7 +12,7 @@ namespace FFIII_ScreenReader.Menus
     /// Core text discovery system that tries multiple strategies to find menu text.
     /// Ported from FFVI_MOD.
     /// </summary>
-    public static class MenuTextDiscovery
+    internal static class MenuTextDiscovery
     {
         /// <summary>
         /// Coroutine to wait one frame then read cursor position.
@@ -53,72 +53,56 @@ namespace FFIII_ScreenReader.Menus
         private static string TryAllStrategies(GameCursor cursor)
         {
             string menuText = null;
-            MelonLogger.Msg("[MenuTextDiscovery] ========== TryAllStrategies CALLED ==========");
 
             // Strategy 1: Save/Load slot information (check early - very specific)
-            MelonLogger.Msg("[MenuTextDiscovery] Trying Strategy 1: SaveSlotReader...");
             menuText = SaveSlotReader.TryReadSaveSlot(cursor.transform, cursor.Index);
             if (menuText != null)
             {
-                MelonLogger.Msg($"[MenuTextDiscovery] Strategy 1 SUCCESS: {menuText}");
                 return menuText;
             }
 
             // Strategy 2: Shop command menu (Buy/Sell/Equipment/Back)
-            MelonLogger.Msg("[MenuTextDiscovery] Trying Strategy 2: ShopCommandReader...");
             menuText = ShopCommandReader.TryReadShopCommand(cursor.transform, cursor.Index);
             if (menuText != null)
             {
-                MelonLogger.Msg($"[MenuTextDiscovery] Strategy 2 SUCCESS: {menuText}");
                 return menuText;
             }
 
             // Strategy 2.5: Ability command menu (Use/Learn/Remove/Exchange)
-            MelonLogger.Msg("[MenuTextDiscovery] Trying Strategy 2.5: AbilityCommandReader...");
             menuText = AbilityCommandReader.TryReadAbilityCommand(cursor.transform, cursor.Index);
             if (menuText != null)
             {
-                MelonLogger.Msg($"[MenuTextDiscovery] Strategy 2.5 SUCCESS: {menuText}");
                 return menuText;
             }
 
             // Strategy 3: Character selection (formation, status, magic, equipment, etc.)
-            MelonLogger.Msg("[MenuTextDiscovery] Trying Strategy 3: CharacterSelectionReader...");
             menuText = CharacterSelectionReader.TryReadCharacterSelection(cursor.transform, cursor.Index);
             if (menuText != null)
             {
-                MelonLogger.Msg($"[MenuTextDiscovery] Strategy 3 SUCCESS: {menuText}");
                 return menuText;
             }
 
             // Strategy 4: Walk up parent hierarchy looking for direct text components
-            MelonLogger.Msg("[MenuTextDiscovery] Trying Strategy 4: TryDirectTextSearch...");
             menuText = TryDirectTextSearch(cursor.transform);
             if (menuText != null)
             {
-                MelonLogger.Msg($"[MenuTextDiscovery] Strategy 4 SUCCESS: {menuText}");
                 return menuText;
             }
 
             // Strategy 5: Try to find text in Content list by cursor index
-            MelonLogger.Msg("[MenuTextDiscovery] Trying Strategy 5: TryContentListSearch...");
             menuText = TryContentListSearch(cursor);
             if (menuText != null)
             {
-                MelonLogger.Msg($"[MenuTextDiscovery] Strategy 5 SUCCESS: {menuText}");
                 return menuText;
             }
 
             // Strategy 6: Fallback with GetComponentInChildren
-            MelonLogger.Msg("[MenuTextDiscovery] Trying Strategy 6: TryFallbackTextSearch...");
             menuText = TryFallbackTextSearch(cursor.transform);
             if (menuText != null)
             {
-                MelonLogger.Msg($"[MenuTextDiscovery] Strategy 6 SUCCESS: {menuText}");
                 return menuText;
             }
 
-            MelonLogger.Msg("[MenuTextDiscovery] ALL STRATEGIES FAILED - no text found");
             return null;
         }
 

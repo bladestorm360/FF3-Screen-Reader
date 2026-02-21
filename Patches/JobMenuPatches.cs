@@ -25,42 +25,24 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Helper state for job menu announcements.
     /// </summary>
-    public static class JobMenuState
+    internal static class JobMenuState
     {
-        /// <summary>
-        /// True when job menu is active and handling announcements.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.JOB_MENU, "JobMenu.Select", "JobMenu.Index");
+
+        static JobMenuState()
+        {
+            _helper.RegisterResetHandler();
+        }
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.JOB_MENU);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.JOB_MENU, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
-        /// <summary>
-        /// Returns true if generic cursor reading should be suppressed.
-        /// State is cleared by transition patches when menu closes.
-        /// </summary>
         public static bool ShouldSuppress() => IsActive;
-
-        private const string CONTEXT = "JobMenu.Select";
-        private const string CONTEXT_INDEX = "JobMenu.Index";
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT, announcement);
-        }
-
-        public static bool IsNewJobIndex(int index)
-        {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_INDEX, index);
-        }
-
-        public static void ResetState()
-        {
-            IsActive = false;
-            AnnouncementDeduplicator.Reset(CONTEXT, CONTEXT_INDEX);
-        }
+        public static bool ShouldAnnounce(string announcement) => _helper.ShouldAnnounce(announcement);
+        public static bool IsNewJobIndex(int index) => _helper.ShouldAnnounce(1, index);
 
         /// <summary>
         /// Gets the localized job name from a Job master data object.
@@ -81,10 +63,9 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                var jobView = UnityEngine.Object.FindObjectOfType<KeyInputJobChangeWindowView>();
+                var jobView = GameObjectCache.GetOrFind<KeyInputJobChangeWindowView>();
                 if (jobView == null)
                 {
-                    MelonLogger.Msg("[Job Debug] JobChangeWindowView not found");
                     return -1;
                 }
 
@@ -98,17 +79,15 @@ namespace FFIII_ScreenReader.Patches
                     {
                         var textComponent = new UnityEngine.UI.Text(textPtr);
                         string levelText = textComponent.text;
-                        MelonLogger.Msg($"[Job Debug] InfoSkillLevelValueText.text = '{levelText}'");
-
                         if (!string.IsNullOrEmpty(levelText) && int.TryParse(levelText, out int level))
                         {
                             return level;
                         }
                     }
                 }
-                catch (Exception ex)
+                catch
                 {
-                    MelonLogger.Msg($"[Job Debug] Failed to read InfoSkillLevelValueText: {ex.Message}");
+                    // Failed to read InfoSkillLevelValueText
                 }
 
                 // Fallback: try SkillLevelValueText (offset 0x68)
@@ -120,17 +99,15 @@ namespace FFIII_ScreenReader.Patches
                     {
                         var textComponent = new UnityEngine.UI.Text(textPtr);
                         string levelText = textComponent.text;
-                        MelonLogger.Msg($"[Job Debug] SkillLevelValueText.text = '{levelText}'");
-
                         if (!string.IsNullOrEmpty(levelText) && int.TryParse(levelText, out int level))
                         {
                             return level;
                         }
                     }
                 }
-                catch (Exception ex)
+                catch
                 {
-                    MelonLogger.Msg($"[Job Debug] Failed to read SkillLevelValueText: {ex.Message}");
+                    // Failed to read SkillLevelValueText
                 }
 
                 return -1;
@@ -210,7 +187,7 @@ namespace FFIII_ScreenReader.Patches
     /// Patches for job menu - announces job name and level when navigating.
     /// Uses manual Harmony patching due to FF3's IL2CPP constraints.
     /// </summary>
-    public static class JobMenuPatches
+    internal static class JobMenuPatches
     {
         private static bool isPatched = false;
 
@@ -252,7 +229,7 @@ namespace FFIII_ScreenReader.Patches
         {
             if (!isActive)
             {
-                JobMenuState.ResetState();
+                JobMenuState.IsActive = false;
             }
         }
 
@@ -276,7 +253,6 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Job Menu] Patched UpdateJobInfo successfully");
                 }
                 else
                 {
@@ -321,7 +297,6 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Job Menu] Patched SelectContent successfully");
                 }
                 else
                 {
@@ -352,7 +327,6 @@ namespace FFIII_ScreenReader.Patches
                 string jobName = JobMenuState.GetJobName(targetJob);
                 if (string.IsNullOrEmpty(jobName))
                 {
-                    MelonLogger.Msg($"[Job Menu] Could not get job name for job ID {targetJob.Id}");
                     return;
                 }
 
@@ -373,10 +347,8 @@ namespace FFIII_ScreenReader.Patches
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 // Also clear other menu states to prevent conflicts
-                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Job");
-                JobMenuState.IsActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.JOB_MENU);
 
-                MelonLogger.Msg($"[Job Menu] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -394,10 +366,7 @@ namespace FFIII_ScreenReader.Patches
             try
             {
                 // Just track the index change - UpdateJobInfo will handle the announcement
-                if (JobMenuState.IsNewJobIndex(index))
-                {
-                    MelonLogger.Msg($"[Job Menu] SelectContent: index={index}");
-                }
+                JobMenuState.IsNewJobIndex(index);
             }
             catch (Exception ex)
             {

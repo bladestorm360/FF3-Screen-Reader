@@ -12,7 +12,7 @@ namespace FFIII_ScreenReader.Utils
     /// Translates Japanese entity names to English using a JSON dictionary.
     /// Loaded from UserData/FFIII_ScreenReader/FF3_translations.json
     /// </summary>
-    public static class EntityTranslator
+    internal static class EntityTranslator
     {
         private static Dictionary<string, string> translations = new Dictionary<string, string>();
         private static bool isInitialized = false;
@@ -46,7 +46,6 @@ namespace FFIII_ScreenReader.Utils
                 if (!Directory.Exists(userDataPath))
                 {
                     Directory.CreateDirectory(userDataPath);
-                    MelonLogger.Msg($"[EntityTranslator] Created directory: {userDataPath}");
                 }
 
                 // Load or create translations file
@@ -56,9 +55,7 @@ namespace FFIII_ScreenReader.Utils
                 }
                 else
                 {
-                    // Create empty translations file
                     File.WriteAllText(translationsPath, "{\n}");
-                    MelonLogger.Msg($"[EntityTranslator] Created empty translations file: {translationsPath}");
                 }
 
                 isInitialized = true;
@@ -79,7 +76,6 @@ namespace FFIII_ScreenReader.Utils
             {
                 string json = File.ReadAllText(translationsPath);
                 translations = ParseJsonDictionary(json);
-                MelonLogger.Msg($"[EntityTranslator] Loaded {translations.Count} translations from {translationsPath}");
             }
             catch (Exception ex)
             {
@@ -296,7 +292,6 @@ namespace FFIII_ScreenReader.Utils
                 WriteNestedJson(dumpPath, existingData);
 
                 int count = mapNames.Count;
-                MelonLogger.Msg($"[EntityTranslator] Dumped {count} names for {currentMap} to: {dumpPath}");
                 return $"Dumped {count} names for {currentMap}";
             }
             catch (Exception ex)

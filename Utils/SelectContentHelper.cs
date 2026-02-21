@@ -7,7 +7,7 @@ namespace FFIII_ScreenReader.Utils
     /// Helper for SelectContent/SetCursor patch boilerplate.
     /// Consolidates common list validation and item retrieval patterns.
     /// </summary>
-    public static class SelectContentHelper
+    internal static class SelectContentHelper
     {
         /// <summary>
         /// Validates index bounds and retrieves item from an IL2CPP List.

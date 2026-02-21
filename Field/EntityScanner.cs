@@ -26,17 +26,21 @@ namespace FFIII_ScreenReader.Field
     /// <summary>
     /// Scans the field map for navigable entities and maintains a list of them.
     /// </summary>
-    public class EntityScanner
+    internal class EntityScanner
     {
         private List<NavigableEntity> entities = new List<NavigableEntity>();
         private int currentIndex = 0;
         private EntityCategory currentCategory = EntityCategory.All;
         private List<NavigableEntity> filteredEntities = new List<NavigableEntity>();
         private PathfindingFilter pathfindingFilter = new PathfindingFilter();
+        private ToLayerFilter toLayerFilter = new ToLayerFilter();
 
         // Incremental scanning: map FieldEntity to its NavigableEntity conversion
         // This avoids re-converting the same entities every scan
         private Dictionary<FieldEntity, NavigableEntity> entityMap = new Dictionary<FieldEntity, NavigableEntity>();
+
+        // Reusable buffer for GetMapExitPositions to avoid allocation per call
+        private List<Vector3> mapExitPositionBuffer = new List<Vector3>();
 
         // Track selected entity by identifier to maintain focus across re-sorts
         private Vector3? selectedEntityPosition = null;
@@ -54,6 +58,20 @@ namespace FFIII_ScreenReader.Field
         }
 
         /// <summary>
+        /// Whether to filter out ToLayer (layer transition) entities.
+        /// When enabled, staircase/ladder transitions are hidden from the entity list.
+        /// </summary>
+        public bool FilterToLayer
+        {
+            get => toLayerFilter.IsEnabled;
+            set
+            {
+                toLayerFilter.IsEnabled = value;
+                ApplyFilter();
+            }
+        }
+
+        /// <summary>
         /// Current list of entities (filtered by category)
         /// </summary>
         public List<NavigableEntity> Entities => filteredEntities;
@@ -65,13 +83,13 @@ namespace FFIII_ScreenReader.Field
         /// </summary>
         public List<Vector3> GetMapExitPositions()
         {
-            var positions = new List<Vector3>();
+            mapExitPositionBuffer.Clear();
             foreach (var entity in entities)
             {
                 if (entity is MapExitEntity)
-                    positions.Add(entity.Position);
+                    mapExitPositionBuffer.Add(entity.Position);
             }
-            return positions;
+            return mapExitPositionBuffer;
         }
 
         /// <summary>
@@ -250,6 +268,13 @@ namespace FFIII_ScreenReader.Field
             else
             {
                 filteredEntities = entities.Where(e => e.Category == currentCategory).ToList();
+            }
+
+            // Apply ToLayer filter (OnAdd timing - filters during list building)
+            if (toLayerFilter.IsEnabled)
+            {
+                var context = new FilterContext();
+                filteredEntities = filteredEntities.Where(e => toLayerFilter.PassesFilter(e, context)).ToList();
             }
 
             // Sort by distance from player

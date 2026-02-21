@@ -18,11 +18,8 @@ namespace FFIII_ScreenReader.Patches
     /// Tracks battle pause menu state by reading game memory directly.
     /// When active, bypasses BattleCommandState suppression so MenuTextDiscovery can read.
     /// </summary>
-    public static class BattlePauseState
+    internal static class BattlePauseState
     {
-        // Memory offsets
-        private const int OFFSET_PAUSE_CONTROLLER = 0x90;  // BattleUIManager.pauseController
-        private const int OFFSET_IS_ACTIVE_PAUSE_MENU = 0x71;  // BattlePauseController.isActivePauseMenu
 
         /// <summary>
         /// Checks if battle pause menu is active by reading game memory directly.
@@ -44,11 +41,11 @@ namespace FFIII_ScreenReader.Patches
 
                     // Read pauseController pointer at offset 0x90
                     IntPtr uiManagerPtr = uiManager.Pointer;
-                    IntPtr pauseControllerPtr = Marshal.ReadIntPtr(uiManagerPtr + OFFSET_PAUSE_CONTROLLER);
+                    IntPtr pauseControllerPtr = Marshal.ReadIntPtr(uiManagerPtr + IL2CppOffsets.BattlePause.OFFSET_PAUSE_CONTROLLER);
                     if (pauseControllerPtr == IntPtr.Zero) return false;
 
                     // Read isActivePauseMenu bool at offset 0x71
-                    byte isActive = Marshal.ReadByte(pauseControllerPtr + OFFSET_IS_ACTIVE_PAUSE_MENU);
+                    byte isActive = Marshal.ReadByte(pauseControllerPtr + IL2CppOffsets.BattlePause.OFFSET_IS_ACTIVE_PAUSE_MENU);
                     return isActive != 0;
                 }
                 catch
@@ -70,14 +67,8 @@ namespace FFIII_ScreenReader.Patches
     /// State is tracked via direct memory read, not patches.
     /// Also handles popup button reading during battle.
     /// </summary>
-    public static class BattlePausePatches
+    internal static class BattlePausePatches
     {
-        // Memory offsets for CommonPopup (KeyInput) - from dump.cs line 462058
-        private const int OFFSET_SELECT_CURSOR = 0x68;    // Cursor selectCursor
-        private const int OFFSET_COMMAND_LIST = 0x70;     // List<CommonCommand> commandList
-
-        // Memory offset for CommonCommand - from dump.cs line 434249
-        private const int OFFSET_COMMAND_TEXT = 0x18;     // Text text
 
         // Track last announced button to avoid duplicates
         private static int lastAnnouncedButtonIndex = -1;
@@ -91,9 +82,6 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[Battle Pause] Applying battle pause menu patches...");
-                MelonLogger.Msg("[Battle Pause] Using direct memory read for pause state detection");
-
                 // Patch CommonPopup.UpdateFocus for popup button reading during battle
                 TryPatchCommonPopupUpdateFocus(harmony);
             }
@@ -118,7 +106,7 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(BattlePausePatches).GetMethod(nameof(CommonPopup_UpdateFocus_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(updateFocusMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Pause] Patched CommonPopup.UpdateFocus for popup button reading");
+                    MelonLogger.Msg("[Battle Pause] Patches applied");
                 }
                 else
                 {
@@ -147,7 +135,7 @@ namespace FFIII_ScreenReader.Patches
                 if (popupPtr == IntPtr.Zero) return;
 
                 // Read selectCursor at offset 0x68
-                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + OFFSET_SELECT_CURSOR);
+                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.BattlePause.OFFSET_SELECT_CURSOR);
                 if (cursorPtr == IntPtr.Zero) return;
 
                 var cursor = new GameCursor(cursorPtr);
@@ -160,7 +148,7 @@ namespace FFIII_ScreenReader.Patches
                 lastAnnouncedButtonIndex = cursorIndex;
 
                 // Read commandList at offset 0x70
-                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + OFFSET_COMMAND_LIST);
+                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.BattlePause.OFFSET_COMMAND_LIST);
                 if (listPtr == IntPtr.Zero) return;
 
                 // IL2CPP List: _size at 0x18, _items at 0x10
@@ -175,7 +163,7 @@ namespace FFIII_ScreenReader.Patches
                 if (commandPtr == IntPtr.Zero) return;
 
                 // Read text at offset 0x18
-                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + OFFSET_COMMAND_TEXT);
+                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + IL2CppOffsets.BattlePause.OFFSET_COMMAND_TEXT);
                 if (textPtr == IntPtr.Zero) return;
 
                 var textComponent = new UnityEngine.UI.Text(textPtr);
@@ -184,7 +172,6 @@ namespace FFIII_ScreenReader.Patches
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    MelonLogger.Msg($"[Battle Pause] Popup button: {buttonText}");
                     FFIII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
                 }
             }

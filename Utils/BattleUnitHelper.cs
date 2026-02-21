@@ -8,7 +8,7 @@ namespace FFIII_ScreenReader.Utils
     /// Helper for resolving battle unit names (players and enemies).
     /// Consolidates duplicate TryCast logic from BattleMessagePatches.cs.
     /// </summary>
-    public static class BattleUnitHelper
+    internal static class BattleUnitHelper
     {
         /// <summary>
         /// Gets the display name for a battle unit (player or enemy).

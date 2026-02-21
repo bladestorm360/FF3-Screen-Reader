@@ -14,7 +14,7 @@ namespace FFIII_ScreenReader.Patches
     /// when the landing UI should be shown/hidden based on terrain under the vehicle.
     /// Uses manual Harmony patching (FF3 requirement - attribute patches crash).
     /// </summary>
-    public static class VehicleLandingPatches
+    internal static class VehicleLandingPatches
     {
         private static bool isPatched = false;
         private static bool lastLandableState = false;
@@ -72,7 +72,7 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Landing] Patched ShowLandingGuide successfully");
+                    MelonLogger.Msg("[Landing] Patches applied");
                 }
                 else
                 {
@@ -115,7 +115,6 @@ namespace FFIII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Landing] Patched SwitchLandable successfully");
                 }
                 else
                 {

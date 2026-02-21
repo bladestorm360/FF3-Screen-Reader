@@ -9,6 +9,7 @@ using Il2CppLast.Battle;
 using Il2CppSerial.FF3.UI.KeyInput;
 using Il2CppSerial.Template.UI.KeyInput;
 using FFIII_ScreenReader.Core;
+using FFIII_ScreenReader.Utils;
 
 namespace FFIII_ScreenReader.Menus
 {
@@ -17,7 +18,7 @@ namespace FFIII_ScreenReader.Menus
     /// Provides stat reading functions for physical and magical stats.
     /// Ported from FF5 screen reader.
     /// </summary>
-    public static class StatusDetailsReader
+    internal static class StatusDetailsReader
     {
         private static OwnedCharacterData currentCharacterData = null;
 
@@ -192,7 +193,7 @@ namespace FFIII_ScreenReader.Menus
     /// <summary>
     /// Definition of a single stat that can be navigated
     /// </summary>
-    public class StatusStatDefinition
+    internal class StatusStatDefinition
     {
         public string Name { get; set; }
         public StatGroup Group { get; set; }
@@ -209,7 +210,7 @@ namespace FFIII_ScreenReader.Menus
     /// <summary>
     /// Tracks navigation state within the status screen for arrow key navigation
     /// </summary>
-    public class StatusNavigationTracker
+    internal class StatusNavigationTracker
     {
         private static StatusNavigationTracker instance = null;
         public static StatusNavigationTracker Instance
@@ -255,7 +256,7 @@ namespace FFIII_ScreenReader.Menus
     /// <summary>
     /// Handles navigation through status screen stats using arrow keys
     /// </summary>
-    public static class StatusNavigationReader
+    internal static class StatusNavigationReader
     {
         private static List<StatusStatDefinition> statList = null;
         // Group start indices: CharacterInfo=0, Vitals=6, Attributes=16, CombatStats=21
@@ -616,7 +617,6 @@ namespace FFIII_ScreenReader.Menus
 
                 // Use BattleUtility.GetJobLevel - the game's own calculation method
                 int jobLevel = BattleUtility.GetJobLevel(data);
-                MelonLogger.Msg($"[Status Job Debug] BattleUtility.GetJobLevel returned: {jobLevel}");
 
                 if (jobLevel > 0)
                 {
@@ -711,12 +711,6 @@ namespace FFIII_ScreenReader.Menus
         }
 
         // Combat stat readers
-        // Memory offsets for UI reading
-        private const int OFFSET_CONTENT_LIST = 0x48;        // StatusDetailsControllerBase.contentList
-        private const int OFFSET_PARAM_TYPE = 0x18;          // ParameterContentController.type
-        private const int OFFSET_PARAM_VIEW = 0x20;          // ParameterContentController.view
-        private const int OFFSET_MULTIPLIED_VALUE_TEXT = 0x28; // ParameterContentView.multipliedValueText
-        private const int PARAMETER_TYPE_ATTACK = 10;        // ParameterType.Attack
 
         /// <summary>
         /// Try to read attack count from the UI view.
@@ -742,17 +736,17 @@ namespace FFIII_ScreenReader.Menus
                     int paramType;
                     unsafe
                     {
-                        paramType = *(int*)((byte*)controllerPtr + OFFSET_PARAM_TYPE);
+                        paramType = *(int*)((byte*)controllerPtr + IL2CppOffsets.StatusDetails.OFFSET_PARAM_TYPE);
                     }
 
-                    if (paramType != PARAMETER_TYPE_ATTACK)
+                    if (paramType != IL2CppOffsets.StatusDetails.PARAMETER_TYPE_ATTACK)
                         continue;
 
                     // Found Attack parameter - read the view at offset 0x20
                     IntPtr viewPtr;
                     unsafe
                     {
-                        viewPtr = *(IntPtr*)((byte*)controllerPtr + OFFSET_PARAM_VIEW);
+                        viewPtr = *(IntPtr*)((byte*)controllerPtr + IL2CppOffsets.StatusDetails.OFFSET_PARAM_VIEW);
                     }
                     if (viewPtr == IntPtr.Zero)
                         return -1;
@@ -761,7 +755,7 @@ namespace FFIII_ScreenReader.Menus
                     IntPtr textPtr;
                     unsafe
                     {
-                        textPtr = *(IntPtr*)((byte*)viewPtr + OFFSET_MULTIPLIED_VALUE_TEXT);
+                        textPtr = *(IntPtr*)((byte*)viewPtr + IL2CppOffsets.StatusDetails.OFFSET_MULTIPLIED_VALUE_TEXT);
                     }
                     if (textPtr == IntPtr.Zero)
                         return -1;

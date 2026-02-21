@@ -9,12 +9,12 @@ namespace FFIII_ScreenReader.Core
     /// Returns the name of the active state that should suppress cursor reading,
     /// or null if no suppression needed.
     /// </summary>
-    public static class CursorSuppressionCheck
+    internal static class CursorSuppressionCheck
     {
         /// <summary>
         /// Result of a suppression check.
         /// </summary>
-        public class SuppressionResult
+        internal class SuppressionResult
         {
             public bool ShouldSuppress { get; set; }
             public string StateName { get; set; }

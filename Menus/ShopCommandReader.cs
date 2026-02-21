@@ -11,7 +11,7 @@ namespace FFIII_ScreenReader.Menus
     /// Called by MenuTextDiscovery when navigating the shop command bar.
     /// Uses hierarchy traversal from cursor position for fast lookups.
     /// </summary>
-    public static class ShopCommandReader
+    internal static class ShopCommandReader
     {
         /// <summary>
         /// Try to read shop command menu text.

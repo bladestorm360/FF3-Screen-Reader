@@ -32,49 +32,38 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// State tracker for magic menu with proper suppression pattern.
     /// </summary>
-    public static class MagicMenuState
+    internal static class MagicMenuState
     {
-        // Track last announced spell ID to prevent duplicates
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.MAGIC_MENU);
         private static int lastSpellId = -1;
-
-        // Cache the current character for charge lookup
         private static OwnedCharacterData _currentCharacter = null;
 
-        /// <summary>
-        /// True when spell list has focus (SetFocus(true) was called).
-        /// Only suppresses GenericCursor when spell list is actually focused.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        static MagicMenuState()
+        {
+            _helper.RegisterResetHandler(() =>
+            {
+                lastSpellId = -1;
+                _currentCharacter = null;
+            });
+        }
+
         public static bool IsSpellListActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.MAGIC_MENU);
-            private set => MenuStateRegistry.SetActive(MenuStateRegistry.MAGIC_MENU, value);
+            get => _helper.IsActive;
+            private set => _helper.IsActive = value;
         }
 
-        /// <summary>
-        /// Called when SetFocus(true) is received - spell list gained focus.
-        /// </summary>
         public static void OnSpellListFocused()
         {
-            // Clear other menu states to prevent conflicts
-            FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Magic");
-            IsSpellListActive = true;
-            lastSpellId = -1; // Reset to announce first spell
+            _helper.SetActiveExclusive();
+            lastSpellId = -1;
         }
 
-        /// <summary>
-        /// Called when SetFocus(false) is received - spell list lost focus.
-        /// </summary>
         public static void OnSpellListUnfocused()
         {
             IsSpellListActive = false;
-            lastSpellId = -1;
-            _currentCharacter = null;
         }
 
-        /// <summary>
-        /// The current character for charge lookups.
-        /// </summary>
         public static OwnedCharacterData CurrentCharacter
         {
             get => _currentCharacter;
@@ -90,11 +79,9 @@ namespace FFIII_ScreenReader.Patches
             if (!IsSpellListActive)
                 return false;
 
-            // Validate we're actually in a submenu, not command bar
             int state = GetWindowControllerState();
-            if (state == STATE_COMMAND || state == 0)
+            if (state == IL2CppOffsets.Magic.STATE_COMMAND || state == 0)
             {
-                // At command bar or menu closing - clear state and don't suppress
                 ResetState();
                 return false;
             }
@@ -102,30 +89,14 @@ namespace FFIII_ScreenReader.Patches
             return true;
         }
 
-        // AbilityWindowController.State enum values (from dump.cs line 281758)
-        public const int STATE_USE_LIST = 1;      // Use mode spell list
-        public const int STATE_MEMORIZE_LIST = 3; // Learn mode spell list
-        public const int STATE_REMOVE_LIST = 4;   // Remove mode spell list
-        private const int STATE_COMMAND = 7;       // Command menu state
-
-        // State machine offset for AbilityWindowController
-        private const int OFFSET_STATE_MACHINE = 0x88;
-
-        /// <summary>
-        /// Gets the current state from AbilityWindowController's state machine.
-        /// Returns -1 if unable to read state.
-        /// </summary>
         public static int GetWindowControllerState()
         {
-            var windowController = UnityEngine.Object.FindObjectOfType<AbilityWindowController>();
+            var windowController = GameObjectCache.GetOrFind<AbilityWindowController>();
             if (windowController == null || !windowController.gameObject.activeInHierarchy)
                 return -1;
-            return StateReaderHelper.ReadStateTag(windowController.Pointer, OFFSET_STATE_MACHINE);
+            return StateReaderHelper.ReadStateTag(windowController.Pointer, IL2CppOffsets.Magic.OFFSET_STATE_MACHINE);
         }
 
-        /// <summary>
-        /// Checks if spell should be announced (changed from last).
-        /// </summary>
         public static bool ShouldAnnounceSpell(int spellId)
         {
             if (spellId == lastSpellId)
@@ -134,14 +105,9 @@ namespace FFIII_ScreenReader.Patches
             return true;
         }
 
-        /// <summary>
-        /// Resets all tracking state.
-        /// </summary>
         public static void ResetState()
         {
             IsSpellListActive = false;
-            lastSpellId = -1;
-            _currentCharacter = null;
         }
 
         /// <summary>
@@ -238,22 +204,9 @@ namespace FFIII_ScreenReader.Patches
     /// Patches for magic menu using manual Harmony patching.
     /// Uses SetCursor to detect navigation, then finds focused content by iterating.
     /// </summary>
-    public static class MagicMenuPatches
+    internal static class MagicMenuPatches
     {
         private static bool isPatched = false;
-
-        // Memory offsets from dump.cs (Serial.FF3.UI.KeyInput.AbilityContentListController)
-        private const int OFFSET_DATA_LIST = 0x38;         // List<OwnedAbility> dataList (spells for Use/Remove)
-        private const int OFFSET_ABILITY_ITEM_LIST = 0x40; // List<OwnedItemData> abilityItemList (spell tomes for Learn)
-        private const int OFFSET_CONTENT_LIST = 0x60;      // List<BattleAbilityInfomationContentController> contentList
-        private const int OFFSET_TARGET_CHARACTER = 0x98;  // OwnedCharacterData targetCharacterData
-
-        // Memory offset from dump.cs (Serial.FF3.UI.KeyInput.AbilityWindowController)
-        // Note: "isLearnigItem" is a typo in the game code
-        private const int OFFSET_IS_LEARNING_ITEM = 0xA8;  // bool isLearnigItem (true = Learn mode)
-
-        // AbilityWindowController.State enum values (from dump.cs line 281758)
-        private const int STATE_COMMAND = 7;  // Command menu state (used by SetNextState_Postfix)
 
         /// <summary>
         /// Apply manual Harmony patches for magic menu.
@@ -308,7 +261,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(UpdateController_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(updateControllerMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Magic Menu] Patched AbilityContentListController.UpdateController for state tracking");
                 }
                 else
                 {
@@ -340,7 +292,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(SetCursor_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setCursorMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Magic Menu] Patched AbilityContentListController.SetCursor for spell navigation");
                 }
                 else
                 {
@@ -372,7 +323,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(SetNextState_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Magic Menu] Patched AbilityWindowController.SetNextState for state transitions");
                 }
                 else
                 {
@@ -412,7 +362,6 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(AbilityUseSetCursor_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setCursorMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Magic Menu] Patched AbilityUseContentListController.SetCursor for target selection");
                 }
                 else
                 {
@@ -498,10 +447,9 @@ namespace FFIII_ScreenReader.Patches
                 }
 
                 // Skip duplicates using deduplicator
-                if (!AnnouncementDeduplicator.ShouldAnnounce("MagicTarget", announcement))
+                if (!AnnouncementDeduplicator.ShouldAnnounce(AnnouncementContexts.MAGIC_TARGET, announcement))
                     return;
 
-                MelonLogger.Msg($"[Magic Target] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -520,12 +468,9 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[Magic Menu] SetNextState called with state={state}, IsSpellListActive={MagicMenuState.IsSpellListActive}");
-
                 // Clear state when returning to command bar (7) or menu closing (0)
-                if ((state == STATE_COMMAND || state == 0) && MagicMenuState.IsSpellListActive)
+                if ((state == IL2CppOffsets.Magic.STATE_COMMAND || state == 0) && MagicMenuState.IsSpellListActive)
                 {
-                    MelonLogger.Msg($"[Magic Menu] Clearing state - transitioning to command bar or closing");
                     MagicMenuState.OnSpellListUnfocused();
                 }
             }
@@ -551,7 +496,7 @@ namespace FFIII_ScreenReader.Patches
                 // COMMENTED OUT: State machine validation - clearing now handled by SetNextState_Postfix
                 // The raw pointer state machine reading was unreliable.
                 // int currentState = GetWindowControllerState();
-                // if (currentState == STATE_COMMAND || currentState == 0)
+                // if (currentState == IL2CppOffsets.Magic.STATE_COMMAND || currentState == 0)
                 // {
                 //     // At command bar or menu closing - ensure flag is cleared
                 //     if (MagicMenuState.IsSpellListActive)
@@ -575,7 +520,7 @@ namespace FFIII_ScreenReader.Patches
                     {
                         unsafe
                         {
-                            IntPtr charPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_TARGET_CHARACTER);
+                            IntPtr charPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_TARGET_CHARACTER);
                             if (charPtr != IntPtr.Zero)
                             {
                                 MagicMenuState.CurrentCharacter = new OwnedCharacterData(charPtr);
@@ -609,41 +554,25 @@ namespace FFIII_ScreenReader.Patches
                     return;
 
                 int cursorIndex = targetCursor.Index;
-                MelonLogger.Msg($"[Magic Menu] SetCursor called, index: {cursorIndex}");
 
                 IntPtr controllerPtr = controller.Pointer;
                 if (controllerPtr == IntPtr.Zero)
                     return;
 
                 // Use state machine to determine which list to read from
-                // State 3 (MemorizeList) = Learn mode → abilityItemList
-                // State 1 (UseList) or 4 (RemoveList) = Use/Remove mode → contentList
+                // State 3 (MemorizeList) = Learn mode �?abilityItemList
+                // State 1 (UseList) or 4 (RemoveList) = Use/Remove mode �?contentList
                 int state = MagicMenuState.GetWindowControllerState();
-                MelonLogger.Msg($"[Magic Menu] Current state: {state}");
 
-                if (state == MagicMenuState.STATE_MEMORIZE_LIST)
+                if (state == IL2CppOffsets.Magic.STATE_MEMORIZE_LIST)
                 {
                     // Learn mode - use abilityItemList (spell tomes)
-                    if (TryAnnounceFromItemList(controllerPtr, cursorIndex))
-                    {
-                        MelonLogger.Msg("[Magic Menu] Announced from abilityItemList (Learn mode)");
-                    }
-                    else
-                    {
-                        MelonLogger.Msg("[Magic Menu] Learn mode: abilityItemList empty or invalid");
-                    }
+                    TryAnnounceFromItemList(controllerPtr, cursorIndex);
                 }
-                else if (state == MagicMenuState.STATE_USE_LIST || state == MagicMenuState.STATE_REMOVE_LIST)
+                else if (state == IL2CppOffsets.Magic.STATE_USE_LIST || state == IL2CppOffsets.Magic.STATE_REMOVE_LIST)
                 {
                     // Use/Remove mode - use contentList (owned spells)
-                    if (TryAnnounceFromContentList(controllerPtr, cursorIndex))
-                    {
-                        MelonLogger.Msg("[Magic Menu] Announced from contentList (Use/Remove mode)");
-                    }
-                    else
-                    {
-                        MelonLogger.Msg("[Magic Menu] Use/Remove mode: contentList empty or invalid");
-                    }
+                    TryAnnounceFromContentList(controllerPtr, cursorIndex);
                 }
                 else
                 {
@@ -673,7 +602,7 @@ namespace FFIII_ScreenReader.Patches
                 IntPtr contentListPtr;
                 unsafe
                 {
-                    contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_CONTENT_LIST);
+                    contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_CONTENT_LIST);
                 }
 
                 if (contentListPtr == IntPtr.Zero)
@@ -723,7 +652,7 @@ namespace FFIII_ScreenReader.Patches
                 IntPtr itemListPtr;
                 unsafe
                 {
-                    itemListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_ABILITY_ITEM_LIST);
+                    itemListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_ABILITY_ITEM_LIST);
                 }
 
                 if (itemListPtr == IntPtr.Zero)
@@ -763,7 +692,6 @@ namespace FFIII_ScreenReader.Patches
                 if (!MagicMenuState.ShouldAnnounceSpell(announcement.GetHashCode()))
                     return true; // Valid but deduplicated
 
-                MelonLogger.Msg($"[Magic Menu] Learn announcing: {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 return true;
             }
@@ -785,22 +713,16 @@ namespace FFIII_ScreenReader.Patches
                 IntPtr contentListPtr;
                 unsafe
                 {
-                    contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_CONTENT_LIST);
+                    contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_CONTENT_LIST);
                 }
 
                 if (contentListPtr == IntPtr.Zero)
-                {
-                    MelonLogger.Msg("[Magic Menu] contentList is null");
                     return;
-                }
 
                 var contentList = new Il2CppSystem.Collections.Generic.List<BattleAbilityInfomationContentController>(contentListPtr);
 
                 if (index < 0 || index >= contentList.Count)
-                {
-                    MelonLogger.Msg($"[Magic Menu] Index {index} out of range (count={contentList.Count})");
                     return;
-                }
 
                 var contentController = contentList[index];
                 if (contentController == null)
@@ -838,22 +760,16 @@ namespace FFIII_ScreenReader.Patches
                 IntPtr itemListPtr;
                 unsafe
                 {
-                    itemListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_ABILITY_ITEM_LIST);
+                    itemListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_ABILITY_ITEM_LIST);
                 }
 
                 if (itemListPtr == IntPtr.Zero)
-                {
-                    MelonLogger.Msg("[Magic Menu] abilityItemList is null");
                     return;
-                }
 
                 var itemList = new Il2CppSystem.Collections.Generic.List<OwnedItemData>(itemListPtr);
 
                 if (index < 0 || index >= itemList.Count)
-                {
-                    MelonLogger.Msg($"[Magic Menu] Learn index {index} out of range (count={itemList.Count})");
                     return;
-                }
 
                 var itemData = itemList[index];
                 if (itemData == null)
@@ -883,7 +799,6 @@ namespace FFIII_ScreenReader.Patches
                 if (!MagicMenuState.ShouldAnnounceSpell(announcement.GetHashCode()))
                     return;
 
-                MelonLogger.Msg($"[Magic Menu] Learn announcing: {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -899,7 +814,6 @@ namespace FFIII_ScreenReader.Patches
         {
             if (MagicMenuState.ShouldAnnounceSpell(-1)) // -1 as ID for empty
             {
-                MelonLogger.Msg("[Magic Menu] Announcing: Empty");
                 FFIII_ScreenReaderMod.SpeakText("Empty", interrupt: true);
             }
         }

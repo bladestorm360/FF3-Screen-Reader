@@ -18,16 +18,8 @@ namespace FFIII_ScreenReader.Patches
     /// Battle start patches for announcing battle conditions.
     /// Handles: "Preemptive Attack!", "Back Attack!", "Ambush!", etc.
     /// </summary>
-    public static class BattleStartPatches
+    internal static class BattleStartPatches
     {
-        // PreeMptiveState enum values
-        private const int STATE_NON = -1;
-        private const int STATE_NORMAL = 0;
-        private const int STATE_PREEMPTIVE = 1;
-        private const int STATE_BACK_ATTACK = 2;
-        private const int STATE_ENEMY_PREEMPTIVE = 3;
-        private const int STATE_ENEMY_SIDE_ATTACK = 4;
-        private const int STATE_SIDE_ATTACK = 5;
 
         private static bool announcedBattleStart = false;
 
@@ -35,8 +27,6 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[Battle Start] Applying battle start patches...");
-
                 // Patch StartPreeMptiveMes for battle condition announcements
                 PatchStartPreeMptiveMes(harmony);
 
@@ -55,8 +45,8 @@ namespace FFIII_ScreenReader.Patches
                 // Debug: Patch EndEscapeFadeOut to trace escape completion
                 PatchEndEscapeFadeOut(harmony);
 
-                // Debug: Patch BattleUIManager.SetCommadnMessage (note typo in game code)
-                PatchBattleUIManagerSetCommadnMessage(harmony);
+                // Patch BattleCommandMessageController.SetMessage for battle system messages (defeat, escape, etc.)
+                PatchBattleCommandMessage(harmony);
 
                 MelonLogger.Msg("[Battle Start] Battle start patches applied successfully");
             }
@@ -86,7 +76,6 @@ namespace FFIII_ScreenReader.Patches
                     );
 
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Start] Patched StartPreeMptiveMes successfully");
                 }
                 else
                 {
@@ -119,7 +108,6 @@ namespace FFIII_ScreenReader.Patches
                     );
 
                     harmony.Patch(method, prefix: new HarmonyMethod(prefix));
-                    MelonLogger.Msg("[Battle Start] Patched ExitPreeMptive successfully");
                 }
                 else
                 {
@@ -144,13 +132,11 @@ namespace FFIII_ScreenReader.Patches
 
                 // Get the preemptive state
                 int state = GetPreeMptiveState(__instance);
-                MelonLogger.Msg($"[Battle Start] PreeMptiveState = {state}");
 
                 // Get announcement based on state
                 string announcement = GetBattleStartAnnouncement(state);
                 if (string.IsNullOrEmpty(announcement)) return;
 
-                MelonLogger.Msg($"[Battle Start] Announcing: {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -181,7 +167,7 @@ namespace FFIII_ScreenReader.Patches
                 if (plugManager == null)
                 {
                     MelonLogger.Warning("[Battle Start] BattlePlugManager.Instance() is null");
-                    return STATE_NORMAL;
+                    return IL2CppOffsets.BattleStart.STATE_NORMAL;
                 }
 
                 // Direct IL2CPP property access (not .NET reflection)
@@ -189,7 +175,7 @@ namespace FFIII_ScreenReader.Patches
                 if (battlePopPlug == null)
                 {
                     MelonLogger.Warning("[Battle Start] BattlePopPlug is null");
-                    return STATE_NORMAL;
+                    return IL2CppOffsets.BattleStart.STATE_NORMAL;
                 }
 
                 // Direct method call on IL2CPP type
@@ -201,7 +187,7 @@ namespace FFIII_ScreenReader.Patches
                 MelonLogger.Warning($"[Battle Start] Error getting PreeMptiveState: {ex.Message}");
             }
 
-            return STATE_NORMAL;
+            return IL2CppOffsets.BattleStart.STATE_NORMAL;
         }
 
         /// <summary>
@@ -211,18 +197,18 @@ namespace FFIII_ScreenReader.Patches
         {
             switch (state)
             {
-                case STATE_PREEMPTIVE:
+                case IL2CppOffsets.BattleStart.STATE_PREEMPTIVE:
                     return "Preemptive attack!";
-                case STATE_BACK_ATTACK:
+                case IL2CppOffsets.BattleStart.STATE_BACK_ATTACK:
                     return "Back attack!";
-                case STATE_ENEMY_PREEMPTIVE:
+                case IL2CppOffsets.BattleStart.STATE_ENEMY_PREEMPTIVE:
                     return "Ambush!";
-                case STATE_ENEMY_SIDE_ATTACK:
+                case IL2CppOffsets.BattleStart.STATE_ENEMY_SIDE_ATTACK:
                     return "Enemy side attack!";
-                case STATE_SIDE_ATTACK:
+                case IL2CppOffsets.BattleStart.STATE_SIDE_ATTACK:
                     return "Side attack!";
-                case STATE_NORMAL:
-                case STATE_NON:
+                case IL2CppOffsets.BattleStart.STATE_NORMAL:
+                case IL2CppOffsets.BattleStart.STATE_NON:
                 default:
                     return null; // No announcement for normal battles
             }
@@ -254,7 +240,6 @@ namespace FFIII_ScreenReader.Patches
                     );
 
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Start] Patched StartEscape (debug)");
                 }
                 else
                 {
@@ -285,7 +270,6 @@ namespace FFIII_ScreenReader.Patches
                     );
 
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Start] Patched UpdateEscape (debug)");
                 }
                 else
                 {
@@ -303,21 +287,14 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void StartEscape_Postfix()
         {
-            MelonLogger.Msg("[Battle Debug] StartEscape called - party is escaping!");
         }
 
         /// <summary>
         /// Debug postfix for UpdateEscape - called each frame during escape.
         /// Only log once to avoid spam.
         /// </summary>
-        private static bool loggedUpdateEscape = false;
         public static void UpdateEscape_Postfix()
         {
-            if (!loggedUpdateEscape)
-            {
-                MelonLogger.Msg("[Battle Debug] UpdateEscape called - escape in progress");
-                loggedUpdateEscape = true;
-            }
         }
 
         /// <summary>
@@ -338,7 +315,6 @@ namespace FFIII_ScreenReader.Patches
                     );
 
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Start] Patched BattleUIManager.SetSystemMessage (debug)");
                 }
                 else
                 {
@@ -356,7 +332,6 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void BattleUIManager_SetSystemMessage_Postfix(string messageId)
         {
-            MelonLogger.Msg($"[Battle Debug] BattleUIManager.SetSystemMessage called with messageId: {messageId}");
         }
 
         /// <summary>
@@ -377,7 +352,6 @@ namespace FFIII_ScreenReader.Patches
                     );
 
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Start] Patched EndEscapeFadeOut (debug)");
                 }
                 else
                 {
@@ -395,68 +369,126 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void EndEscapeFadeOut_Postfix()
         {
-            MelonLogger.Msg("[Battle Debug] EndEscapeFadeOut called - escape sequence completing!");
         }
 
         /// <summary>
-        /// Debug: Patch BattleUIManager.SetCommadnMessage (note typo in game code).
+        /// Patch BattleCommandMessageController.SetMessage for system messages like "The party was defeated".
+        /// Matches FF1 implementation.
         /// </summary>
-        private static void PatchBattleUIManagerSetCommadnMessage(HarmonyLib.Harmony harmony)
+        private static void PatchBattleCommandMessage(HarmonyLib.Harmony harmony)
         {
             try
             {
-                var uiManagerType = typeof(BattleUIManager);
-                var method = AccessTools.Method(uiManagerType, "SetCommadnMessage");
-
-                if (method != null)
+                // KeyInput version (keyboard/gamepad)
+                var keyInputType = FindType("Il2CppLast.UI.KeyInput.BattleCommandMessageController");
+                if (keyInputType != null)
                 {
-                    var postfix = typeof(BattleStartPatches).GetMethod(
-                        nameof(BattleUIManager_SetCommadnMessage_Postfix),
-                        BindingFlags.Public | BindingFlags.Static
-                    );
-
-                    harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Start] Patched BattleUIManager.SetCommadnMessage (debug)");
+                    var setMessageMethod = AccessTools.Method(keyInputType, "SetMessage");
+                    if (setMessageMethod != null)
+                    {
+                        var postfix = typeof(BattleStartPatches).GetMethod(
+                            nameof(BattleCommandMessage_Postfix), BindingFlags.Public | BindingFlags.Static);
+                        harmony.Patch(setMessageMethod, postfix: new HarmonyMethod(postfix));
+                    }
                 }
-                else
+
+                // Touch version (SetSystemMessage and SetCommandMessage)
+                var touchType = FindType("Il2CppLast.UI.Touch.BattleCommandMessageController");
+                if (touchType != null)
                 {
-                    MelonLogger.Warning("[Battle Start] BattleUIManager.SetCommadnMessage method not found");
+                    var setSystemMsgMethod = AccessTools.Method(touchType, "SetSystemMessage");
+                    if (setSystemMsgMethod != null)
+                    {
+                        var postfix = typeof(BattleStartPatches).GetMethod(
+                            nameof(BattleCommandMessage_Postfix), BindingFlags.Public | BindingFlags.Static);
+                        harmony.Patch(setSystemMsgMethod, postfix: new HarmonyMethod(postfix));
+                    }
+
+                    var setCommandMsgMethod = AccessTools.Method(touchType, "SetCommandMessage");
+                    if (setCommandMsgMethod != null)
+                    {
+                        var postfix = typeof(BattleStartPatches).GetMethod(
+                            nameof(BattleCommandMessage_Postfix), BindingFlags.Public | BindingFlags.Static);
+                        harmony.Patch(setCommandMsgMethod, postfix: new HarmonyMethod(postfix));
+                    }
                 }
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Start] Error patching BattleUIManager.SetCommadnMessage: {ex.Message}");
+                MelonLogger.Warning($"[Battle Start] Error patching BattleCommandMessageController: {ex.Message}");
             }
         }
 
+        private static string lastBattleCommandMessage = "";
+
         /// <summary>
-        /// Postfix for BattleUIManager.SetCommadnMessage - announces battle system messages.
-        /// Handles: "The party escaped!", individual flee messages, etc.
+        /// Postfix for BattleCommandMessageController.SetMessage/SetSystemMessage.
+        /// Uses __0 instead of named string param to avoid IL2CPP crash.
+        /// Whitelist filter: only announces battle conclusion messages, not spell/ability names.
         /// </summary>
-        public static void BattleUIManager_SetCommadnMessage_Postfix(string messageId)
+        public static void BattleCommandMessage_Postfix(object __0)
         {
             try
             {
-                var messageManager = MessageManager.Instance;
-                if (messageManager == null) return;
-
-                string message = messageManager.GetMessage(messageId);
+                // __0 is the message string (using __0 to avoid IL2CPP string param crash)
+                string message = __0?.ToString();
                 if (string.IsNullOrEmpty(message)) return;
 
-                string clean = TextUtils.StripIconMarkup(message);
-                if (string.IsNullOrEmpty(clean)) return;
+                // WHITELIST: Only announce battle conclusion/system messages
+                // Skip spell/ability names (already announced by CreateActFunction)
+                bool isSystemMessage =
+                    message.Contains("defeated", StringComparison.OrdinalIgnoreCase) ||
+                    message.Contains("victory", StringComparison.OrdinalIgnoreCase) ||
+                    message.Contains("escape", StringComparison.OrdinalIgnoreCase) ||
+                    message.Contains("fled", StringComparison.OrdinalIgnoreCase) ||
+                    message.Contains("annihilat", StringComparison.OrdinalIgnoreCase) ||
+                    message.Contains("wiped", StringComparison.OrdinalIgnoreCase);
 
-                // Use deduplication to prevent repeat announcements
-                if (AnnouncementDeduplicator.ShouldAnnounce("BattleSystemMessage", clean))
-                {
-                    MelonLogger.Msg($"[Battle System] Announcing: {clean}");
-                    FFIII_ScreenReaderMod.SpeakText(clean, interrupt: false);
-                }
+                if (!isSystemMessage) return;
+
+                // Deduplicate
+                if (message == lastBattleCommandMessage) return;
+                lastBattleCommandMessage = message;
+
+                // Clean up the message
+                string cleanMessage = TextUtils.StripIconMarkup(message);
+                cleanMessage = cleanMessage.Replace("\n", " ").Replace("\r", " ").Trim();
+                while (cleanMessage.Contains("  "))
+                    cleanMessage = cleanMessage.Replace("  ", " ");
+
+                if (string.IsNullOrEmpty(cleanMessage)) return;
+
+                // Use interrupt for defeat message
+                bool isDefeatMessage = cleanMessage.Contains("defeated", StringComparison.OrdinalIgnoreCase);
+
+                FFIII_ScreenReaderMod.SpeakText(cleanMessage, interrupt: isDefeatMessage);
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle System] Error in SetCommadnMessage postfix: {ex.Message}");
+                MelonLogger.Warning($"[Battle Start] Error in BattleCommandMessage_Postfix: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Finds a type by name across all loaded assemblies.
+        /// </summary>
+        private static Type FindType(string fullName)
+        {
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    foreach (var type in assembly.GetTypes())
+                    {
+                        if (type.FullName == fullName)
+                        {
+                            return type;
+                        }
+                    }
+                }
+                catch { }
+            }
+            return null;
         }
     }
 }

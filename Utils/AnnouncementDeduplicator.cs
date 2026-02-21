@@ -108,6 +108,30 @@ namespace FFIII_ScreenReader.Utils
         }
 
         /// <summary>
+        /// Convenience: checks dedup and speaks if new. Combines the common two-line pattern.
+        /// Returns true if the announcement was made.
+        /// </summary>
+        public static bool AnnounceIfNew(string context, string text, bool interrupt = true)
+        {
+            if (!ShouldAnnounce(context, text))
+                return false;
+            FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.SpeakText(text, interrupt);
+            return true;
+        }
+
+        /// <summary>
+        /// Convenience: checks dedup with index+text and speaks if new.
+        /// Returns true if the announcement was made.
+        /// </summary>
+        public static bool AnnounceIfNew(string context, int index, string text, bool interrupt = true)
+        {
+            if (!ShouldAnnounce(context, index, text))
+                return false;
+            FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.SpeakText(text, interrupt);
+            return true;
+        }
+
+        /// <summary>
         /// Resets tracking for a specific context.
         /// Call this when a menu opens/closes or state changes.
         /// </summary>

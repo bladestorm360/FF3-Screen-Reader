@@ -29,19 +29,19 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Helper for item menu announcements.
     /// </summary>
-    public static class ItemMenuState
+    internal static class ItemMenuState
     {
-        private const string CONTEXT = "ItemMenu.Select";
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.ITEM_MENU, "ItemMenu.Select");
 
-        /// <summary>
-        /// True when item list or item target selection is active.
-        /// Used to suppress generic cursor navigation announcements.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        static ItemMenuState()
+        {
+            _helper.RegisterResetHandler(() => { LastSelectedItem = null; });
+        }
+
         public static bool IsItemMenuActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.ITEM_MENU);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.ITEM_MENU, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
 
         /// <summary>
@@ -58,57 +58,26 @@ namespace FFIII_ScreenReader.Patches
             if (!IsItemMenuActive)
                 return false;
 
-            // Validate we're actually in a submenu, not command bar
             int state = GetWindowControllerState();
-            if (state == STATE_COMMAND_SELECT || state == STATE_NONE)
+            if (state == IL2CppOffsets.Item.STATE_COMMAND_SELECT || state == IL2CppOffsets.Item.STATE_NONE)
             {
-                // At command bar or menu closing - clear state and don't suppress
-                ClearState();
+                IsItemMenuActive = false;
                 return false;
             }
 
             return true;
         }
 
-        // State machine offset for ItemWindowController (from debug.md)
-        private const int OFFSET_STATE_MACHINE = 0x70;
-
-        /// <summary>
-        /// Gets the current state from ItemWindowController's state machine.
-        /// Returns -1 if unable to read state.
-        /// </summary>
         private static int GetWindowControllerState()
         {
-            var windowController = UnityEngine.Object.FindObjectOfType<KeyInputItemWindowController>();
+            var windowController = GameObjectCache.GetOrFind<KeyInputItemWindowController>();
             if (windowController == null || !windowController.gameObject.activeInHierarchy)
                 return -1;
-            return StateReaderHelper.ReadStateTag(windowController.Pointer, OFFSET_STATE_MACHINE);
-        }
-
-        /// <summary>
-        /// Clears item menu state when menu is closed.
-        /// </summary>
-        public static void ClearState()
-        {
-            IsItemMenuActive = false;
-            LastSelectedItem = null;
-            AnnouncementDeduplicator.Reset(CONTEXT);
+            return StateReaderHelper.ReadStateTag(windowController.Pointer, IL2CppOffsets.Item.OFFSET_STATE_MACHINE);
         }
 
         private static bool transitionPatchApplied = false;
 
-        // ItemWindowController.State enum values (from dump.cs line 456894 - KeyInput version)
-        // NOTE: Touch version has different values - make sure to use KeyInput values!
-        private const int STATE_NONE = 0;             // Menu closed
-        private const int STATE_COMMAND_SELECT = 1;   // Command bar (Use/Key Items/Sort)
-        private const int STATE_USE_SELECT = 2;       // Regular item list
-        private const int STATE_IMPORTANT_SELECT = 3; // Key items list
-        private const int STATE_ORGANIZE_SELECT = 4;  // Organize/Sort mode
-        private const int STATE_TARGET_SELECT = 5;    // Character target selection
-
-        /// <summary>
-        /// Apply manual Harmony patches for item menu transitions.
-        /// </summary>
         public static void ApplyTransitionPatches(HarmonyLib.Harmony harmony)
         {
             if (transitionPatchApplied) return;
@@ -116,15 +85,10 @@ namespace FFIII_ScreenReader.Patches
             try
             {
                 Type controllerType = typeof(KeyInputItemWindowController);
-
-                // Patch SetActive for menu close detection
                 HarmonyPatchHelper.PatchSetActive(harmony, controllerType, typeof(ItemMenuState),
                     logPrefix: "[Item Menu]");
-
-                // Patch SetNextState for state transition detection (back to command bar)
                 HarmonyPatchHelper.PatchSetNextState(harmony, controllerType, typeof(ItemMenuState),
                     logPrefix: "[Item Menu]");
-
                 transitionPatchApplied = true;
             }
             catch (Exception ex)
@@ -133,37 +97,19 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        /// <summary>
-        /// Postfix for SetActive - clears state when menu closes.
-        /// </summary>
         public static void SetActive_Postfix(bool isActive)
         {
             if (!isActive)
-            {
-                ClearState();
-            }
+                IsItemMenuActive = false;
         }
 
-        /// <summary>
-        /// Postfix for SetNextState - clears state when returning to command bar.
-        /// KeyInput States: None=0 (closed), CommandSelect=1 (command bar), UseSelect=2, ImportantSelect=3, etc.
-        /// </summary>
         public static void SetNextState_Postfix(int state)
         {
-            MelonLogger.Msg($"[Item Menu] SetNextState called with state={state}, IsItemMenuActive={IsItemMenuActive}");
-
-            // Clear state when returning to command bar (1) or menu closing (0)
-            if ((state == STATE_NONE || state == STATE_COMMAND_SELECT) && IsItemMenuActive)
-            {
-                MelonLogger.Msg($"[Item Menu] Clearing state - transitioning to command bar or closing");
-                ClearState();
-            }
+            if ((state == IL2CppOffsets.Item.STATE_NONE || state == IL2CppOffsets.Item.STATE_COMMAND_SELECT) && IsItemMenuActive)
+                IsItemMenuActive = false;
         }
 
-        public static bool ShouldAnnounce(string announcement)
-        {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT, announcement);
-        }
+        public static bool ShouldAnnounce(string announcement) => _helper.ShouldAnnounce(announcement);
 
         /// <summary>
         /// Gets the row (Front/Back) for a character.
@@ -175,34 +121,28 @@ namespace FFIII_ScreenReader.Patches
                 var userDataManager = UserDataManager.Instance();
                 if (userDataManager == null)
                 {
-                    MelonLogger.Msg($"[ItemMenu] UserDataManager is null");
                     return null;
                 }
 
                 var corpsList = userDataManager.GetCorpsListClone();
                 if (corpsList == null)
                 {
-                    MelonLogger.Msg($"[ItemMenu] CorpsList is null");
                     return null;
                 }
 
                 int characterId = characterData.Id;
-                MelonLogger.Msg($"[ItemMenu] Looking for character {characterData.Name} (ID={characterId}) in {corpsList.Count} corps entries");
 
                 foreach (var corps in corpsList)
                 {
                     if (corps != null)
                     {
-                        MelonLogger.Msg($"[ItemMenu] Corps entry: CharId={corps.CharacterId}, CorpsId={corps.Id}");
                         if (corps.CharacterId == characterId)
                         {
                             string row = corps.Id == CorpsId.Front ? "Front Row" : "Back Row";
-                            MelonLogger.Msg($"[ItemMenu] Found match! {characterData.Name} is in {row}");
                             return row;
                         }
                     }
                 }
-                MelonLogger.Msg($"[ItemMenu] No matching Corps found for {characterData.Name}");
             }
             catch (Exception ex)
             {
@@ -257,7 +197,7 @@ namespace FFIII_ScreenReader.Patches
             typeof(GameCursor),
             typeof(CustomScrollViewWithinRangeType)
         })]
-    public static class ItemListController_SelectContent_Patch
+    internal static class ItemListController_SelectContent_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(
@@ -289,8 +229,21 @@ namespace FFIII_ScreenReader.Patches
                 // Store selected item for 'I' key lookup
                 ItemMenuState.LastSelectedItem = itemData;
 
-                // Build announcement: "Item Name: Description"
-                string announcement = AnnouncementBuilder.FormatWithDescription(itemData.Name, itemData.Description);
+                // Build announcement: "Item Name quantity: Description"
+                string itemName = TextUtils.StripIconMarkup(itemData.Name);
+                int quantity = itemData.Count;
+                string announcement = quantity > 0 ? $"{itemName} {quantity}" : itemName;
+
+                // Add description if available
+                string description = itemData.Description;
+                if (!string.IsNullOrWhiteSpace(description))
+                {
+                    description = TextUtils.StripIconMarkup(description);
+                    if (!string.IsNullOrWhiteSpace(description))
+                    {
+                        announcement += $": {description}";
+                    }
+                }
                 if (string.IsNullOrEmpty(announcement))
                     return;
 
@@ -300,10 +253,8 @@ namespace FFIII_ScreenReader.Patches
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 // Also clear other menu states to prevent conflicts
-                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Item");
-                ItemMenuState.IsItemMenuActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
 
-                MelonLogger.Msg($"[Item Menu] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -322,7 +273,7 @@ namespace FFIII_ScreenReader.Patches
             typeof(Il2CppSystem.Collections.Generic.IEnumerable<ItemTargetSelectContentController>),
             typeof(GameCursor)
         })]
-    public static class ItemUseController_SelectContent_Patch
+    internal static class ItemUseController_SelectContent_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(
@@ -384,10 +335,8 @@ namespace FFIII_ScreenReader.Patches
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 // Also clear other menu states to prevent conflicts
-                FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.ClearOtherMenuStates("Item");
-                ItemMenuState.IsItemMenuActive = true;
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
 
-                MelonLogger.Msg($"[Item Target] {announcement}");
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)

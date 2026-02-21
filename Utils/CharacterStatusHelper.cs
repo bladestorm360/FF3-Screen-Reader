@@ -10,7 +10,7 @@ namespace FFIII_ScreenReader.Utils
     /// Utility methods for reading character HP/MP and status conditions.
     /// Consolidates duplicate logic from ItemMenuPatches, StatusMenuPatches, and BattleMessagePatches.
     /// </summary>
-    public static class CharacterStatusHelper
+    internal static class CharacterStatusHelper
     {
         /// <summary>
         /// Gets the HP string only for a character parameter.

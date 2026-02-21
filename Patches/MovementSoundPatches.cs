@@ -18,7 +18,7 @@ namespace FFIII_ScreenReader.Patches
     /// waits for movement to process, then checks if position changed.
     /// </summary>
     [HarmonyPatch]
-    public static class MovementSoundPatches
+    internal static class MovementSoundPatches
     {
         // Cooldown to prevent sound spam when holding a direction key against a wall
         private static float lastBumpTime = 0f;
@@ -36,12 +36,9 @@ namespace FFIII_ScreenReader.Patches
         private static bool wallCheckPending = false;
 
         // Audio feedback cooldowns
-        private const float TILE_SIZE = 16f;
+        private const float TILE_SIZE = FF3Constants.TILE_SIZE;
         private static float lastFootstepTime = 0f;
         private const float FOOTSTEP_COOLDOWN = 0.15f;
-
-        // Track collision state to suppress footsteps when wall bump plays
-        private static bool collisionDetectedThisFrame = false;
 
         // Tile position tracking for footsteps
         private static Vector2Int lastTilePosition = Vector2Int.zero;
@@ -129,15 +126,11 @@ namespace FFIII_ScreenReader.Patches
                 {
                     lastTilePosition = currentTile;
                     tileTrackingInitialized = true;
-                    MelonLogger.Msg($"[Footstep] Tile tracking initialized at ({currentTile.x}, {currentTile.y})");
                 }
 
                 // If position didn't change (within small threshold), player hit a wall
                 if (distanceMoved < 0.1f)
                 {
-                    // Mark collision detected to suppress footstep
-                    collisionDetectedThisFrame = true;
-
                     // Check if position is same as last collision
                     float distFromLast = Vector3.Distance(positionBefore, lastCollisionPos);
 
@@ -168,7 +161,6 @@ namespace FFIII_ScreenReader.Patches
                         yield break;
                     }
 
-                    MelonLogger.Msg($"[WallBump] Wall bump confirmed after {samePositionCount} hits");
                     PlayBumpSound();
                     lastBumpTime = currentTime;
                 }
@@ -179,16 +171,13 @@ namespace FFIII_ScreenReader.Patches
 
                     if (currentTile != lastTilePosition)
                     {
-                        // Tile changed - play footstep if enabled
-                        MelonLogger.Msg($"[Footstep] Tile changed from ({lastTilePosition.x}, {lastTilePosition.y}) to ({currentTile.x}, {currentTile.y})");
                         lastTilePosition = currentTile;
 
-                        if (FFIII_ScreenReaderMod.Instance != null && FFIII_ScreenReaderMod.Instance.IsFootstepsEnabled())
+                        if (PreferencesManager.FootstepsEnabled)
                         {
                             float currentTime = Time.time;
                             if (currentTime - lastFootstepTime >= FOOTSTEP_COOLDOWN)
                             {
-                                MelonLogger.Msg("[Footstep] Playing footstep sound");
                                 SoundPlayer.PlayFootstep();
                                 lastFootstepTime = currentTime;
                             }
@@ -196,8 +185,6 @@ namespace FFIII_ScreenReader.Patches
                     }
                 }
 
-                // Reset collision flag at end of coroutine
-                collisionDetectedThisFrame = false;
             }
             catch (Exception ex)
             {
@@ -248,7 +235,6 @@ namespace FFIII_ScreenReader.Patches
             samePositionCount = 0;
             wallCheckPending = false;
             lastFootstepTime = 0f;
-            collisionDetectedThisFrame = false;
             lastTilePosition = Vector2Int.zero;
             tileTrackingInitialized = false;
         }

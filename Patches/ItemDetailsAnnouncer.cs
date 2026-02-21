@@ -20,11 +20,11 @@ namespace FFIII_ScreenReader.Patches
     /// Announces equipment job requirements when 'I' key is pressed in Items menu.
     /// Only works for equipment (weapons/armor), silent for consumables/key items.
     /// </summary>
-    public static class ItemDetailsAnnouncer
+    internal static class ItemDetailsAnnouncer
     {
-        // ContentType values from dump.cs
-        private const int CONTENT_TYPE_WEAPON = 2;
-        private const int CONTENT_TYPE_ARMOR = 3;
+        // ContentType values - centralized in FF3Constants
+        private const int CONTENT_TYPE_WEAPON = FF3Constants.ItemContentTypes.WEAPON;
+        private const int CONTENT_TYPE_ARMOR = FF3Constants.ItemContentTypes.ARMOR;
 
         /// <summary>
         /// Announces which jobs can equip the currently selected item.
@@ -36,22 +36,14 @@ namespace FFIII_ScreenReader.Patches
             {
                 var itemData = ItemMenuState.LastSelectedItem;
                 if (itemData == null)
-                {
-                    MelonLogger.Msg("[ItemDetails] No item selected");
                     return;
-                }
 
                 int itemType = itemData.ItemType;
                 int itemId = itemData.ItemId;
 
-                MelonLogger.Msg($"[ItemDetails] Checking item: Type={itemType}, Id={itemId}");
-
                 // Only process equipment (weapons and armor)
                 if (itemType != CONTENT_TYPE_WEAPON && itemType != CONTENT_TYPE_ARMOR)
-                {
-                    MelonLogger.Msg("[ItemDetails] Not equipment, ignoring");
                     return;
-                }
 
                 var masterManager = MasterManager.Instance;
                 if (masterManager == null)
@@ -63,24 +55,15 @@ namespace FFIII_ScreenReader.Patches
                 // Get EquipJobGroupId based on item type
                 int equipJobGroupId = GetEquipJobGroupId(masterManager, itemType, itemId);
                 if (equipJobGroupId <= 0)
-                {
-                    MelonLogger.Msg($"[ItemDetails] No EquipJobGroupId found");
                     return;
-                }
-
-                MelonLogger.Msg($"[ItemDetails] EquipJobGroupId = {equipJobGroupId}");
 
                 // Get the JobGroup data
                 var jobGroup = masterManager.GetData<JobGroup>(equipJobGroupId);
                 if (jobGroup == null)
-                {
-                    MelonLogger.Msg($"[ItemDetails] JobGroup {equipJobGroupId} not found");
                     return;
-                }
 
                 // Get unlocked jobs from UserDataManager
                 var unlockedJobIds = GetUnlockedJobIds();
-                MelonLogger.Msg($"[ItemDetails] Unlocked jobs count: {unlockedJobIds.Count}");
 
                 // Build list of jobs that can equip (filtered by unlocked)
                 var canEquipJobs = GetEquippableJobs(masterManager, jobGroup, unlockedJobIds);
@@ -89,7 +72,6 @@ namespace FFIII_ScreenReader.Patches
                 string announcement = BuildAnnouncement(canEquipJobs);
                 if (!string.IsNullOrEmpty(announcement))
                 {
-                    MelonLogger.Msg($"[ItemDetails] {announcement}");
                     FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 }
             }

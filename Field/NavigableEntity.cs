@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using FFIII_ScreenReader.Core;
+using FFIII_ScreenReader.Utils;
 
 namespace FFIII_ScreenReader.Field
 {
@@ -9,7 +10,7 @@ namespace FFIII_ScreenReader.Field
     /// Base class for all navigable entities on the field map.
     /// Provides common properties and behavior for entity navigation and pathfinding.
     /// </summary>
-    public abstract class NavigableEntity
+    internal abstract class NavigableEntity
     {
         /// <summary>
         /// Reference to the underlying game entity (FF3-specific FieldEntity)
@@ -71,22 +72,7 @@ namespace FFIII_ScreenReader.Field
         /// </summary>
         protected string GetDirection(Vector3 from, Vector3 to)
         {
-            Vector3 diff = to - from;
-            float angle = Mathf.Atan2(diff.x, diff.y) * Mathf.Rad2Deg;
-
-            // Normalize to 0-360
-            if (angle < 0) angle += 360;
-
-            // Convert to cardinal/intercardinal directions
-            if (angle >= 337.5 || angle < 22.5) return "North";
-            else if (angle >= 22.5 && angle < 67.5) return "Northeast";
-            else if (angle >= 67.5 && angle < 112.5) return "East";
-            else if (angle >= 112.5 && angle < 157.5) return "Southeast";
-            else if (angle >= 157.5 && angle < 202.5) return "South";
-            else if (angle >= 202.5 && angle < 247.5) return "Southwest";
-            else if (angle >= 247.5 && angle < 292.5) return "West";
-            else if (angle >= 292.5 && angle < 337.5) return "Northwest";
-            else return "Unknown";
+            return DirectionHelper.GetDirection(from, to);
         }
 
         /// <summary>
@@ -94,16 +80,14 @@ namespace FFIII_ScreenReader.Field
         /// </summary>
         protected string FormatSteps(float distance)
         {
-            float steps = distance / 16f;
-            string stepLabel = Math.Abs(steps - 1f) < 0.1f ? "step" : "steps";
-            return $"{steps:F1} {stepLabel}";
+            return DirectionHelper.FormatSteps(distance);
         }
     }
 
     /// <summary>
     /// Represents a treasure chest entity
     /// </summary>
-    public class TreasureChestEntity : NavigableEntity
+    internal class TreasureChestEntity : NavigableEntity
     {
         private Vector3 position;
         private string name;
@@ -149,7 +133,7 @@ namespace FFIII_ScreenReader.Field
     /// <summary>
     /// Represents an NPC entity
     /// </summary>
-    public class NPCEntity : NavigableEntity
+    internal class NPCEntity : NavigableEntity
     {
         private Vector3 position;
         private string name;
@@ -204,7 +188,7 @@ namespace FFIII_ScreenReader.Field
     /// <summary>
     /// Represents a map exit/transition
     /// </summary>
-    public class MapExitEntity : NavigableEntity
+    internal class MapExitEntity : NavigableEntity
     {
         private Vector3 position;
         private string name;
@@ -240,7 +224,7 @@ namespace FFIII_ScreenReader.Field
         protected override string GetDisplayName()
         {
             return !string.IsNullOrEmpty(DestinationName)
-                ? $"{Name} → {DestinationName}"
+                ? $"{Name} �?{DestinationName}"
                 : Name;
         }
 
@@ -253,7 +237,7 @@ namespace FFIII_ScreenReader.Field
     /// <summary>
     /// Represents a save point
     /// </summary>
-    public class SavePointEntity : NavigableEntity
+    internal class SavePointEntity : NavigableEntity
     {
         private Vector3 position;
         private string name;
@@ -286,7 +270,7 @@ namespace FFIII_ScreenReader.Field
     /// <summary>
     /// Represents a generic event (teleport, switch event, random event, etc.)
     /// </summary>
-    public class EventEntity : NavigableEntity
+    internal class EventEntity : NavigableEntity
     {
         private Vector3 position;
         private string name;
@@ -302,6 +286,11 @@ namespace FFIII_ScreenReader.Field
 
         public override Vector3 Position => position;
         public override string Name => name;
+
+        /// <summary>
+        /// The event type name (e.g., "Event", "ToLayer", "Warp Tile")
+        /// </summary>
+        public string EventTypeName => eventTypeName;
 
         public override EntityCategory Category => EntityCategory.Events;
         public override int Priority => 8;
@@ -321,7 +310,7 @@ namespace FFIII_ScreenReader.Field
     /// <summary>
     /// Represents a vehicle (airship, canoe, etc.)
     /// </summary>
-    public class VehicleEntity : NavigableEntity
+    internal class VehicleEntity : NavigableEntity
     {
         private Vector3 position;
         private string name;

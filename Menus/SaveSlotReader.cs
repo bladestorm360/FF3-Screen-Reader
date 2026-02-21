@@ -15,7 +15,7 @@ namespace FFIII_ScreenReader.Menus
     /// Extracts and announces: slot type, character name, level, location, play time.
     /// Uses SlotData for reliable data extraction instead of View text fields.
     /// </summary>
-    public static class SaveSlotReader
+    internal static class SaveSlotReader
     {
         /// <summary>
         /// Try to read save slot information from the current cursor position.
@@ -150,6 +150,7 @@ namespace FFIII_ScreenReader.Menus
                 string location = slotData.CurrentArea;
                 string floor = slotData.CurrentLocation;
                 double playTimeSeconds = slotData.PlayTime;
+                string timeStamp = slotData.TimeStamp;
 
                 // Translate message keys to localized text
                 var msgManager = MessageManager.Instance;
@@ -208,14 +209,8 @@ namespace FFIII_ScreenReader.Menus
                     minutes = m.ToString("D2");
                 }
 
-                // Combine location and floor if both present
-                if (!string.IsNullOrEmpty(floor) && !string.IsNullOrEmpty(location))
-                {
-                    location += " - " + floor;
-                }
-
-                return BuildAnnouncement(slotId, location, characterName,
-                    level?.ToString(), hours, minutes);
+                return BuildAnnouncement(slotId, timeStamp, characterName,
+                    level?.ToString(), location, hours, minutes);
             }
             catch (Exception ex)
             {
@@ -245,36 +240,44 @@ namespace FFIII_ScreenReader.Menus
 
         /// <summary>
         /// Build the announcement string from collected values.
+        /// Format: "[SlotType], [SaveDate] [SaveTime], [CharacterName] Lv. [Level], [Location], Time [Hours]:[Minutes]"
+        /// Example: "Quick Save, 01/29/2026 15:39, Stirlock Lv. 51, Duster, Time 14:12"
         /// </summary>
-        private static string BuildAnnouncement(string slotId, string location,
-            string characterName, string level, string hours, string minutes)
+        private static string BuildAnnouncement(string slotId, string timeStamp,
+            string characterName, string level, string location, string hours, string minutes)
         {
             string announcement = slotId;
 
-            // Add location
-            if (!string.IsNullOrEmpty(location))
+            // Add save date/time
+            if (!string.IsNullOrEmpty(timeStamp))
             {
-                announcement += ": " + location;
+                announcement += ", " + timeStamp;
             }
 
-            // Add character name and level
+            // Add character name with "Lv." prefix for level
             if (!string.IsNullOrEmpty(characterName))
             {
                 announcement += ", " + characterName;
                 if (!string.IsNullOrEmpty(level))
                 {
-                    announcement += " Level " + level;
+                    announcement += " Lv. " + level;
                 }
             }
             else if (!string.IsNullOrEmpty(level))
             {
-                announcement += ", Level " + level;
+                announcement += ", Lv. " + level;
             }
 
-            // Add play time
+            // Add location
+            if (!string.IsNullOrEmpty(location))
+            {
+                announcement += ", " + location;
+            }
+
+            // Add play time with "Time" prefix
             if (!string.IsNullOrEmpty(hours) && !string.IsNullOrEmpty(minutes))
             {
-                announcement += $", {hours}:{minutes}";
+                announcement += $", Time {hours}:{minutes}";
             }
 
             return announcement;
