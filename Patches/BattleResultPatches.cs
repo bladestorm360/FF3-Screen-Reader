@@ -5,6 +5,7 @@ using MelonLoader;
 using UnityEngine;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for FF3
 using BattleResultData = Il2CppLast.Data.BattleResultData;
@@ -76,7 +77,7 @@ namespace FFIII_ScreenReader.Patches
             int gil = data.GetGil;
             if (gil > 0)
             {
-                string gilAnnouncement = $"Gained {gil:N0} gil";
+                string gilAnnouncement = string.Format(T("Gained {0} gil"), gil.ToString("N0"));
                 FFIII_ScreenReaderMod.SpeakText(gilAnnouncement, interrupt: true);
             }
 
@@ -97,7 +98,7 @@ namespace FFIII_ScreenReader.Patches
                     int charExp = charResult.GetExp;
                     if (charExp > 0)
                     {
-                        string expAnnouncement = $"{charName} gained {charExp:N0} XP";
+                        string expAnnouncement = string.Format(T("{0} gained {1} XP"), charName, charExp.ToString("N0"));
                         FFIII_ScreenReaderMod.SpeakText(expAnnouncement, interrupt: false);
                     }
                 }
@@ -141,11 +142,11 @@ namespace FFIII_ScreenReader.Patches
                     int count = itemContent.Count;
                     if (count > 1)
                     {
-                        announcement = $"Found {itemName} x{count}";
+                        announcement = string.Format(T("Found {0} x{1}"), itemName, count);
                     }
                     else
                     {
-                        announcement = $"Found {itemName}";
+                        announcement = string.Format(T("Found {0}"), itemName);
                     }
 
                     FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
@@ -195,7 +196,7 @@ namespace FFIII_ScreenReader.Patches
                     newLevel = afterParam.BaseLevel;
                 }
             }
-            parts.Add($"{charName} leveled up to level {newLevel}");
+            parts.Add(string.Format(T("{0} leveled up to level {1}"), charName, newLevel));
 
             // Calculate stat gains if we have before data
             if (beforeData?.Parameter != null && afterParam != null)
@@ -251,15 +252,15 @@ namespace FFIII_ScreenReader.Patches
             string announcement;
             if (!string.IsNullOrEmpty(jobName) && jobLevel > 0)
             {
-                announcement = $"{charName} {jobName} job level up to {jobLevel}";
+                announcement = string.Format(T("{0} {1} job level up to {2}"), charName, jobName, jobLevel);
             }
             else if (jobLevel > 0)
             {
-                announcement = $"{charName} job level up to {jobLevel}";
+                announcement = string.Format(T("{0} job level up to {1}"), charName, jobLevel);
             }
             else
             {
-                announcement = $"{charName} job level up";
+                announcement = string.Format(T("{0} job level up"), charName);
             }
             FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
         }
@@ -272,22 +273,22 @@ namespace FFIII_ScreenReader.Patches
             var gains = new List<string>();
 
             int hpGain = after.BaseMaxHp - before.BaseMaxHp;
-            if (hpGain > 0) gains.Add($"HP +{hpGain}");
+            if (hpGain > 0) gains.Add(string.Format(T("HP +{0}"), hpGain));
 
             int powerGain = after.BasePower - before.BasePower;
-            if (powerGain > 0) gains.Add($"Strength +{powerGain}");
+            if (powerGain > 0) gains.Add(string.Format(T("Strength +{0}"), powerGain));
 
             int vitalityGain = after.BaseVitality - before.BaseVitality;
-            if (vitalityGain > 0) gains.Add($"Vitality +{vitalityGain}");
+            if (vitalityGain > 0) gains.Add(string.Format(T("Vitality +{0}"), vitalityGain));
 
             int agilityGain = after.BaseAgility - before.BaseAgility;
-            if (agilityGain > 0) gains.Add($"Agility +{agilityGain}");
+            if (agilityGain > 0) gains.Add(string.Format(T("Agility +{0}"), agilityGain));
 
             int intelligenceGain = after.BaseIntelligence - before.BaseIntelligence;
-            if (intelligenceGain > 0) gains.Add($"Intelligence +{intelligenceGain}");
+            if (intelligenceGain > 0) gains.Add(string.Format(T("Intelligence +{0}"), intelligenceGain));
 
             int spiritGain = after.BaseSpirit - before.BaseSpirit;
-            if (spiritGain > 0) gains.Add($"Spirit +{spiritGain}");
+            if (spiritGain > 0) gains.Add(string.Format(T("Spirit +{0}"), spiritGain));
 
             return gains;
         }

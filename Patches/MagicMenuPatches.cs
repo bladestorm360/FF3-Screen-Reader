@@ -7,6 +7,7 @@ using MelonLoader;
 using UnityEngine;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 using Il2CppLast.Management;
 using Il2CppInterop.Runtime;
 
@@ -814,7 +815,7 @@ namespace FFIII_ScreenReader.Patches
         {
             if (MagicMenuState.ShouldAnnounceSpell(-1)) // -1 as ID for empty
             {
-                FFIII_ScreenReaderMod.SpeakText("Empty", interrupt: true);
+                FFIII_ScreenReaderMod.SpeakText(T("Empty"), interrupt: true);
             }
         }
 

@@ -4,6 +4,7 @@ using MelonLoader;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
 using FFIII_ScreenReader.Field;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 using SubSceneManagerMainGame = Il2CppLast.Management.SubSceneManagerMainGame;
 using UserDataManager = Il2CppLast.Management.UserDataManager;
 
@@ -91,7 +92,7 @@ namespace FFIII_ScreenReader.Patches
                 {
                     // Map has changed - announce new map
                     string mapName = MapNameResolver.GetCurrentMapName();
-                    string fullMessage = $"Entering {mapName}";
+                    string fullMessage = string.Format(T("Entering {0}"), mapName);
 
                     FFIII_ScreenReaderMod.SpeakText(fullMessage, interrupt: false);
                     lastAnnouncedMapId = currentMapId;

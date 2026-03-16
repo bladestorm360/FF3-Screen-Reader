@@ -10,6 +10,7 @@ using Il2CppSerial.FF3.UI.KeyInput;
 using Il2CppSerial.Template.UI.KeyInput;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFIII_ScreenReader.Menus
 {
@@ -66,12 +67,12 @@ namespace FFIII_ScreenReader.Menus
                     var param = currentCharacterData.Parameter;
                     if (param != null)
                     {
-                        parts.Add($"Level {param.ConfirmedLevel()}");
+                        parts.Add(string.Format(T("Level {0}"), param.ConfirmedLevel()));
 
                         // HP
                         int currentHp = param.currentHP;
                         int maxHp = param.ConfirmedMaxHp();
-                        parts.Add($"HP: {currentHp} / {maxHp}");
+                        parts.Add(string.Format(T("HP: {0} / {1}"), currentHp, maxHp));
                     }
                 }
                 catch (Exception ex)
@@ -116,7 +117,7 @@ namespace FFIII_ScreenReader.Menus
         {
             if (currentCharacterData == null || currentCharacterData.Parameter == null)
             {
-                return "No character data available";
+                return T("No character data available");
             }
 
             try
@@ -125,16 +126,16 @@ namespace FFIII_ScreenReader.Menus
                 var parts = new List<string>();
 
                 int strength = param.ConfirmedPower();
-                parts.Add($"Strength: {strength}");
+                parts.Add(string.Format(T("Strength: {0}"), strength));
 
                 int vitality = param.ConfirmedVitality();
-                parts.Add($"Vitality: {vitality}");
+                parts.Add(string.Format(T("Vitality: {0}"), vitality));
 
                 int defense = param.ConfirmedDefense();
-                parts.Add($"Defense: {defense}");
+                parts.Add(string.Format(T("Defense: {0}"), defense));
 
                 int evade = param.ConfirmedDefenseCount();
-                parts.Add($"Evade: {evade}");
+                parts.Add(string.Format(T("Evade: {0}"), evade));
 
                 return string.Join(". ", parts);
             }
@@ -152,7 +153,7 @@ namespace FFIII_ScreenReader.Menus
         {
             if (currentCharacterData == null || currentCharacterData.Parameter == null)
             {
-                return "No character data available";
+                return T("No character data available");
             }
 
             try
@@ -161,13 +162,13 @@ namespace FFIII_ScreenReader.Menus
                 var parts = new List<string>();
 
                 int magic = param.ConfirmedMagic();
-                parts.Add($"Magic: {magic}");
+                parts.Add(string.Format(T("Magic: {0}"), magic));
 
                 int magicDefense = param.ConfirmedAbilityDefense();
-                parts.Add($"Magic Defense: {magicDefense}");
+                parts.Add(string.Format(T("Magic Defense: {0}"), magicDefense));
 
                 int magicEvade = param.ConfirmedMagicDefenseCount();
-                parts.Add($"Magic Evade: {magicEvade}");
+                parts.Add(string.Format(T("Magic Evade: {0}"), magicEvade));
 
                 return string.Join(". ", parts);
             }
@@ -439,7 +440,7 @@ namespace FFIII_ScreenReader.Menus
             var tracker = StatusNavigationTracker.Instance;
             if (!tracker.ValidateState())
             {
-                FFIII_ScreenReaderMod.SpeakText("Navigation not available");
+                FFIII_ScreenReaderMod.SpeakText(T("Navigation not available"));
                 return;
             }
 
@@ -463,7 +464,7 @@ namespace FFIII_ScreenReader.Menus
 
             if (tracker.CurrentCharacterData == null)
             {
-                FFIII_ScreenReaderMod.SpeakText("No character data");
+                FFIII_ScreenReaderMod.SpeakText(T("No character data"));
                 return;
             }
 
@@ -476,7 +477,7 @@ namespace FFIII_ScreenReader.Menus
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error reading stat at index {index}: {ex.Message}");
-                FFIII_ScreenReaderMod.SpeakText("Error reading stat");
+                FFIII_ScreenReaderMod.SpeakText(T("Error reading stat"));
             }
         }
 
@@ -487,12 +488,12 @@ namespace FFIII_ScreenReader.Menus
             {
                 if (data == null) return "N/A";
                 string name = data.Name;
-                return !string.IsNullOrWhiteSpace(name) ? $"Name: {name}" : "N/A";
+                return !string.IsNullOrWhiteSpace(name) ? string.Format(T("Name: {0}"), name) : T("N/A");
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading name: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -500,21 +501,21 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data == null) return "N/A";
+                if (data == null) return T("N/A");
 
                 // Use the existing helper from StatusMenuState
                 string jobName = Patches.StatusMenuState.GetCurrentJobName(data);
                 if (!string.IsNullOrWhiteSpace(jobName))
                 {
-                    return $"Job: {jobName}";
+                    return string.Format(T("Job: {0}"), jobName);
                 }
 
-                return $"Job: ID {data.JobId}";
+                return string.Format(T("Job: {0}"), $"ID {data.JobId}");
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading job name: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -522,13 +523,13 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Level: {data.Parameter.ConfirmedLevel()}";
+                if (data?.Parameter == null) return T("N/A");
+                return string.Format(T("Level: {0}"), data.Parameter.ConfirmedLevel());
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading character level: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -536,14 +537,14 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data == null) return "N/A";
+                if (data == null) return T("N/A");
                 int currentExp = data.CurrentExp;
-                return $"Experience: {currentExp}";
+                return string.Format(T("Experience: {0}"), currentExp);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Experience: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -551,14 +552,14 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data == null) return "N/A";
+                if (data == null) return T("N/A");
                 int nextExp = data.GetNextExp();
-                return $"Next Level: {nextExp}";
+                return string.Format(T("Next Level: {0}"), nextExp);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Next Level: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -567,15 +568,15 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
                 int current = data.Parameter.currentHP;
                 int max = data.Parameter.ConfirmedMaxHp();
-                return $"HP: {current} / {max}";
+                return string.Format(T("HP: {0} / {1}"), current, max);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading HP: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -583,7 +584,7 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
 
                 var currentCharges = data.Parameter.CurrentMpCountList;
                 int current = 0;
@@ -591,12 +592,12 @@ namespace FFIII_ScreenReader.Menus
                 {
                     current = currentCharges[level];
                 }
-                return $"MP LV{level}: {current}";
+                return string.Format(T("MP LV{0}: {1}"), level, current);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading MP level {level}: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -613,29 +614,29 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data == null) return "N/A";
+                if (data == null) return T("N/A");
 
                 // Use BattleUtility.GetJobLevel - the game's own calculation method
                 int jobLevel = BattleUtility.GetJobLevel(data);
 
                 if (jobLevel > 0)
                 {
-                    return $"Job Level: {jobLevel}";
+                    return string.Format(T("Job Level: {0}"), jobLevel);
                 }
 
                 // Fallback to data accessor
                 var ownedJob = data.OwnedJob;
                 if (ownedJob != null)
                 {
-                    return $"Job Level: {(ownedJob.Level > 0 ? ownedJob.Level : 1)}";
+                    return string.Format(T("Job Level: {0}"), ownedJob.Level > 0 ? ownedJob.Level : 1);
                 }
 
-                return "Job Level: N/A";
+                return string.Format(T("Job Level: {0}"), T("N/A"));
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Job Level: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -644,13 +645,13 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Strength: {data.Parameter.ConfirmedPower()}";
+                if (data?.Parameter == null) return T("N/A");
+                return string.Format(T("Strength: {0}"), data.Parameter.ConfirmedPower());
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Strength: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -658,13 +659,13 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Agility: {data.Parameter.ConfirmedAgility()}";
+                if (data?.Parameter == null) return T("N/A");
+                return string.Format(T("Agility: {0}"), data.Parameter.ConfirmedAgility());
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Agility: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -672,13 +673,13 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Stamina: {data.Parameter.ConfirmedVitality()}";
+                if (data?.Parameter == null) return T("N/A");
+                return string.Format(T("Stamina: {0}"), data.Parameter.ConfirmedVitality());
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Stamina: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -686,13 +687,13 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Intellect: {data.Parameter.ConfirmedIntelligence()}";
+                if (data?.Parameter == null) return T("N/A");
+                return string.Format(T("Intellect: {0}"), data.Parameter.ConfirmedIntelligence());
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Intellect: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -700,13 +701,13 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Spirit: {data.Parameter.ConfirmedSpirit()}";
+                if (data?.Parameter == null) return T("N/A");
+                return string.Format(T("Spirit: {0}"), data.Parameter.ConfirmedSpirit());
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Spirit: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -791,7 +792,7 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
 
                 int attackPower = data.Parameter.ConfirmedAttack();
 
@@ -806,12 +807,12 @@ namespace FFIII_ScreenReader.Menus
                     attackCount = 1;
                 }
 
-                return $"Attack: {attackCount} x {attackPower}";
+                return string.Format(T("Attack: {0} x {1}"), attackCount, attackPower);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Attack: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -819,14 +820,14 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
                 int accuracy = data.Parameter.ConfirmedAccuracyRate(false);
-                return $"Accuracy: {accuracy}%";
+                return string.Format(T("Accuracy: {0}%"), accuracy);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Accuracy: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -834,13 +835,13 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Defense: {data.Parameter.ConfirmedDefense()}";
+                if (data?.Parameter == null) return T("N/A");
+                return string.Format(T("Defense: {0}"), data.Parameter.ConfirmedDefense());
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Defense: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -848,14 +849,14 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
                 int evasion = data.Parameter.ConfirmedEvasionRate(false);
-                return $"Evasion: {evasion}%";
+                return string.Format(T("Evasion: {0}%"), evasion);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Evasion: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -863,13 +864,13 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Magic Defense: {data.Parameter.ConfirmedAbilityDefense()}";
+                if (data?.Parameter == null) return T("N/A");
+                return string.Format(T("Magic Defense: {0}"), data.Parameter.ConfirmedAbilityDefense());
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Magic Defense: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -877,14 +878,14 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
                 int magicEvasion = data.Parameter.ConfirmedAbilityEvasionRate(false);
-                return $"Magic Evasion: {magicEvasion}%";
+                return string.Format(T("Magic Evasion: {0}%"), magicEvasion);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Magic Evasion: {ex.Message}");
-                return "N/A";
+                return T("N/A");
             }
         }
     }

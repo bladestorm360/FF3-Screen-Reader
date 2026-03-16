@@ -6,6 +6,7 @@ using MelonLoader;
 using FFIII_ScreenReader.Utils;
 using FFIII_ScreenReader.Menus;
 using FFIII_ScreenReader.Patches;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 using ConfigActualDetailsControllerBase_KeyInput = Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase;
 using ConfigActualDetailsControllerBase_Touch = Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase;
 
@@ -34,7 +35,7 @@ namespace FFIII_ScreenReader.Core
 
         private static void NotAvailableInBattle()
         {
-            FFIII_ScreenReaderMod.SpeakText("Not available in battle", interrupt: true);
+            FFIII_ScreenReaderMod.SpeakText(T("Not available in battle"), interrupt: true);
         }
 
         private void InitializeBindings()
@@ -89,7 +90,8 @@ namespace FFIII_ScreenReader.Core
             registry.Register(KeyCode.M, KeyModifier.Shift, KeyContext.Global, mod.ToggleMapExitFilter, "Toggle map exit filter");
             registry.Register(KeyCode.M, KeyModifier.None, KeyContext.Global, GameInfoAnnouncer.AnnounceCurrentMap, "Announce current map");
             registry.Register(KeyCode.V, KeyContext.Global, AnnounceVehicleState, "Announce vehicle state");
-            registry.Register(KeyCode.I, KeyContext.Global, HandleItemDetailsKey, "Item details");
+            registry.Register(KeyCode.I, KeyModifier.Shift, KeyContext.Global, KeyHelpReader.AnnounceKeyHelp, "Announce key help controls");
+            registry.Register(KeyCode.I, KeyModifier.None, KeyContext.Global, HandleItemDetailsKey, "Item details");
             registry.Register(KeyCode.Alpha0, KeyContext.Global, DumpUntranslatedEntityNames, "Dump untranslated entity names");
 
             // --- Field-only toggles (blocked in battle with feedback) ---
@@ -212,7 +214,7 @@ namespace FFIII_ScreenReader.Core
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Vehicle State] Error: {ex.Message}");
-                FFIII_ScreenReaderMod.SpeakText("Unable to detect vehicle state", interrupt: true);
+                FFIII_ScreenReaderMod.SpeakText(T("Unable to detect vehicle state"), interrupt: true);
             }
         }
 
@@ -291,7 +293,7 @@ namespace FFIII_ScreenReader.Core
         {
             if (IsInBattle())
             {
-                FFIII_ScreenReaderMod.SpeakText("Unavailable in battle", interrupt: true);
+                FFIII_ScreenReaderMod.SpeakText(T("Unavailable in battle"), interrupt: true);
                 return;
             }
 
@@ -299,8 +301,8 @@ namespace FFIII_ScreenReader.Core
             int next = (current + 1) % 3;
             PreferencesManager.SetEnemyHPDisplay(next);
 
-            string[] options = { "Numbers", "Percentage", "Hidden" };
-            FFIII_ScreenReaderMod.SpeakText($"Enemy HP: {options[next]}", interrupt: true);
+            string[] options = { T("Numbers"), T("Percentage"), T("Hidden") };
+            FFIII_ScreenReaderMod.SpeakText(string.Format(T("Enemy HP: {0}"), options[next]), interrupt: true);
         }
 
         private static void DumpUntranslatedEntityNames()
@@ -313,7 +315,7 @@ namespace FFIII_ScreenReader.Core
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error dumping entity names: {ex.Message}");
-                FFIII_ScreenReaderMod.SpeakText("Failed to dump entity names", true);
+                FFIII_ScreenReaderMod.SpeakText(T("Failed to dump entity names"), true);
             }
         }
 
@@ -346,7 +348,7 @@ namespace FFIII_ScreenReader.Core
             try
             {
                 bool isDashing = MoveStateHelper.GetDashFlag();
-                string state = isDashing ? "Run" : "Walk";
+                string state = isDashing ? T("Run") : T("Walk");
                 FFIII_ScreenReaderMod.SpeakText(state, interrupt: true);
             }
             catch (Exception ex)
@@ -365,7 +367,7 @@ namespace FFIII_ScreenReader.Core
                 if (userData?.CheatSettingsData != null)
                 {
                     bool enabled = userData.CheatSettingsData.IsEnableEncount;
-                    string state = enabled ? "Encounters on" : "Encounters off";
+                    string state = enabled ? T("Encounters on") : T("Encounters off");
                     FFIII_ScreenReaderMod.SpeakText(state, interrupt: true);
                 }
             }

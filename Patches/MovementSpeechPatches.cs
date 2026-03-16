@@ -6,6 +6,7 @@ using Il2CppLast.Entity.Field;
 using Il2CppLast.Map;
 using FFIII_ScreenReader.Utils;
 using FFIII_ScreenReader.Core;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFIII_ScreenReader.Patches
 {
@@ -155,14 +156,14 @@ namespace FFIII_ScreenReader.Patches
                     string vehicleName = GetTransportationName(transportationId);
                     if (!string.IsNullOrEmpty(vehicleName))
                     {
-                        announcement = $"On {vehicleName}";
+                        announcement = string.Format(T("On {0}"), vehicleName);
                         MoveStateHelper.SetVehicleState(transportationId);
                     }
                 }
                 else if (wasOnVehicle && isNowOnFoot)
                 {
                     // Disembarking - specifically to TRANSPORT_PLAYER (on foot)
-                    announcement = "On foot";
+                    announcement = T("On foot");
                     MoveStateHelper.SetOnFoot();
                 }
 
@@ -390,7 +391,7 @@ namespace FFIII_ScreenReader.Patches
                     MoveStateHelper.SetVehicleState(typeId);
                     lastAnnouncedTransportId = typeId;
                     lastTransportationId = typeId;
-                    string announcement = $"On {vehicleName}";
+                    string announcement = string.Format(T("On {0}"), vehicleName);
                     FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
@@ -420,7 +421,7 @@ namespace FFIII_ScreenReader.Patches
                 // Only announce "On foot" if we were on a known vehicle
                 if (!string.IsNullOrEmpty(vehicleName))
                 {
-                    FFIII_ScreenReaderMod.SpeakText("On foot", interrupt: false);
+                    FFIII_ScreenReaderMod.SpeakText(T("On foot"), interrupt: false);
                 }
             }
             catch (Exception ex)
@@ -436,15 +437,15 @@ namespace FFIII_ScreenReader.Patches
         {
             switch (typeId)
             {
-                case TRANSPORT_SHIP: return "ship";
-                case TRANSPORT_PLANE: return "airship";
-                case TRANSPORT_SUBMARINE: return "submarine";
-                case TRANSPORT_LOWFLYING: return "airship";
-                case TRANSPORT_SPECIALPLANE: return "airship";
-                case TRANSPORT_YELLOWCHOCOBO: return "chocobo";
-                case TRANSPORT_BLACKCHOCOBO: return "chocobo";
-                case TRANSPORT_BOKO: return "chocobo";
-                case TRANSPORT_MAGICALARMOR: return "magical armor";
+                case TRANSPORT_SHIP: return T("ship");
+                case TRANSPORT_PLANE: return T("airship");
+                case TRANSPORT_SUBMARINE: return T("submarine");
+                case TRANSPORT_LOWFLYING: return T("airship");
+                case TRANSPORT_SPECIALPLANE: return T("airship");
+                case TRANSPORT_YELLOWCHOCOBO: return T("chocobo");
+                case TRANSPORT_BLACKCHOCOBO: return T("chocobo");
+                case TRANSPORT_BOKO: return T("chocobo");
+                case TRANSPORT_MAGICALARMOR: return T("magical armor");
                 default: return null;
             }
         }

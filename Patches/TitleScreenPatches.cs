@@ -4,6 +4,7 @@ using HarmonyLib;
 using MelonLoader;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 // Splash/Title screen
 using SplashController = Il2CppLast.UI.SplashController;
@@ -192,7 +193,7 @@ namespace FFIII_ScreenReader.Patches
                 }
                 else
                 {
-                    pendingTitleText = "Press any button";
+                    pendingTitleText = T("Press any button");
                 }
 
                 isTitleScreenTextPending = true;

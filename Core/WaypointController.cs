@@ -3,6 +3,7 @@ using MelonLoader;
 using UnityEngine;
 using FFIII_ScreenReader.Field;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 using FieldPlayerController = Il2CppLast.Map.FieldPlayerController;
 
 namespace FFIII_ScreenReader.Core
@@ -34,7 +35,7 @@ namespace FFIII_ScreenReader.Core
 
             if (waypointNavigator.Count == 0)
             {
-                FFIII_ScreenReaderMod.SpeakText("No waypoints on this map");
+                FFIII_ScreenReaderMod.SpeakText(T("No waypoints on this map"));
                 return;
             }
 
@@ -52,7 +53,7 @@ namespace FFIII_ScreenReader.Core
 
             if (waypointNavigator.Count == 0)
             {
-                FFIII_ScreenReaderMod.SpeakText("No waypoints on this map");
+                FFIII_ScreenReaderMod.SpeakText(T("No waypoints on this map"));
                 return;
             }
 
@@ -88,7 +89,7 @@ namespace FFIII_ScreenReader.Core
             var waypoint = waypointNavigator.SelectedWaypoint;
             if (waypoint == null)
             {
-                FFIII_ScreenReaderMod.SpeakText("No waypoint selected");
+                FFIII_ScreenReaderMod.SpeakText(T("No waypoint selected"));
                 return;
             }
 
@@ -118,7 +119,7 @@ namespace FFIII_ScreenReader.Core
             var playerPos = mod.GetPlayerPosition();
             if (!playerPos.HasValue)
             {
-                FFIII_ScreenReaderMod.SpeakText("Cannot get player position");
+                FFIII_ScreenReaderMod.SpeakText(T("Cannot get player position"));
                 return;
             }
 
@@ -126,13 +127,13 @@ namespace FFIII_ScreenReader.Core
             string defaultName = waypointManager.GetNextWaypointName(mapId);
 
             TextInputWindow.Open(
-                "Enter waypoint name",
+                T("Enter waypoint name"),
                 "",
                 onConfirm: (name) =>
                 {
                     waypointManager.AddWaypoint(name, playerPos.Value, mapId);
                     waypointNavigator.RefreshList(mapId);
-                    FFIII_ScreenReaderMod.SpeakText($"Waypoint added: {name}");
+                    FFIII_ScreenReaderMod.SpeakText(string.Format(T("Waypoint added: {0}"), name));
                 },
                 onCancel: () => { }
             );
@@ -146,25 +147,25 @@ namespace FFIII_ScreenReader.Core
             var waypoint = waypointNavigator.SelectedWaypoint;
             if (waypoint == null)
             {
-                FFIII_ScreenReaderMod.SpeakText("No waypoint selected");
+                FFIII_ScreenReaderMod.SpeakText(T("No waypoint selected"));
                 return;
             }
 
             string mapId = mod.GetCurrentMapIdString();
 
             TextInputWindow.Open(
-                "Enter new waypoint name",
+                T("Enter new waypoint name"),
                 waypoint.Name,
                 onConfirm: (newName) =>
                 {
                     if (waypointManager.RenameWaypoint(waypoint.WaypointId, newName))
                     {
                         waypointNavigator.RefreshList(mapId);
-                        FFIII_ScreenReaderMod.SpeakText($"Waypoint renamed to: {newName}");
+                        FFIII_ScreenReaderMod.SpeakText(string.Format(T("Waypoint renamed to: {0}"), newName));
                     }
                     else
                     {
-                        FFIII_ScreenReaderMod.SpeakText("Failed to rename waypoint");
+                        FFIII_ScreenReaderMod.SpeakText(T("Failed to rename waypoint"));
                     }
                 },
                 onCancel: () => { }
@@ -179,7 +180,7 @@ namespace FFIII_ScreenReader.Core
             var waypoint = waypointNavigator.SelectedWaypoint;
             if (waypoint == null)
             {
-                FFIII_ScreenReaderMod.SpeakText("No waypoint selected");
+                FFIII_ScreenReaderMod.SpeakText(T("No waypoint selected"));
                 return;
             }
 
@@ -187,18 +188,18 @@ namespace FFIII_ScreenReader.Core
             string waypointName = waypoint.Name;
 
             ConfirmationDialog.Open(
-                $"Delete waypoint {waypointName}?",
+                string.Format(T("Delete waypoint {0}?"), waypointName),
                 onYes: () =>
                 {
                     if (waypointManager.RemoveWaypoint(waypoint.WaypointId))
                     {
                         waypointNavigator.RefreshList(mapId);
                         waypointNavigator.ClearSelection();
-                        FFIII_ScreenReaderMod.SpeakText($"Waypoint deleted: {waypointName}");
+                        FFIII_ScreenReaderMod.SpeakText(string.Format(T("Waypoint deleted: {0}"), waypointName));
                     }
                     else
                     {
-                        FFIII_ScreenReaderMod.SpeakText("Failed to delete waypoint");
+                        FFIII_ScreenReaderMod.SpeakText(T("Failed to delete waypoint"));
                     }
                 },
                 onNo: () => { }
@@ -215,20 +216,20 @@ namespace FFIII_ScreenReader.Core
 
             if (count == 0)
             {
-                FFIII_ScreenReaderMod.SpeakText("No waypoints to clear on this map");
+                FFIII_ScreenReaderMod.SpeakText(T("No waypoints to clear on this map"));
                 return;
             }
 
-            string plural = count == 1 ? "waypoint" : "waypoints";
+            string plural = count == 1 ? T("waypoint") : T("waypoints");
 
             ConfirmationDialog.Open(
-                $"Clear all {count} {plural} from this map?",
+                string.Format(T("Clear all {0} {1} from this map?"), count, plural),
                 onYes: () =>
                 {
                     int cleared = waypointManager.ClearMapWaypoints(mapId);
                     waypointNavigator.RefreshList(mapId);
                     waypointNavigator.ClearSelection();
-                    FFIII_ScreenReaderMod.SpeakText($"Cleared {cleared} {plural}");
+                    FFIII_ScreenReaderMod.SpeakText(string.Format(T("Cleared {0} {1}"), cleared, plural));
                 },
                 onNo: () => { }
             );

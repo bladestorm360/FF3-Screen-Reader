@@ -40,5 +40,18 @@ namespace FFIII_ScreenReader.Utils
         // Shop
         public const string SHOP_ITEM = "Shop.Item";
         public const string SHOP_QUANTITY = "Shop.Quantity";
+
+        // Extras: Gallery
+        public const string GALLERY_LIST_ENTRY = "Gallery.ListEntry";
+
+        // Extras: Music Player
+        public const string MUSIC_LIST_ENTRY = "MusicPlayer.ListEntry";
+
+        // Extras: Bestiary
+        public const string BESTIARY_LIST_ENTRY = "Bestiary.ListEntry";
+        public const string BESTIARY_DETAIL_STAT = "Bestiary.DetailStat";
+        public const string BESTIARY_FORMATION = "Bestiary.Formation";
+        public const string BESTIARY_MAP = "Bestiary.Map";
+        public const string BESTIARY_STATE = "Bestiary.State";
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using MelonLoader;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 using UserDataManager = Il2CppLast.Management.UserDataManager;
 
 namespace FFIII_ScreenReader.Core
@@ -18,7 +19,7 @@ namespace FFIII_ScreenReader.Core
                 if (userDataManager != null)
                 {
                     int gil = userDataManager.OwendGil;
-                    FFIII_ScreenReaderMod.SpeakText($"{gil} Gil");
+                    FFIII_ScreenReaderMod.SpeakText(string.Format(T("{0} Gil"), gil));
                     return;
                 }
             }
@@ -26,7 +27,7 @@ namespace FFIII_ScreenReader.Core
             {
                 MelonLogger.Warning($"Error getting gil: {ex.Message}");
             }
-            FFIII_ScreenReaderMod.SpeakText("Gil not available");
+            FFIII_ScreenReaderMod.SpeakText(T("Gil not available"));
         }
 
         public static void AnnounceCurrentMap()
@@ -44,7 +45,7 @@ namespace FFIII_ScreenReader.Core
             {
                 MelonLogger.Warning($"Error getting map name: {ex.Message}");
             }
-            FFIII_ScreenReaderMod.SpeakText("Map name not available");
+            FFIII_ScreenReaderMod.SpeakText(T("Map name not available"));
         }
 
         public static void AnnounceCharacterStatus()
@@ -54,14 +55,14 @@ namespace FFIII_ScreenReader.Core
                 var userDataManager = UserDataManager.Instance();
                 if (userDataManager == null)
                 {
-                    FFIII_ScreenReaderMod.SpeakText("Character data not available");
+                    FFIII_ScreenReaderMod.SpeakText(T("Character data not available"));
                     return;
                 }
 
                 var partyList = userDataManager.GetOwnedCharactersClone(false);
                 if (partyList == null || partyList.Count == 0)
                 {
-                    FFIII_ScreenReaderMod.SpeakText("No party members");
+                    FFIII_ScreenReaderMod.SpeakText(T("No party members"));
                     return;
                 }
 
@@ -81,7 +82,7 @@ namespace FFIII_ScreenReader.Core
                                 int currentMp = param.CurrentMP;
                                 int maxMp = param.ConfirmedMaxMp();
 
-                                sb.AppendLine($"{name}: HP {currentHp}/{maxHp}, MP {currentMp}/{maxMp}");
+                                sb.AppendLine(string.Format(T("{0}: HP {1}/{2}, MP {3}/{4}"), name, currentHp, maxHp, currentMp, maxMp));
                             }
                         }
                     }
@@ -92,12 +93,12 @@ namespace FFIII_ScreenReader.Core
                 if (!string.IsNullOrEmpty(status))
                     FFIII_ScreenReaderMod.SpeakText(status);
                 else
-                    FFIII_ScreenReaderMod.SpeakText("No character status available");
+                    FFIII_ScreenReaderMod.SpeakText(T("No character status available"));
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error getting character status: {ex.Message}");
-                FFIII_ScreenReaderMod.SpeakText("Character status not available");
+                FFIII_ScreenReaderMod.SpeakText(T("Character status not available"));
             }
         }
     }

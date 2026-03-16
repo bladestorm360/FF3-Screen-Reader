@@ -3,6 +3,7 @@ using System.Collections;
 using MelonLoader;
 using UnityEngine;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFIII_ScreenReader.Core
 {
@@ -49,7 +50,7 @@ namespace FFIII_ScreenReader.Core
             WindowsFocusHelper.StealFocus("FFIII_ConfirmDialog");
 
             // Announce prompt with delay to avoid NVDA window title interruption
-            CoroutineManager.StartManaged(DelayedPromptAnnouncement($"{prompt} Yes or No"));
+            CoroutineManager.StartManaged(DelayedPromptAnnouncement($"{prompt} {T("Yes or No")}"));
         }
 
         /// <summary>
@@ -122,7 +123,7 @@ namespace FFIII_ScreenReader.Core
             if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_Y))
             {
                 var callback = onYesCallback;
-                CoroutineManager.StartManaged(DelayedCloseAnnouncement("Yes", callback));
+                CoroutineManager.StartManaged(DelayedCloseAnnouncement(T("Yes"), callback));
                 return true;
             }
 
@@ -130,7 +131,7 @@ namespace FFIII_ScreenReader.Core
             if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_N))
             {
                 var callback = onNoCallback;
-                CoroutineManager.StartManaged(DelayedCloseAnnouncement("No", callback));
+                CoroutineManager.StartManaged(DelayedCloseAnnouncement(T("No"), callback));
                 return true;
             }
 
@@ -138,7 +139,7 @@ namespace FFIII_ScreenReader.Core
             if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_ESCAPE))
             {
                 var callback = onNoCallback;
-                CoroutineManager.StartManaged(DelayedCloseAnnouncement("Cancelled", callback));
+                CoroutineManager.StartManaged(DelayedCloseAnnouncement(T("Cancelled"), callback));
                 return true;
             }
 
@@ -148,12 +149,12 @@ namespace FFIII_ScreenReader.Core
                 if (selectedYes)
                 {
                     var callback = onYesCallback;
-                    CoroutineManager.StartManaged(DelayedCloseAnnouncement("Yes", callback));
+                    CoroutineManager.StartManaged(DelayedCloseAnnouncement(T("Yes"), callback));
                 }
                 else
                 {
                     var callback = onNoCallback;
-                    CoroutineManager.StartManaged(DelayedCloseAnnouncement("No", callback));
+                    CoroutineManager.StartManaged(DelayedCloseAnnouncement(T("No"), callback));
                 }
                 return true;
             }
@@ -162,7 +163,7 @@ namespace FFIII_ScreenReader.Core
             if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_LEFT) || WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_RIGHT))
             {
                 selectedYes = !selectedYes;
-                string selection = selectedYes ? "Yes" : "No";
+                string selection = selectedYes ? T("Yes") : T("No");
                 FFIII_ScreenReaderMod.SpeakText(selection, interrupt: true);
                 return true;
             }

@@ -8,6 +8,7 @@ using HarmonyLib;
 using System;
 using System.Collections;
 using System.Reflection;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 using GameCursor = Il2CppLast.UI.Cursor;
 using FieldMap = Il2Cpp.FieldMap;
 using FieldMapProvisionInformation = Il2CppLast.Map.FieldMapProvisionInformation;
@@ -57,6 +58,9 @@ namespace FFIII_ScreenReader.Core
             LoggerInstance.Msg("FFIII Screen Reader Mod loaded!");
 
             UnityEngine.SceneManagement.SceneManager.sceneLoaded += (UnityEngine.Events.UnityAction<UnityEngine.SceneManagement.Scene, UnityEngine.SceneManagement.LoadSceneMode>)OnSceneLoaded;
+
+            // Initialize mod text translations
+            ModTextTranslator.Initialize();
 
             // Initialize preferences
             PreferencesManager.Initialize();
@@ -123,6 +127,9 @@ namespace FFIII_ScreenReader.Core
             EventItemSelectPatches.Apply(harmony);
             GameStatePatches.ApplyPatches(harmony);
             MapTransitionPatches.ApplyPatches(harmony);
+            GalleryPatches.ApplyPatches(harmony);
+            MusicPlayerPatches.ApplyPatches(harmony);
+            BestiaryPatches.ApplyPatches(harmony);
             TryPatchEntityInteractions(harmony);
         }
 
@@ -301,7 +308,7 @@ namespace FFIII_ScreenReader.Core
             RefreshEntitiesIfNeeded();
 
             var entity = entityScanner.CurrentEntity;
-            if (entity == null) { SpeakText("No entities found"); return; }
+            if (entity == null) { SpeakText(T("No entities found")); return; }
 
             var playerPos = GetPlayerPosition();
             if (!playerPos.HasValue) { SpeakText(entity.Name); return; }
@@ -318,7 +325,7 @@ namespace FFIII_ScreenReader.Core
         {
             if (!EnsureFieldContext()) return;
             RefreshEntitiesIfNeeded();
-            if (entityScanner.Entities.Count == 0) { SpeakText("No entities found"); return; }
+            if (entityScanner.Entities.Count == 0) { SpeakText(T("No entities found")); return; }
             entityScanner.NextEntity();
             AnnounceEntityOnly();
         }
@@ -327,7 +334,7 @@ namespace FFIII_ScreenReader.Core
         {
             if (!EnsureFieldContext()) return;
             RefreshEntitiesIfNeeded();
-            if (entityScanner.Entities.Count == 0) { SpeakText("No entities found"); return; }
+            if (entityScanner.Entities.Count == 0) { SpeakText(T("No entities found")); return; }
             entityScanner.PreviousEntity();
             AnnounceEntityOnly();
         }
@@ -337,7 +344,7 @@ namespace FFIII_ScreenReader.Core
             if (!EnsureFieldContext()) return;
 
             var entity = entityScanner.CurrentEntity;
-            if (entity == null) { SpeakText("No entity selected"); return; }
+            if (entity == null) { SpeakText(T("No entity selected")); return; }
 
             var playerPos = GetPlayerPosition();
             if (!playerPos.HasValue) { SpeakText(entity.Name); return; }
@@ -345,7 +352,7 @@ namespace FFIII_ScreenReader.Core
             string announcement = entity.FormatDescription(playerPos.Value);
             int index = entityScanner.CurrentIndex + 1;
             int total = entityScanner.Entities.Count;
-            SpeakText($"{announcement}, {index} of {total}");
+            SpeakText(string.Format(T("{0}, {1} of {2}"), announcement, index, total));
         }
 
         private void RefreshEntitiesIfNeeded()
@@ -386,7 +393,7 @@ namespace FFIII_ScreenReader.Core
         internal void ResetToAllCategory()
         {
             if (!EnsureFieldContext()) return;
-            if (currentCategory == EntityCategory.All) { SpeakText("Already in All category"); return; }
+            if (currentCategory == EntityCategory.All) { SpeakText(T("Already in All category")); return; }
             currentCategory = EntityCategory.All;
             entityScanner.CurrentCategory = currentCategory;
             AnnounceCategoryChange();
@@ -394,20 +401,20 @@ namespace FFIII_ScreenReader.Core
 
         private void AnnounceCategoryChange()
         {
-            SpeakText($"Category: {GetCategoryName(currentCategory)}");
+            SpeakText(string.Format(T("Category: {0}"), GetCategoryName(currentCategory)));
         }
 
         internal static string GetCategoryName(EntityCategory category)
         {
             return category switch
             {
-                EntityCategory.All => "All",
-                EntityCategory.Chests => "Treasure Chests",
-                EntityCategory.NPCs => "NPCs",
-                EntityCategory.MapExits => "Map Exits",
-                EntityCategory.Events => "Events",
-                EntityCategory.Vehicles => "Vehicles",
-                _ => "Unknown"
+                EntityCategory.All => T("All"),
+                EntityCategory.Chests => T("Treasure Chests"),
+                EntityCategory.NPCs => T("NPCs"),
+                EntityCategory.MapExits => T("Map Exits"),
+                EntityCategory.Events => T("Events"),
+                EntityCategory.Vehicles => T("Vehicles"),
+                _ => T("Unknown")
             };
         }
 
@@ -416,23 +423,23 @@ namespace FFIII_ScreenReader.Core
             try
             {
                 var player = GetFieldPlayer();
-                if (player == null) { SpeakText("Not on field map"); return; }
+                if (player == null) { SpeakText(T("Not on field map")); return; }
 
                 var entity = entityScanner.CurrentEntity;
-                if (entity == null) { SpeakText("No entity selected"); return; }
+                if (entity == null) { SpeakText(T("No entity selected")); return; }
 
                 Vector3 targetPos = entity.Position + new Vector3(offset.x, offset.y, 0);
                 player.transform.localPosition = targetPos;
 
                 string direction = Math.Abs(offset.x) > Math.Abs(offset.y)
-                    ? (offset.x > 0 ? "east" : "west")
-                    : (offset.y > 0 ? "north" : "south");
-                SpeakText($"Teleported to {direction} of {entity.Name}");
+                    ? (offset.x > 0 ? T("east") : T("west"))
+                    : (offset.y > 0 ? T("north") : T("south"));
+                SpeakText(string.Format(T("Teleported to {0} of {1}"), direction, entity.Name));
             }
             catch (Exception ex)
             {
                 LoggerInstance.Warning($"Error teleporting: {ex.Message}");
-                SpeakText("Teleport failed");
+                SpeakText(T("Teleport failed"));
             }
         }
 
@@ -445,14 +452,14 @@ namespace FFIII_ScreenReader.Core
             bool newVal = !PreferencesManager.PathfindingFilterEnabled;
             PreferencesManager.SaveToggle("PathfindingFilter", newVal);
             entityScanner.FilterByPathfinding = newVal;
-            SpeakText($"Pathfinding filter {(newVal ? "on" : "off")}");
+            SpeakText(string.Format(T("Pathfinding filter {0}"), newVal ? T("on") : T("off")));
         }
 
         internal void ToggleMapExitFilter()
         {
             bool newVal = !PreferencesManager.MapExitFilterEnabled;
             PreferencesManager.SaveToggle("MapExitFilter", newVal);
-            SpeakText($"Map exit filter {(newVal ? "on" : "off")}");
+            SpeakText(string.Format(T("Map exit filter {0}"), newVal ? T("on") : T("off")));
         }
 
         internal void ToggleToLayerFilter()
@@ -460,7 +467,7 @@ namespace FFIII_ScreenReader.Core
             bool newVal = !PreferencesManager.ToLayerFilterEnabled;
             PreferencesManager.SaveToggle("ToLayerFilter", newVal);
             entityScanner.FilterToLayer = newVal;
-            SpeakText($"Layer transition filter {(newVal ? "on" : "off")}");
+            SpeakText(string.Format(T("Layer transition filter {0}"), newVal ? T("on") : T("off")));
         }
 
         internal void ToggleWallTones()
@@ -469,14 +476,14 @@ namespace FFIII_ScreenReader.Core
             PreferencesManager.SaveToggle("WallTones", newVal);
             if (newVal) audioLoopManager.StartWallToneLoop();
             else audioLoopManager.StopWallToneLoop();
-            SpeakText($"Wall tones {(newVal ? "on" : "off")}");
+            SpeakText(string.Format(T("Wall tones {0}"), newVal ? T("on") : T("off")));
         }
 
         internal void ToggleFootsteps()
         {
             bool newVal = !PreferencesManager.FootstepsEnabled;
             PreferencesManager.SaveToggle("Footsteps", newVal);
-            SpeakText($"Footsteps {(newVal ? "on" : "off")}");
+            SpeakText(string.Format(T("Footsteps {0}"), newVal ? T("on") : T("off")));
         }
 
         internal void ToggleAudioBeacons()
@@ -485,7 +492,7 @@ namespace FFIII_ScreenReader.Core
             PreferencesManager.SaveToggle("AudioBeacons", newVal);
             if (newVal) audioLoopManager.StartBeaconLoop();
             else audioLoopManager.StopBeaconLoop();
-            SpeakText($"Audio beacons {(newVal ? "on" : "off")}");
+            SpeakText(string.Format(T("Audio beacons {0}"), newVal ? T("on") : T("off")));
         }
 
         #endregion
@@ -542,14 +549,14 @@ namespace FFIII_ScreenReader.Core
             var fieldMap = GameObjectCache.Get<FieldMap>();
             if (fieldMap == null || !fieldMap.gameObject.activeInHierarchy)
             {
-                SpeakText("Not on map");
+                SpeakText(T("Not on map"));
                 return false;
             }
 
             var playerController = GameObjectCache.Get<FieldPlayerController>();
             if (playerController?.fieldPlayer == null)
             {
-                SpeakText("Not on map");
+                SpeakText(T("Not on map"));
                 return false;
             }
 

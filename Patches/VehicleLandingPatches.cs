@@ -5,6 +5,7 @@ using MelonLoader;
 using Il2CppLast.Map;
 using FFIII_ScreenReader.Utils;
 using FFIII_ScreenReader.Core;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFIII_ScreenReader.Patches
 {
@@ -141,7 +142,7 @@ namespace FFIII_ScreenReader.Patches
                 // Only announce when entering landable zone (false -> true)
                 if (landable && !lastLandableState)
                 {
-                    FFIII_ScreenReaderMod.SpeakText("Can land", interrupt: false);
+                    FFIII_ScreenReaderMod.SpeakText(T("Can land"), interrupt: false);
                 }
 
                 lastLandableState = landable;
@@ -166,7 +167,7 @@ namespace FFIII_ScreenReader.Patches
                 // Only announce when entering landable zone (false -> true)
                 if (landable && !lastLandableState)
                 {
-                    FFIII_ScreenReaderMod.SpeakText("Can land", interrupt: false);
+                    FFIII_ScreenReaderMod.SpeakText(T("Can land"), interrupt: false);
                 }
 
                 lastLandableState = landable;

@@ -4,6 +4,7 @@ using HarmonyLib;
 using MelonLoader;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for IL2CPP types
 using BattleFrequencyAbilityInfomationController = Il2CppSerial.FF3.UI.KeyInput.BattleFrequencyAbilityInfomationController;
@@ -122,10 +123,10 @@ namespace FFIII_ScreenReader.Patches
                 if (contentController == null)
                 {
                     // Empty slot
-                    if (BattleMagicMenuState.ShouldAnnounce("Empty"))
+                    if (BattleMagicMenuState.ShouldAnnounce(T("Empty")))
                     {
                         MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
-                        FFIII_ScreenReaderMod.SpeakText("Empty", interrupt: true);
+                        FFIII_ScreenReaderMod.SpeakText(T("Empty"), interrupt: true);
                     }
                     return;
                 }
@@ -135,10 +136,10 @@ namespace FFIII_ScreenReader.Patches
                 if (ability == null)
                 {
                     // Empty slot
-                    if (BattleMagicMenuState.ShouldAnnounce("Empty"))
+                    if (BattleMagicMenuState.ShouldAnnounce(T("Empty")))
                     {
                         MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
-                        FFIII_ScreenReaderMod.SpeakText("Empty", interrupt: true);
+                        FFIII_ScreenReaderMod.SpeakText(T("Empty"), interrupt: true);
                     }
                     return;
                 }
