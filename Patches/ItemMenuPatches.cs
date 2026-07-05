@@ -255,7 +255,17 @@ namespace FFIII_ScreenReader.Patches
                 // Also clear other menu states to prevent conflicts
                 MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
 
+                // Append cursor position (N of M) LAST, after the item name/quantity/description.
+                announcement = MenuPosition.Format(announcement, index, targetList.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+
+                // Auto Detail: queue the same equip-job info the 'I' key reads AFTER the name
+                // announce (interrupt:false). Placed past the ShouldAnnounce dedup above, so it
+                // only fires on a genuinely new item — cursoring to the same row won't restack it.
+                if (PreferencesManager.AutoDetailEnabled)
+                {
+                    ItemDetailsAnnouncer.AnnounceEquipRequirements(interrupt: false, announceIfEmpty: false);
+                }
             }
             catch (Exception ex)
             {
@@ -337,6 +347,8 @@ namespace FFIII_ScreenReader.Patches
                 // Also clear other menu states to prevent conflicts
                 MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
 
+                // Append cursor position (N of M) among the target characters.
+                announcement = MenuPosition.Format(announcement, index, contentList.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)

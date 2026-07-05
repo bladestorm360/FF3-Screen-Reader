@@ -50,7 +50,8 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// Called when game state changes (field, battle, menu, etc.).
-        /// Handles map transition announcements and battle state clearing.
+        /// Handles map transition announcements, battle state clearing,
+        /// and config menu bestiary dispatch (states 17/18).
         /// </summary>
         public static void ChangeState_Postfix(SubSceneManagerMainGame.State state)
         {
@@ -64,8 +65,24 @@ namespace FFIII_ScreenReader.Patches
                     // Clear battle state when returning to field
                     ClearAllBattleState();
 
+                    // If we were in config bestiary, handle exit
+                    if (BestiaryPatches.ConfigBestiaryStateHandler.WasInConfigBestiary)
+                    {
+                        BestiaryPatches.ConfigBestiaryStateHandler.HandleExit();
+                    }
+
                     // Check for map transition
                     CheckMapTransition();
+                }
+                // Config menu bestiary states
+                else if (stateValue == 17 || stateValue == 18)
+                {
+                    BestiaryPatches.ConfigBestiaryStateHandler.HandleStateChange(stateValue);
+                }
+                // Exiting config bestiary to another non-field state
+                else if (BestiaryPatches.ConfigBestiaryStateHandler.WasInConfigBestiary)
+                {
+                    BestiaryPatches.ConfigBestiaryStateHandler.HandleExit();
                 }
             }
             catch (Exception ex)

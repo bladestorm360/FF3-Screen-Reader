@@ -172,7 +172,7 @@ namespace FFIII_ScreenReader.Menus
                                 string menuText = TextUtils.StripIconMarkup(text.text.Trim());
                                 if (!string.IsNullOrEmpty(menuText))
                                 {
-                                    return menuText;
+                                    return MenuPosition.Format(menuText, cursor.Index, contentList.childCount);
                                 }
                             }
                         }

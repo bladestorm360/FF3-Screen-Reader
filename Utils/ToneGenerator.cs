@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 
 namespace FFIII_ScreenReader.Utils
@@ -115,6 +114,68 @@ namespace FFIII_ScreenReader.Utils
             }
         }
 
+        /// <summary>
+        /// Generates a 16-bit stereo WAV containing a short ping followed by silence.
+        /// When hardware-looped, the silence gap creates a pulsing/ticking effect.
+        /// Uses cycle-aligned ping duration for a clean sound at the loop boundary.
+        /// </summary>
+        public static byte[] GenerateLandingPing(int frequency, int totalDurationMs, int pingDurationMs, float volume, float pan)
+        {
+            int sampleRate = SoundConstants.SAMPLE_RATE;
+            int totalSamples = (sampleRate * totalDurationMs) / 1000;
+            int pingSamples = (sampleRate * pingDurationMs) / 1000;
+
+            double samplesPerCycle = (double)sampleRate / frequency;
+            int numCycles = (int)Math.Round(pingSamples / samplesPerCycle);
+            if (numCycles < 1) numCycles = 1;
+            pingSamples = (int)Math.Round(numCycles * samplesPerCycle);
+
+            if (totalSamples <= pingSamples)
+                totalSamples = pingSamples + (sampleRate * 50) / 1000;
+
+            int dataSize = totalSamples * 4;
+
+            double panAngle = pan * Math.PI / 2;
+            float leftVol = volume * (float)Math.Cos(panAngle);
+            float rightVol = volume * (float)Math.Sin(panAngle);
+
+            using (var ms = new MemoryStream())
+            using (var writer = new BinaryWriter(ms))
+            {
+                WriteWavHeader(writer, 2, dataSize);
+
+                int attackSamples = pingSamples / 8;
+                int decaySamples = pingSamples / 4;
+                int decayStart = pingSamples - decaySamples;
+
+                for (int i = 0; i < totalSamples; i++)
+                {
+                    if (i < pingSamples)
+                    {
+                        double t = (double)i / sampleRate;
+                        double envelope = 1.0;
+
+                        if (i < attackSamples)
+                            envelope = (double)i / attackSamples;
+                        else if (i >= decayStart)
+                            envelope = (double)(pingSamples - i) / decaySamples;
+
+                        double sineValue = Math.Sin(2 * Math.PI * frequency * t) * envelope;
+
+                        writer.Write((short)(sineValue * leftVol * 32767));
+                        writer.Write((short)(sineValue * rightVol * 32767));
+                    }
+                    else
+                    {
+                        writer.Write((short)0);
+                        writer.Write((short)0);
+                    }
+                }
+
+                return ms.ToArray();
+            }
+        }
+
         public static byte[] MonoToStereo(byte[] monoWav)
         {
             if (monoWav == null || monoWav.Length < SoundConstants.WAV_HEADER_SIZE) return monoWav;
@@ -158,56 +219,6 @@ namespace FFIII_ScreenReader.Utils
                     }
                     return ms.ToArray();
                 }
-            }
-        }
-
-        public static byte[] MixWavFiles(List<byte[]> wavFiles)
-        {
-            if (wavFiles == null || wavFiles.Count == 0) return null;
-
-            int maxDataLength = 0;
-            foreach (var wav in wavFiles)
-            {
-                if (wav.Length > SoundConstants.WAV_HEADER_SIZE)
-                {
-                    int dataLen = wav.Length - SoundConstants.WAV_HEADER_SIZE;
-                    if (dataLen > maxDataLength) maxDataLength = dataLen;
-                }
-            }
-            if (maxDataLength == 0) return null;
-
-            using (var ms = new MemoryStream())
-            using (var writer = new BinaryWriter(ms))
-            {
-                WriteWavHeader(writer, 2, maxDataLength);
-
-                int sampleCount = maxDataLength / 2;
-                for (int i = 0; i < sampleCount; i++)
-                {
-                    int mixedValue = 0;
-                    int count = 0;
-
-                    foreach (var wav in wavFiles)
-                    {
-                        int pos = SoundConstants.WAV_HEADER_SIZE + (i * 2);
-                        if (pos + 1 < wav.Length)
-                        {
-                            short sample = (short)(wav[pos] | (wav[pos + 1] << 8));
-                            mixedValue += sample;
-                            count++;
-                        }
-                    }
-
-                    if (count > 1)
-                    {
-                        double headroom = 1.0 / Math.Sqrt(count);
-                        mixedValue = (int)(mixedValue * headroom);
-                    }
-
-                    mixedValue = Math.Max(short.MinValue, Math.Min(short.MaxValue, mixedValue));
-                    writer.Write((short)mixedValue);
-                }
-                return ms.ToArray();
             }
         }
 

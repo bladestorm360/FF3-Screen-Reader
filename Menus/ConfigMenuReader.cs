@@ -36,6 +36,38 @@ namespace FFIII_ScreenReader.Menus
             }
         }
 
+        // Self-contained Language(enum int) → display name. The game's own GetLanguageMessage returns
+        // EMPTY for the CURRENT language (it blanks the current item's label), so we map here instead.
+        // Names match the game's English-name style observed in the language dropdown.
+        private static readonly System.Collections.Generic.Dictionary<int, string> LanguageNames = new()
+        {
+            { 1, "Japanese" }, { 2, "English" }, { 3, "French" }, { 4, "Italian" },
+            { 5, "German" }, { 6, "Spanish" }, { 7, "Korean" }, { 8, "Chinese (Traditional)" },
+            { 9, "Chinese (Simplified)" }, { 10, "Russian" }, { 11, "Thai" }, { 12, "Brazilian Portuguese" },
+        };
+
+        /// <summary>
+        /// Current game language display name, mapped from MessageManager.currentLanguage (the same
+        /// source EntityTranslator uses). Used for the Language config row and the open dropdown's
+        /// current item (whose LabelText is blank). Deliberately does NOT use
+        /// LangugeUtility.GetLanguageMessage, which returns empty for the current language.
+        /// </summary>
+        public static string GetCurrentLanguageDisplayName()
+        {
+            try
+            {
+                var mgr = Il2CppLast.Management.MessageManager.Instance;
+                if (mgr == null) return null;
+                int langId = (int)mgr.currentLanguage;
+                return LanguageNames.TryGetValue(langId, out string name) ? name : null;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Config Menu] GetCurrentLanguageDisplayName failed: {ex.Message}");
+                return null;
+            }
+        }
+
         /// <summary>
         /// Converts a slider value to percentage based on its min/max range.
         /// </summary>
@@ -66,6 +98,17 @@ namespace FFIII_ScreenReader.Menus
                 return null;
 
             var view = command.view;
+
+            // Language row: its dropdown OptionData text is empty while the popup is closed, so read
+            // the current language straight from the game → "Language: <current>". Identified by the
+            // command's config type (not a localized string match).
+            var cmdData = command.ConfigCommandsData;
+            if (cmdData != null && cmdData.ConfigCommandType == Il2CppLast.UI.ConfigCommandType.Language)
+            {
+                string lang = GetCurrentLanguageDisplayName();
+                if (!string.IsNullOrEmpty(lang))
+                    return lang;
+            }
 
             // Check arrow change text (for toggle/selection options like BGM Type)
             if (view.ArrowSelectTypeRoot != null && view.ArrowSelectTypeRoot.activeSelf)

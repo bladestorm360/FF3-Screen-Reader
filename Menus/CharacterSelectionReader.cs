@@ -81,7 +81,7 @@ namespace FFIII_ScreenReader.Menus
                             string characterInfo = ReadCharacterInformation(characterSlot);
                             if (characterInfo != null)
                             {
-                                return characterInfo;
+                                return FFIII_ScreenReader.Utils.MenuPosition.Format(characterInfo, cursorIndex, contentList.childCount);
                             }
                         }
                     }

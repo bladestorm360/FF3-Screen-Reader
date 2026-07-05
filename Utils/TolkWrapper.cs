@@ -75,5 +75,28 @@ namespace FFIII_ScreenReader.Utils
         /// Checks if Tolk is loaded and a screen reader is available.
         /// </summary>
         public bool IsLoaded() => tolk.IsLoaded();
+
+        /// <summary>
+        /// Silences current speech output. Used by controller navigation to
+        /// interrupt ongoing announcements since NVDA doesn't see controller
+        /// input as key events.
+        /// </summary>
+        public void Silence()
+        {
+            try
+            {
+                if (tolk.IsLoaded())
+                {
+                    lock (tolkLock)
+                    {
+                        tolk.Silence();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error silencing screen reader: {ex.Message}");
+            }
+        }
     }
 }

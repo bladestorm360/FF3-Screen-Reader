@@ -46,7 +46,7 @@ namespace FFIII_ScreenReader.Menus
                             string commandText = ReadCommandFromTransform(commandSlot);
                             if (commandText != null)
                             {
-                                return commandText;
+                                return FFIII_ScreenReader.Utils.MenuPosition.Format(commandText, cursorIndex, contentList.childCount);
                             }
                         }
 

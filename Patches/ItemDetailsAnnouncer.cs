@@ -30,7 +30,16 @@ namespace FFIII_ScreenReader.Patches
         /// Announces which jobs can equip the currently selected item.
         /// Only announces for weapons and armor, silent for other items.
         /// </summary>
-        public static void AnnounceEquipRequirements()
+        /// <param name="interrupt">
+        /// When true (the on-demand 'I' key), interrupts current speech. Auto Detail passes
+        /// false so this queues after the item-name announce instead of cutting it off.
+        /// </param>
+        /// <param name="announceIfEmpty">
+        /// When true (the 'I' key), speaks "No unlocked jobs can equip" when no unlocked job
+        /// qualifies. Auto Detail passes false so it stays silent rather than appending that
+        /// after every unequippable item on focus.
+        /// </param>
+        public static void AnnounceEquipRequirements(bool interrupt = true, bool announceIfEmpty = true)
         {
             try
             {
@@ -68,11 +77,15 @@ namespace FFIII_ScreenReader.Patches
                 // Build list of jobs that can equip (filtered by unlocked)
                 var canEquipJobs = GetEquippableJobs(masterManager, jobGroup, unlockedJobIds);
 
+                // Auto Detail: stay silent when nothing to add (no unlocked job can equip)
+                if (!announceIfEmpty && (canEquipJobs == null || canEquipJobs.Count == 0))
+                    return;
+
                 // Build and announce the result
                 string announcement = BuildAnnouncement(canEquipJobs);
                 if (!string.IsNullOrEmpty(announcement))
                 {
-                    FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                    FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: interrupt);
                 }
             }
             catch (Exception ex)

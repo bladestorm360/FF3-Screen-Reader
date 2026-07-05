@@ -34,6 +34,7 @@ namespace FFIII_ScreenReader.Field
         private List<NavigableEntity> filteredEntities = new List<NavigableEntity>();
         private PathfindingFilter pathfindingFilter = new PathfindingFilter();
         private ToLayerFilter toLayerFilter = new ToLayerFilter();
+        private int lastScannedMapId = -1;
 
         // Incremental scanning: map FieldEntity to its NavigableEntity conversion
         // This avoids re-converting the same entities every scan
@@ -191,6 +192,7 @@ namespace FFIII_ScreenReader.Field
         {
             get
             {
+                EnsureCorrectMap();
                 if (filteredEntities.Count == 0 || currentIndex < 0 || currentIndex >= filteredEntities.Count)
                     return null;
                 return filteredEntities[currentIndex];
@@ -199,18 +201,25 @@ namespace FFIII_ScreenReader.Field
 
         /// <summary>
         /// Scans the field for all navigable entities using incremental scanning.
-        /// Only converts new entities, keeping existing conversions to improve performance.
+        /// Removes entities no longer in the world, prunes deactivated entities
+        /// (IsAlive == false — opened chests, despawned NPCs), and converts new entities.
         /// </summary>
         public void ScanEntities()
         {
             try
             {
+                int currentMapId = GetCurrentMapId();
                 var fieldEntities = FieldNavigationHelper.GetAllFieldEntities();
                 var currentSet = new HashSet<FieldEntity>(fieldEntities);
 
-                // Remove entities that no longer exist
+                // Remove entities that no longer exist in the game's entity list
                 var toRemove = entityMap.Keys.Where(k => !currentSet.Contains(k)).ToList();
                 foreach (var key in toRemove)
+                    entityMap.Remove(key);
+
+                // Prune entities that are deactivated/destroyed in the scene
+                var dead = entityMap.Where(kv => !kv.Value.IsAlive).Select(kv => kv.Key).ToList();
+                foreach (var key in dead)
                     entityMap.Remove(key);
 
                 // Only process NEW entities (ones not already in the map)
@@ -232,6 +241,7 @@ namespace FFIII_ScreenReader.Field
 
                 // Update the entities list from the map
                 entities = entityMap.Values.ToList();
+                lastScannedMapId = currentMapId;
 
                 // Re-apply filter after scanning
                 ApplyFilter();
@@ -341,6 +351,8 @@ namespace FFIII_ScreenReader.Field
         /// </summary>
         public void NextEntity()
         {
+            EnsureCorrectMap();
+
             if (filteredEntities.Count == 0)
             {
                 ScanEntities();
@@ -384,6 +396,8 @@ namespace FFIII_ScreenReader.Field
         /// </summary>
         public void PreviousEntity()
         {
+            EnsureCorrectMap();
+
             if (filteredEntities.Count == 0)
             {
                 ScanEntities();
@@ -967,5 +981,37 @@ namespace FFIII_ScreenReader.Field
 
             return "";
         }
+
+        #region Map Transition Safety Net
+
+        /// <summary>
+        /// Soft fallback: if cycling detects the current map differs from the last scanned
+        /// map, force a full rescan. Backstop for any scripted transition that bypasses
+        /// CheckMapTransition's hard rescan path.
+        /// </summary>
+        private void EnsureCorrectMap()
+        {
+            try
+            {
+                int currentMapId = GetCurrentMapId();
+                if (currentMapId > 0 && currentMapId != lastScannedMapId)
+                    ForceRescan();
+            }
+            catch { } // Map ID read may fail during transitions
+        }
+
+        private int GetCurrentMapId()
+        {
+            try
+            {
+                var userDataManager = UserDataManager.Instance();
+                if (userDataManager != null)
+                    return userDataManager.CurrentMapId;
+            }
+            catch { } // UserDataManager may not be initialized
+            return -1;
+        }
+
+        #endregion
     }
 }

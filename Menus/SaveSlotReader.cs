@@ -50,7 +50,7 @@ namespace FFIII_ScreenReader.Menus
                             string slotInfo = ReadSlotFromTransform(saveSlot, cursorIndex);
                             if (slotInfo != null)
                             {
-                                return slotInfo;
+                                return FFIII_ScreenReader.Utils.MenuPosition.Format(slotInfo, cursorIndex, contentList.childCount);
                             }
                         }
                     }

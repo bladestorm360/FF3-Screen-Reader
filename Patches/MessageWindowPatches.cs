@@ -37,6 +37,12 @@ namespace FFIII_ScreenReader.Patches
         private static bool isInDialogue = false;
 
         /// <summary>
+        /// True while an NPC message box is open. Used to suppress mod audio (wall
+        /// tones / beacons) during dialogue. Cleared on Close_Postfix.
+        /// </summary>
+        public static bool IsInDialogue => isInDialogue;
+
+        /// <summary>
         /// Known invalid speaker names (locations, menu labels, etc.)
         /// </summary>
         private static readonly string[] InvalidSpeakers = new string[]
@@ -565,15 +571,12 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// Postfix for MessageWindowManager.Close - resets dialogue state.
         /// Ensures the same NPC dialogue can be announced on subsequent interactions.
-        /// Also triggers entity refresh to update NPC/interactive object states.
+        /// Entity state updates (NPCs that despawned, etc.) are now handled by the
+        /// delta scan on the next cycle — no eager refresh needed here.
         /// </summary>
         public static void Close_Postfix()
         {
-            // Reset dialogue state for next conversation
             DialogueTracker.Reset();
-
-            // Trigger entity refresh after dialogue ends (NPC interaction complete)
-            FFIII_ScreenReader.Core.FFIII_ScreenReaderMod.Instance?.ScheduleEntityRefresh();
         }
     }
 }

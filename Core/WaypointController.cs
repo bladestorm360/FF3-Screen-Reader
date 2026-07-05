@@ -40,6 +40,7 @@ namespace FFIII_ScreenReader.Core
             }
 
             waypointNavigator.CycleNext();
+            NavigationTargetTracker.MarkWaypoint();
             FFIII_ScreenReaderMod.SpeakText(waypointNavigator.FormatCurrentWaypoint());
         }
 
@@ -58,6 +59,7 @@ namespace FFIII_ScreenReader.Core
             }
 
             waypointNavigator.CyclePrevious();
+            NavigationTargetTracker.MarkWaypoint();
             FFIII_ScreenReaderMod.SpeakText(waypointNavigator.FormatCurrentWaypoint());
         }
 
@@ -68,6 +70,8 @@ namespace FFIII_ScreenReader.Core
 
             string mapId = mod.GetCurrentMapIdString();
             waypointNavigator.CycleNextCategory(mapId);
+            if (waypointNavigator.Count > 0)
+                NavigationTargetTracker.MarkWaypoint();
             FFIII_ScreenReaderMod.SpeakText(waypointNavigator.GetCategoryAnnouncement());
         }
 
@@ -78,6 +82,8 @@ namespace FFIII_ScreenReader.Core
 
             string mapId = mod.GetCurrentMapIdString();
             waypointNavigator.CyclePreviousCategory(mapId);
+            if (waypointNavigator.Count > 0)
+                NavigationTargetTracker.MarkWaypoint();
             FFIII_ScreenReaderMod.SpeakText(waypointNavigator.GetCategoryAnnouncement());
         }
 
@@ -92,6 +98,8 @@ namespace FFIII_ScreenReader.Core
                 FFIII_ScreenReaderMod.SpeakText(T("No waypoint selected"));
                 return;
             }
+
+            NavigationTargetTracker.MarkWaypoint();
 
             var playerPos = mod.GetPlayerPosition();
             if (!playerPos.HasValue)

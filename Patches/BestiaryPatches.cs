@@ -107,12 +107,10 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     internal static class BestiaryPatches
     {
-        private static int lastMapIndex = -1;
         private static int lastSelectState = -1;
 
         public static void ResetUpdateControllerState()
         {
-            lastMapIndex = -1;
             lastSelectState = 0;
         }
 
@@ -383,7 +381,7 @@ namespace FFIII_ScreenReader.Patches
 
             try
             {
-                var client = Il2CppLast.Data.PictureBooks.PictureBookClient.Instance();
+                var client = PictureBookClient.Instance();
                 if (client != null)
                 {
                     var list = client.GetPictureBooks();
@@ -507,8 +505,8 @@ namespace FFIII_ScreenReader.Patches
                 var party = partyList[partyIndex];
                 string announcement = BestiaryReader.ReadFormation(partyIndex, party);
 
-                if (partyList.Count > 1)
-                    announcement += $" ({partyIndex + 1} of {partyList.Count})";
+                // Position among formations (N of M), gated by the Menu Position Announcements toggle.
+                announcement = MenuPosition.Format(announcement, partyIndex, partyList.Count);
 
                 AnnouncementDeduplicator.AnnounceIfNew(
                     AnnouncementContexts.BESTIARY_FORMATION, announcement, true);
@@ -780,7 +778,6 @@ namespace FFIII_ScreenReader.Patches
                 if (!BestiaryStateTracker.IsInList) return;
 
                 int currentState = (int)__instance.selectState;
-                int currentMapIndex = __instance.selectMapIndex;
 
                 if (currentState != lastSelectState && lastSelectState >= 0)
                 {
@@ -793,7 +790,7 @@ namespace FFIII_ScreenReader.Patches
                         string mapInfo = T("Minimap open");
                         if (tracker.CurrentMonsterData != null)
                         {
-                            string mapName = BestiaryReader.ReadMapName(tracker.CurrentMonsterData, currentMapIndex);
+                            string mapName = BestiaryReader.ReadMapName(tracker.CurrentMonsterData, 0);
                             if (!string.IsNullOrEmpty(mapName))
                                 mapInfo = string.Format(T("Minimap open: {0}"), mapName);
                         }
@@ -809,21 +806,6 @@ namespace FFIII_ScreenReader.Patches
                     }
                 }
                 lastSelectState = currentState;
-
-                if (currentState == 1)
-                {
-                    if (currentMapIndex != lastMapIndex && lastMapIndex >= 0)
-                    {
-                        var tracker = BestiaryNavigationTracker.Instance;
-                        if (tracker.CurrentMonsterData != null)
-                        {
-                            string mapName = BestiaryReader.ReadMapName(tracker.CurrentMonsterData, currentMapIndex);
-                            if (!string.IsNullOrEmpty(mapName))
-                                FFIII_ScreenReaderMod.SpeakText(mapName, true);
-                        }
-                    }
-                    lastMapIndex = currentMapIndex;
-                }
             }
             catch (Exception ex)
             {

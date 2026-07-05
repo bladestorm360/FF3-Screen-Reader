@@ -451,6 +451,8 @@ namespace FFIII_ScreenReader.Patches
                 if (!AnnouncementDeduplicator.ShouldAnnounce(AnnouncementContexts.MAGIC_TARGET, announcement))
                     return;
 
+                // Append cursor position (N of M) among the target characters.
+                announcement = MenuPosition.Format(announcement, index, contentList.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -620,18 +622,18 @@ namespace FFIII_ScreenReader.Patches
                 var contentController = contentList[index];
                 if (contentController == null)
                 {
-                    AnnounceEmpty();
+                    AnnounceEmpty(index, contentList.Count);
                     return true; // Valid list, just empty slot
                 }
 
                 var ability = contentController.Data;
                 if (ability == null)
                 {
-                    AnnounceEmpty();
+                    AnnounceEmpty(index, contentList.Count);
                     return true; // Valid list, just empty slot
                 }
 
-                AnnounceSpell(ability);
+                AnnounceSpell(ability, index, contentList.Count);
                 return true;
             }
             catch (Exception ex)
@@ -670,7 +672,7 @@ namespace FFIII_ScreenReader.Patches
                 var itemData = itemList[index];
                 if (itemData == null)
                 {
-                    AnnounceEmpty();
+                    AnnounceEmpty(index, itemList.Count);
                     return true; // Valid list, just empty slot
                 }
 
@@ -686,13 +688,15 @@ namespace FFIII_ScreenReader.Patches
                 string announcement = AnnouncementBuilder.FormatWithDescription(itemData.Name, description);
                 if (string.IsNullOrEmpty(announcement))
                 {
-                    AnnounceEmpty();
+                    AnnounceEmpty(index, itemList.Count);
                     return true;
                 }
 
                 if (!MagicMenuState.ShouldAnnounceSpell(announcement.GetHashCode()))
                     return true; // Valid but deduplicated
 
+                // Append cursor position (N of M) among the spell tomes.
+                announcement = MenuPosition.Format(announcement, index, itemList.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 return true;
             }
@@ -811,11 +815,11 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// Announces "Empty" for empty spell slots.
         /// </summary>
-        private static void AnnounceEmpty()
+        private static void AnnounceEmpty(int index = -1, int count = -1)
         {
             if (MagicMenuState.ShouldAnnounceSpell(-1)) // -1 as ID for empty
             {
-                FFIII_ScreenReaderMod.SpeakText(T("Empty"), interrupt: true);
+                FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, count), interrupt: true);
             }
         }
 
@@ -823,7 +827,7 @@ namespace FFIII_ScreenReader.Patches
         /// Announces a spell with name, MP, and description.
         /// Format: "Spell Name: MP: current/max. Description"
         /// </summary>
-        private static void AnnounceSpell(OwnedAbility ability)
+        private static void AnnounceSpell(OwnedAbility ability, int index = -1, int count = -1)
         {
             try
             {
@@ -873,6 +877,8 @@ namespace FFIII_ScreenReader.Patches
                     announcement += $". {description}";
                 }
 
+                // Append cursor position (N of M) among the spells, LAST after MP/description.
+                announcement = MenuPosition.Format(announcement, index, count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch { }

@@ -472,6 +472,7 @@ namespace FFIII_ScreenReader.Menus
             {
                 var stat = statList[index];
                 string value = stat.Reader(tracker.CurrentCharacterData);
+                value = MenuPosition.Format(value, index, statList.Count);
                 FFIII_ScreenReaderMod.SpeakText(value, true);
             }
             catch (Exception ex)

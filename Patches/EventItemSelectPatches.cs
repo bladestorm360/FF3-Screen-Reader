@@ -205,6 +205,8 @@ namespace FFIII_ScreenReader.Patches
                     return;
                 lastAnnouncement = announcement;
 
+                // Append cursor position (N of M) among the selectable items.
+                announcement = MenuPosition.Format(announcement, index, dataList.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)

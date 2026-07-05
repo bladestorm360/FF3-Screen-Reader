@@ -294,6 +294,8 @@ namespace FFIII_ScreenReader.Patches
                 if (!StatusMenuState.ShouldAnnounce(announcement))
                     return;
 
+                // Append cursor position (N of M) among the party members.
+                announcement = MenuPosition.Format(announcement, index, contents.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)

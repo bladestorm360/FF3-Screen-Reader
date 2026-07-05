@@ -6,6 +6,7 @@
 - **No git commands** - user manages git
 - **Update docs after fixes** - `plan.md` (features), `debug.md` (technical)
 - **NEVER use PowerShell `Set-Content`, `Out-File`, or any PowerShell file-writing cmdlet on source files** - these destroy Unicode encoding (Japanese characters, arrows, special symbols). Always use the Edit tool for file modifications, which preserves encoding. This rule applies to ALL batch operations across multiple files. If a bulk change is needed, use the Edit tool on each file individually.
+- **Game-specific translations** - Translations are game-specific; NEVER copy or look up translation strings from another FF mod (phrasing and presentation differ per game, and are not likely to repeat). When a string has no existing translation, translate it live yourself and add a self-contained entry to this mod's `translation.json`.
 
 ## Build
 ```

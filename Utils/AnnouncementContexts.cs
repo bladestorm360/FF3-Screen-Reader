@@ -47,6 +47,9 @@ namespace FFIII_ScreenReader.Utils
         // Extras: Music Player
         public const string MUSIC_LIST_ENTRY = "MusicPlayer.ListEntry";
 
+        // Controls settings
+        public const string CONFIG_KEYS_SETTING = "ConfigMenu.KeysSetting";
+
         // Extras: Bestiary
         public const string BESTIARY_LIST_ENTRY = "Bestiary.ListEntry";
         public const string BESTIARY_DETAIL_STAT = "Bestiary.DetailStat";

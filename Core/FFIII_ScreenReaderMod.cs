@@ -44,9 +44,26 @@ namespace FFIII_ScreenReader.Core
         private EntityScanner entityScanner;
         private AudioLoopManager audioLoopManager;
         private WaypointController waypointController;
+        private WaypointNavigator waypointNavigator;
 
         internal static FFIII_ScreenReaderMod Instance { get; private set; }
         internal EntityScanner EntityScanner => entityScanner;
+
+        // Static accessors used by ControllerRouter / passthrough patches
+        public static bool AudioBeaconsEnabled => PreferencesManager.AudioBeaconsEnabled;
+        public static bool StickClickNormalizationEnabled => PreferencesManager.StickClickNormalization;
+        public static bool AnnounceOnBeaconRestartEnabled => PreferencesManager.AnnounceOnBeaconRestartEnabled;
+        public static bool ExpCounterEnabled => PreferencesManager.ExpCounterEnabled;
+
+        /// <summary>
+        /// Flips the EXP counter sound preference. No speech here — the mod menu
+        /// re-announces the row value after toggling.
+        /// </summary>
+        public static void ToggleExpCounter()
+        {
+            bool newValue = !ExpCounterEnabled;
+            PreferencesManager.SaveExpCounter(newValue);
+        }
 
         // Category count derived from enum for safe cycling
         private static readonly int CategoryCount = System.Enum.GetValues(typeof(EntityCategory)).Length;
@@ -72,6 +89,9 @@ namespace FFIII_ScreenReader.Core
             // Initialize external sound player for distinct audio feedback
             SoundPlayer.Initialize();
 
+            // Initialize SDL3 gamepad + keyboard polling (sole input authority for the mod)
+            GamepadManager.Initialize();
+
             // Initialize entity name translator (Japanese -> English)
             EntityTranslator.Initialize();
 
@@ -83,10 +103,11 @@ namespace FFIII_ScreenReader.Core
             entityScanner.FilterByPathfinding = PreferencesManager.PathfindingFilterEnabled;
             entityScanner.FilterToLayer = PreferencesManager.ToLayerFilterEnabled;
 
-            // Initialize managers
-            audioLoopManager = new AudioLoopManager(this);
+            // Initialize managers — WaypointNavigator must exist before AudioLoopManager
+            // so the beacon can target waypoints (NavigationTargetTracker mode).
             var waypointManager = new WaypointManager();
-            var waypointNavigator = new WaypointNavigator(waypointManager);
+            waypointNavigator = new WaypointNavigator(waypointManager);
+            audioLoopManager = new AudioLoopManager(this, waypointNavigator);
             waypointController = new WaypointController(this, waypointManager, waypointNavigator);
 
             // Try manual patching with error handling
@@ -127,10 +148,15 @@ namespace FFIII_ScreenReader.Core
             EventItemSelectPatches.Apply(harmony);
             GameStatePatches.ApplyPatches(harmony);
             MapTransitionPatches.ApplyPatches(harmony);
-            GalleryPatches.ApplyPatches(harmony);
-            MusicPlayerPatches.ApplyPatches(harmony);
-            BestiaryPatches.ApplyPatches(harmony);
-            TryPatchEntityInteractions(harmony);
+            InputPassthroughPatches.ApplyPatches(harmony);
+            try { GalleryPatches.ApplyPatches(harmony); }
+            catch (Exception ex) { LoggerInstance.Error($"[Gallery] Fatal error loading patches: {ex}"); }
+
+            try { MusicPlayerPatches.ApplyPatches(harmony); }
+            catch (Exception ex) { LoggerInstance.Error($"[MusicPlayer] Fatal error loading patches: {ex}"); }
+
+            try { BestiaryPatches.ApplyPatches(harmony); }
+            catch (Exception ex) { LoggerInstance.Error($"[Bestiary] Fatal error loading patches: {ex}"); }
         }
 
         private void TryPatchBattleTargetShowWindow(HarmonyLib.Harmony harmony)
@@ -155,29 +181,6 @@ namespace FFIII_ScreenReader.Core
             catch (Exception ex)
             {
                 LoggerInstance.Warning($"[Battle Target] Error applying ShowWindow patch: {ex.Message}");
-            }
-        }
-
-        private void TryPatchEntityInteractions(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                Type treasureBoxType = typeof(FieldTresureBox);
-                var openMethod = treasureBoxType.GetMethod("Open", BindingFlags.Public | BindingFlags.Instance);
-                var openPostfix = typeof(ManualPatches).GetMethod("TreasureBox_Open_Postfix", BindingFlags.Public | BindingFlags.Static);
-
-                if (openMethod != null && openPostfix != null)
-                {
-                    harmony.Patch(openMethod, postfix: new HarmonyMethod(openPostfix));
-                }
-                else
-                {
-                    LoggerInstance.Warning($"FieldTresureBox.Open patch failed. Method: {openMethod != null}, Postfix: {openPostfix != null}");
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Error($"Error patching entity interactions: {ex.Message}");
             }
         }
 
@@ -225,6 +228,7 @@ namespace FFIII_ScreenReader.Core
 
             audioLoopManager.StopWallToneLoop();
             audioLoopManager.StopBeaconLoop();
+            GamepadManager.Shutdown();
             SoundPlayer.Shutdown();
             CoroutineManager.CleanupAll();
             tolk?.Unload();
@@ -310,6 +314,8 @@ namespace FFIII_ScreenReader.Core
             var entity = entityScanner.CurrentEntity;
             if (entity == null) { SpeakText(T("No entities found")); return; }
 
+            NavigationTargetTracker.MarkEntity();
+
             var playerPos = GetPlayerPosition();
             if (!playerPos.HasValue) { SpeakText(entity.Name); return; }
 
@@ -327,6 +333,7 @@ namespace FFIII_ScreenReader.Core
             RefreshEntitiesIfNeeded();
             if (entityScanner.Entities.Count == 0) { SpeakText(T("No entities found")); return; }
             entityScanner.NextEntity();
+            NavigationTargetTracker.MarkEntity();
             AnnounceEntityOnly();
         }
 
@@ -336,6 +343,7 @@ namespace FFIII_ScreenReader.Core
             RefreshEntitiesIfNeeded();
             if (entityScanner.Entities.Count == 0) { SpeakText(T("No entities found")); return; }
             entityScanner.PreviousEntity();
+            NavigationTargetTracker.MarkEntity();
             AnnounceEntityOnly();
         }
 
@@ -355,20 +363,12 @@ namespace FFIII_ScreenReader.Core
             SpeakText(string.Format(T("{0}, {1} of {2}"), announcement, index, total));
         }
 
+        // Delta-scans entities on every navigation input. The scanner handles map-change
+        // detection (ForceRescan) internally via EnsureCorrectMap, and prunes deactivated
+        // entities via IsAlive — so chest opens, dialogue ends, and event completions all
+        // surface state changes on the next cycle without any eager-push hooks.
         private void RefreshEntitiesIfNeeded()
         {
-            if (entityScanner.Entities.Count == 0)
-                entityScanner.ScanEntities();
-        }
-
-        internal void ScheduleEntityRefresh()
-        {
-            CoroutineManager.StartManaged(EntityRefreshCoroutine());
-        }
-
-        private IEnumerator EntityRefreshCoroutine()
-        {
-            yield return null;
             entityScanner.ScanEntities();
         }
 
@@ -377,6 +377,7 @@ namespace FFIII_ScreenReader.Core
             if (!EnsureFieldContext()) return;
             currentCategory = (EntityCategory)(((int)currentCategory + 1) % CategoryCount);
             entityScanner.CurrentCategory = currentCategory;
+            NavigationTargetTracker.MarkEntity();
             AnnounceCategoryChange();
         }
 
@@ -387,6 +388,7 @@ namespace FFIII_ScreenReader.Core
             if (prev < 0) prev = CategoryCount - 1;
             currentCategory = (EntityCategory)prev;
             entityScanner.CurrentCategory = currentCategory;
+            NavigationTargetTracker.MarkEntity();
             AnnounceCategoryChange();
         }
 
@@ -450,7 +452,7 @@ namespace FFIII_ScreenReader.Core
         internal void TogglePathfindingFilter()
         {
             bool newVal = !PreferencesManager.PathfindingFilterEnabled;
-            PreferencesManager.SaveToggle("PathfindingFilter", newVal);
+            PreferencesManager.SavePathfindingFilter(newVal);
             entityScanner.FilterByPathfinding = newVal;
             SpeakText(string.Format(T("Pathfinding filter {0}"), newVal ? T("on") : T("off")));
         }
@@ -458,14 +460,14 @@ namespace FFIII_ScreenReader.Core
         internal void ToggleMapExitFilter()
         {
             bool newVal = !PreferencesManager.MapExitFilterEnabled;
-            PreferencesManager.SaveToggle("MapExitFilter", newVal);
+            PreferencesManager.SaveMapExitFilter(newVal);
             SpeakText(string.Format(T("Map exit filter {0}"), newVal ? T("on") : T("off")));
         }
 
         internal void ToggleToLayerFilter()
         {
             bool newVal = !PreferencesManager.ToLayerFilterEnabled;
-            PreferencesManager.SaveToggle("ToLayerFilter", newVal);
+            PreferencesManager.SaveToLayerFilter(newVal);
             entityScanner.FilterToLayer = newVal;
             SpeakText(string.Format(T("Layer transition filter {0}"), newVal ? T("on") : T("off")));
         }
@@ -473,7 +475,7 @@ namespace FFIII_ScreenReader.Core
         internal void ToggleWallTones()
         {
             bool newVal = !PreferencesManager.WallTonesEnabled;
-            PreferencesManager.SaveToggle("WallTones", newVal);
+            PreferencesManager.SaveWallTones(newVal);
             if (newVal) audioLoopManager.StartWallToneLoop();
             else audioLoopManager.StopWallToneLoop();
             SpeakText(string.Format(T("Wall tones {0}"), newVal ? T("on") : T("off")));
@@ -482,14 +484,14 @@ namespace FFIII_ScreenReader.Core
         internal void ToggleFootsteps()
         {
             bool newVal = !PreferencesManager.FootstepsEnabled;
-            PreferencesManager.SaveToggle("Footsteps", newVal);
+            PreferencesManager.SaveFootsteps(newVal);
             SpeakText(string.Format(T("Footsteps {0}"), newVal ? T("on") : T("off")));
         }
 
         internal void ToggleAudioBeacons()
         {
             bool newVal = !PreferencesManager.AudioBeaconsEnabled;
-            PreferencesManager.SaveToggle("AudioBeacons", newVal);
+            PreferencesManager.SaveAudioBeacons(newVal);
             if (newVal) audioLoopManager.StartBeaconLoop();
             else audioLoopManager.StopBeaconLoop();
             SpeakText(string.Format(T("Audio beacons {0}"), newVal ? T("on") : T("off")));
@@ -599,6 +601,67 @@ namespace FFIII_ScreenReader.Core
         {
             tolk?.Speak(text, interrupt);
         }
+
+        /// <summary>
+        /// Silences current speech immediately. Used by controller navigation to
+        /// interrupt ongoing announcements (e.g., pathfinding directions) since
+        /// NVDA doesn't see controller input as key events.
+        /// </summary>
+        public static void InterruptSpeech()
+        {
+            tolk?.Silence();
+        }
+
+        /// <summary>
+        /// Forces the audio beacon to ping on the next loop tick and clears any
+        /// silence latch. Called by pathfinding commands when beacon nav mode is on.
+        /// </summary>
+        public void RestartBeacon()
+        {
+            audioLoopManager?.RestartBeacon();
+        }
+
+        /// <summary>
+        /// Re-target the beacon to the current entity. When the "beacon destination announcement"
+        /// toggle is on, also re-speaks the entity (same as cycling the list).
+        /// </summary>
+        internal void RestartEntityBeacon()
+        {
+            RestartBeacon();
+            if (AnnounceOnBeaconRestartEnabled) AnnounceEntityOnly();
+        }
+
+        /// <summary>
+        /// Toggles Stick Click Normalization preference. When ON, R3/L3 fall
+        /// through to the game; mod functions are accessible via mod mode.
+        /// </summary>
+        internal void ToggleStickClickNormalization()
+        {
+            bool newVal = !PreferencesManager.StickClickNormalization;
+            PreferencesManager.SaveStickClickNormalization(newVal);
+            SpeakText(string.Format(T("Stick click normalization {0}"), newVal ? T("on") : T("off")));
+        }
+
+        internal void ToggleAnnounceOnBeaconRestart()
+        {
+            bool newVal = !PreferencesManager.AnnounceOnBeaconRestartEnabled;
+            PreferencesManager.SaveAnnounceOnBeaconRestart(newVal);
+            SpeakText(string.Format(T("Beacon destination announcement {0}"), newVal ? T("on") : T("off")));
+        }
+
+        internal void ToggleMenuPositionAnnouncements()
+        {
+            bool newVal = !PreferencesManager.MenuPositionAnnouncementsEnabled;
+            PreferencesManager.SaveMenuPositionAnnouncements(newVal);
+            SpeakText(string.Format(T("Menu position announcements {0}"), newVal ? T("on") : T("off")));
+        }
+
+        internal void ToggleAutoDetail()
+        {
+            bool newVal = !PreferencesManager.AutoDetailEnabled;
+            PreferencesManager.SaveAutoDetail(newVal);
+            SpeakText(string.Format(T("Auto detail {0}"), newVal ? T("on") : T("off")));
+        }
     }
 
     /// <summary>
@@ -645,11 +708,6 @@ namespace FFIII_ScreenReader.Core
             {
                 MelonLogger.Warning($"Error in CursorNavigation_Postfix: {ex.Message}");
             }
-        }
-
-        public static void TreasureBox_Open_Postfix()
-        {
-            FFIII_ScreenReaderMod.Instance?.ScheduleEntityRefresh();
         }
     }
 }

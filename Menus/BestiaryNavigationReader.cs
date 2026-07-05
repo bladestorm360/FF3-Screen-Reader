@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using MelonLoader;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Patches;
+using FFIII_ScreenReader.Utils;
 
 namespace FFIII_ScreenReader.Menus
 {
@@ -170,7 +171,8 @@ namespace FFIII_ScreenReader.Menus
             }
 
             var entry = statBuffer[currentIndex];
-            FFIII_ScreenReaderMod.SpeakText(entry.ToString(), true);
+            string value = MenuPosition.Format(entry.ToString(), currentIndex, statBuffer.Count);
+            FFIII_ScreenReaderMod.SpeakText(value, true);
         }
 
         /// <summary>
@@ -188,7 +190,8 @@ namespace FFIII_ScreenReader.Menus
 
             var entry = statBuffer[currentIndex];
             string groupName = GetGroupDisplayName(entry.Group);
-            FFIII_ScreenReaderMod.SpeakText($"{groupName}. {entry}", true);
+            string value = MenuPosition.Format($"{groupName}. {entry}", currentIndex, statBuffer.Count);
+            FFIII_ScreenReaderMod.SpeakText(value, true);
         }
 
         /// <summary>

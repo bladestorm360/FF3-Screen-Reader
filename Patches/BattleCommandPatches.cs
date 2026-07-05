@@ -134,6 +134,7 @@ namespace FFIII_ScreenReader.Patches
                 string commandName = messageManager.GetMessage(mesIdName);
                 if (string.IsNullOrWhiteSpace(commandName)) return;
 
+                commandName = MenuPosition.Format(commandName, index, contentList.Count);
                 // Immediate speech - no delay needed since we actively check target selection state
                 FFIII_ScreenReaderMod.SpeakText(commandName, interrupt: false);
             }
@@ -329,6 +330,7 @@ namespace FFIII_ScreenReader.Patches
 
                 // Note: FF3 uses spell charges per level, not MP
                 string announcement = $"{name}: HP {currentHp}/{maxHp}";
+                announcement = MenuPosition.Format(announcement, index, playerList.Count);
                 // Target selection SHOULD interrupt - user confirmed a command and wants to hear the target
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
@@ -430,6 +432,7 @@ namespace FFIII_ScreenReader.Patches
                         break; // No HP appended
                 }
 
+                announcement = MenuPosition.Format(announcement, index, enemyList.Count);
                 // Target selection SHOULD interrupt - user confirmed a command and wants to hear the target
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }

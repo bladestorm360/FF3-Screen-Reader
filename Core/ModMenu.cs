@@ -66,7 +66,7 @@ namespace FFIII_ScreenReader.Core
             public override void Adjust(int delta)
             {
                 int current = getter();
-                int newValue = Math.Clamp(current + delta, 0, 100);
+                int newValue = Math.Clamp(current + (delta * 5), 0, 100);
                 setter(newValue);
             }
 
@@ -160,6 +160,9 @@ namespace FFIII_ScreenReader.Core
                 new ToggleItem(T("Audio Beacons"),
                     () => PreferencesManager.AudioBeaconsEnabled,
                     () => FFIII_ScreenReaderMod.Instance?.ToggleAudioBeacons()),
+                new ToggleItem(T("Beacon Destination Announcement"),
+                    () => FFIII_ScreenReaderMod.AnnounceOnBeaconRestartEnabled,
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleAnnounceOnBeaconRestart()),
 
                 // Volume Controls section
                 new SectionHeader(T("Volume Controls")),
@@ -194,6 +197,34 @@ namespace FFIII_ScreenReader.Core
                     new[] { T("Numbers"), T("Percentage"), T("Hidden") },
                     () => PreferencesManager.EnemyHPDisplay,
                     PreferencesManager.SetEnemyHPDisplay),
+                new EnumItem(T("Multi-hit Damage"),
+                    new[] { T("Total only"), T("With hit count") },
+                    () => PreferencesManager.DamageDisplay,
+                    PreferencesManager.SetDamageDisplay),
+
+                // Battle Results section
+                new SectionHeader(T("Battle Results")),
+                new ToggleItem(T("EXP Counter Sound"),
+                    () => PreferencesManager.ExpCounterEnabled,
+                    FFIII_ScreenReaderMod.ToggleExpCounter),
+                new VolumeItem(T("EXP Counter Volume"),
+                    () => PreferencesManager.ExpCounterVolume,
+                    PreferencesManager.SetExpCounterVolume),
+
+                // Announcements section
+                new SectionHeader(T("Announcements")),
+                new ToggleItem(T("Auto Detail"),
+                    () => PreferencesManager.AutoDetailEnabled,
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleAutoDetail()),
+                new ToggleItem(T("Menu Position Announcements"),
+                    () => PreferencesManager.MenuPositionAnnouncementsEnabled,
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleMenuPositionAnnouncements()),
+
+                // Controller Settings section
+                new SectionHeader(T("Controller Settings")),
+                new ToggleItem(T("Stick Click Normalization"),
+                    () => PreferencesManager.StickClickNormalization,
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleStickClickNormalization()),
 
                 // Close Menu action
                 new ActionItem(T("Close Menu"), Close)
@@ -216,18 +247,11 @@ namespace FFIII_ScreenReader.Core
             if (items != null && items.Count > 1 && items[0] is SectionHeader)
                 currentIndex = 1;
 
-            // Initialize key states to current pressed state to prevent keys that opened the menu from triggering actions
-            WindowsFocusHelper.InitializeKeyStates(new[] {
-                WindowsFocusHelper.VK_ESCAPE, WindowsFocusHelper.VK_F8,
-                WindowsFocusHelper.VK_UP, WindowsFocusHelper.VK_DOWN,
-                WindowsFocusHelper.VK_LEFT, WindowsFocusHelper.VK_RIGHT,
-                WindowsFocusHelper.VK_RETURN, WindowsFocusHelper.VK_SPACE
-            });
-
-            WindowsFocusHelper.StealFocus("FFIII_ModMenu");
-
-            // Window title change announces "FFIII_ModMenu" via screen reader focus
-            // Just announce the first item after a short delay
+            // Announce that the menu opened (both F8 and the controller Start button reach here),
+            // then the first item after a short delay. The menu is virtual — game input is
+            // suppressed via ControllerRouter.SuppressGameInput + InputPassthroughPatches (no
+            // window stealing), so we speak the title ourselves instead of relying on NVDA.
+            FFIII_ScreenReaderMod.SpeakText(T("Mod menu"), interrupt: true);
             CoroutineManager.StartUntracked(AnnounceFirstItemDelayed());
         }
 
@@ -251,14 +275,15 @@ namespace FFIII_ScreenReader.Core
             if (!IsOpen) return;
 
             IsOpen = false;
-            WindowsFocusHelper.RestoreFocus();
-            // Focus returns to game window, screen reader announces the focus change
+            // Announce on every close path (keyboard Escape/F8, "Close Menu" item, controller B/Start).
+            // Game input is restored automatically — ControllerRouter.SuppressGameInput becomes false.
+            FFIII_ScreenReaderMod.SpeakText(T("Mod menu closed"), interrupt: true);
         }
 
         /// <summary>
-        /// Handles input when the mod menu is open.
-        /// Uses Windows GetAsyncKeyState API for input detection, which works
-        /// even when the game window doesn't have focus.
+        /// Handles input when the mod menu is open. Reads keys via GamepadManager
+        /// (SDL3 + GetAsyncKeyState — hardware state); game input is suppressed by
+        /// InputPassthroughPatches + Input.ResetInputAxes while open. No window focus stealing.
         /// Returns true if input was consumed (menu is open).
         /// </summary>
         public static bool HandleInput()
@@ -267,42 +292,42 @@ namespace FFIII_ScreenReader.Core
             if (items == null || items.Count == 0) return false;
 
             // Escape or F8 to close
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_ESCAPE) || WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_F8))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.Escape) || GamepadManager.IsKeyCodePressed(KeyCode.F8))
             {
                 Close();
                 return true;
             }
 
             // Up arrow - navigate to previous item
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_UP))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.UpArrow))
             {
                 NavigatePrevious();
                 return true;
             }
 
             // Down arrow - navigate to next item
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_DOWN))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.DownArrow))
             {
                 NavigateNext();
                 return true;
             }
 
             // Left arrow - decrease value
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_LEFT))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.LeftArrow))
             {
                 AdjustCurrentItem(-1);
                 return true;
             }
 
             // Right arrow - increase value
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_RIGHT))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.RightArrow))
             {
                 AdjustCurrentItem(1);
                 return true;
             }
 
             // Enter or Space - toggle/activate
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_RETURN) || WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_SPACE))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.Return) || GamepadManager.IsKeyCodePressed(KeyCode.Space))
             {
                 ToggleCurrentItem();
                 return true;
@@ -311,7 +336,7 @@ namespace FFIII_ScreenReader.Core
             return true; // Consume all input while menu is open
         }
 
-        private static void NavigateNext()
+        public static void NavigateNext()
         {
             int startIndex = currentIndex;
             do
@@ -329,7 +354,7 @@ namespace FFIII_ScreenReader.Core
             AnnounceCurrentItem();
         }
 
-        private static void NavigatePrevious()
+        public static void NavigatePrevious()
         {
             int startIndex = currentIndex;
             do
@@ -347,7 +372,7 @@ namespace FFIII_ScreenReader.Core
             AnnounceCurrentItem();
         }
 
-        private static void AdjustCurrentItem(int delta)
+        public static void AdjustCurrentItem(int delta)
         {
             if (currentIndex < 0 || currentIndex >= items.Count) return;
 
@@ -358,7 +383,7 @@ namespace FFIII_ScreenReader.Core
             AnnounceCurrentItem();
         }
 
-        private static void ToggleCurrentItem()
+        public static void ToggleCurrentItem()
         {
             if (currentIndex < 0 || currentIndex >= items.Count) return;
 
@@ -390,7 +415,27 @@ namespace FFIII_ScreenReader.Core
                 announcement = $"{item.Name}: {value}";
             }
 
+            // Position among navigable (non-header) items, so headers don't count.
+            var (index, count) = NavigablePosition();
+            announcement = MenuPosition.Format(announcement, index, count);
+
             FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: interrupt);
+        }
+
+        /// <summary>
+        /// Position of the current item among the navigable (non-header) items. Section headers are
+        /// skipped during navigation, so the user hears "(N of total settings)" — not counting headers.
+        /// </summary>
+        private static (int index, int count) NavigablePosition()
+        {
+            int count = 0, index = -1;
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (items[i] is SectionHeader) continue;
+                if (i == currentIndex) index = count;
+                count++;
+            }
+            return (index, count);
         }
     }
 }

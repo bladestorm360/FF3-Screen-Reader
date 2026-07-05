@@ -242,6 +242,8 @@ namespace FFIII_ScreenReader.Patches
                 MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.EQUIP_MENU);
                 // }
 
+                // Append cursor position (N of M) among the equipment slots.
+                announcement = MenuPosition.Format(announcement, index, contentList.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -333,6 +335,8 @@ namespace FFIII_ScreenReader.Patches
                 MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.EQUIP_MENU);
                 // }
 
+                // Append cursor position (N of M) among the selectable equipment items.
+                announcement = MenuPosition.Format(announcement, index, contentDataList.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)

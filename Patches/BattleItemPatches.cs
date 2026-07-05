@@ -188,7 +188,7 @@ namespace FFIII_ScreenReader.Patches
                             var cc = allContentControllers[cursorIndex];
                             if (cc != null && cc.Data != null)
                             {
-                                return FormatItemAnnouncement(cc.Data);
+                                return MenuPosition.Format(FormatItemAnnouncement(cc.Data), cursorIndex, allContentControllers.Length);
                             }
                         }
                     }
@@ -203,7 +203,7 @@ namespace FFIII_ScreenReader.Patches
                             var data = contentController.Data;
                             if (data != null)
                             {
-                                return FormatItemAnnouncement(data);
+                                return MenuPosition.Format(FormatItemAnnouncement(data), cursorIndex, contentList.Count);
                             }
                         }
                     }

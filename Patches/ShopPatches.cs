@@ -91,7 +91,15 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     internal static class ShopDetailsAnnouncer
     {
-        public static void AnnounceCurrentItemDetails()
+        /// <param name="interrupt">
+        /// When true (the on-demand 'I' key), interrupts current speech. Auto Detail passes
+        /// false so this queues after the item-name announce instead of cutting it off.
+        /// </param>
+        /// <param name="announceIfEmpty">
+        /// When true (the 'I' key), speaks "No item details available" when nothing is cached.
+        /// Auto Detail passes false so it stays silent rather than saying that on every plain item.
+        /// </param>
+        public static void AnnounceCurrentItemDetails(bool interrupt = true, bool announceIfEmpty = true)
         {
             try
             {
@@ -127,10 +135,12 @@ namespace FFIII_ScreenReader.Patches
 
                 if (string.IsNullOrEmpty(announcement))
                 {
+                    if (!announceIfEmpty)
+                        return;
                     announcement = "No item details available";
                 }
 
-                FFIII_ScreenReaderMod.SpeakText(announcement);
+                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: interrupt);
             }
             catch (Exception ex)
             {
@@ -307,6 +317,14 @@ namespace FFIII_ScreenReader.Patches
                 }
 
                 FFIII_ScreenReaderMod.SpeakText(announcement);
+
+                // Auto Detail: queue the same stats/description the 'I' key reads AFTER the
+                // name/price announce (interrupt:false). Placed past the dedup above, so it only
+                // fires on a genuinely new item — cursoring to the same row won't restack it.
+                if (PreferencesManager.AutoDetailEnabled)
+                {
+                    ShopDetailsAnnouncer.AnnounceCurrentItemDetails(interrupt: false, announceIfEmpty: false);
+                }
             }
             catch (Exception ex)
             {

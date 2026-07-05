@@ -18,6 +18,10 @@ namespace FFIII_ScreenReader.Patches
         new Type[] { typeof(BattleUnitData), typeof(int), typeof(HitType), typeof(bool) })]
     internal static class BattleBasicFunction_CreateDamageView_Patch
     {
+        // Multi-hit multiplier captured from DamageViewUIManager.CreateHitCount, which fires just
+        // before the matching CreateDamageView. Consumed (and reset to 1) by the postfix below.
+        internal static int PendingHitCount = 1;
+
         [HarmonyPostfix]
         public static void Postfix(BattleUnitData data, int value, HitType hitType, bool isRecovery)
         {
@@ -46,6 +50,11 @@ namespace FFIII_ScreenReader.Patches
                     }
                 }
 
+                // Consume the multi-hit count captured by CreateHitCount (it fires just before this
+                // view). Reset to 1 so a later damage with no fresh hit count defaults to single.
+                int hitCount = PendingHitCount;
+                PendingHitCount = 1;
+
                 string message;
                 if (hitType == HitType.Miss || value == 0)
                 {
@@ -57,7 +66,11 @@ namespace FFIII_ScreenReader.Patches
                 }
                 else
                 {
-                    message = $"{targetName}: {value} damage";
+                    // HP DAMAGE — optionally prepend the multi-hit "{N}x" multiplier (e.g. "14x1552
+                    // damage"). The " damage" suffix stays so damage/recovery remain distinguishable.
+                    message = (PreferencesManager.DamageDisplay == 1 && hitCount > 1)
+                        ? $"{targetName}: {hitCount}x{value} damage"
+                        : $"{targetName}: {value} damage";
                 }
 
                 // Damage doesn't interrupt - queues after action announcement
@@ -67,6 +80,22 @@ namespace FFIII_ScreenReader.Patches
             {
                 MelonLogger.Warning($"Error in CreateDamageView patch: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// Capture the on-screen "×N" multi-hit multiplier from DamageViewUIManager.CreateHitCount,
+    /// which fires just before the matching CreateDamageView, so the damage announce can prepend it
+    /// (e.g. "14x1552 damage"). The value is consumed and reset by the CreateDamageView postfix.
+    /// Signature: CreateHitCount(int hitCountValue, BattleSpriteEntity attack, BattleSpriteEntity target).
+    /// </summary>
+    [HarmonyPatch(typeof(Il2CppLast.UI.DamageViewUIManager), "CreateHitCount")]
+    internal static class DamageViewUIManager_CreateHitCount_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(int hitCountValue)
+        {
+            BattleBasicFunction_CreateDamageView_Patch.PendingHitCount = hitCountValue;
         }
     }
 

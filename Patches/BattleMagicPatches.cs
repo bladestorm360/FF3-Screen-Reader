@@ -126,7 +126,7 @@ namespace FFIII_ScreenReader.Patches
                     if (BattleMagicMenuState.ShouldAnnounce(T("Empty")))
                     {
                         MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
-                        FFIII_ScreenReaderMod.SpeakText(T("Empty"), interrupt: true);
+                        FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, contents.Count), interrupt: true);
                     }
                     return;
                 }
@@ -139,7 +139,7 @@ namespace FFIII_ScreenReader.Patches
                     if (BattleMagicMenuState.ShouldAnnounce(T("Empty")))
                     {
                         MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
-                        FFIII_ScreenReaderMod.SpeakText(T("Empty"), interrupt: true);
+                        FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, contents.Count), interrupt: true);
                     }
                     return;
                 }
@@ -157,6 +157,7 @@ namespace FFIII_ScreenReader.Patches
                 // Also clear other menu states to prevent conflicts
                 MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
 
+                announcement = MenuPosition.Format(announcement, index, contents.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
