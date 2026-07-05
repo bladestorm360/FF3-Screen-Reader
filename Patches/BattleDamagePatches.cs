@@ -21,6 +21,10 @@ namespace FFIII_ScreenReader.Patches
         // Multi-hit multiplier captured from DamageViewUIManager.CreateHitCount, which fires just
         // before the matching CreateDamageView. Consumed (and reset to 1) by the postfix below.
         internal static int PendingHitCount = 1;
+        // Frame the multiplier was captured on. Used to reject a stale count that was never
+        // consumed by a CreateDamageView (e.g. a fully-evaded multi-hit) so it can't leak into
+        // an unrelated later attack's damage announcement.
+        public static int PendingHitCountFrame = -1;
 
         [HarmonyPostfix]
         public static void Postfix(BattleUnitData data, int value, HitType hitType, bool isRecovery)
@@ -51,8 +55,11 @@ namespace FFIII_ScreenReader.Patches
                 }
 
                 // Consume the multi-hit count captured by CreateHitCount (it fires just before this
-                // view). Reset to 1 so a later damage with no fresh hit count defaults to single.
-                int hitCount = PendingHitCount;
+                // view, on the same or adjacent frame). Reject a stale count from an earlier action
+                // that never produced a damage view, then reset to 1 so a later damage with no fresh
+                // hit count defaults to single.
+                bool fresh = UnityEngine.Time.frameCount - PendingHitCountFrame <= 1;
+                int hitCount = fresh ? PendingHitCount : 1;
                 PendingHitCount = 1;
 
                 string message;
@@ -96,6 +103,7 @@ namespace FFIII_ScreenReader.Patches
         public static void Postfix(int hitCountValue)
         {
             BattleBasicFunction_CreateDamageView_Patch.PendingHitCount = hitCountValue;
+            BattleBasicFunction_CreateDamageView_Patch.PendingHitCountFrame = UnityEngine.Time.frameCount;
         }
     }
 
