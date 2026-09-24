@@ -38,13 +38,31 @@ namespace FFIII_ScreenReader.Menus
 
                 if (!string.IsNullOrEmpty(menuText))
                 {
-                    FFIII_ScreenReaderMod.SpeakText(menuText);
+                    FFIII_ScreenReaderMod.SpeakText(AppendCommandListPosition(menuText, cursor, cursorIndex));
                 }
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error in delayed cursor read: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// The title and field menus keep their commands in C# lists, not Content transforms, so no
+        /// strategy can give their position; take the count from the owning controller (each lookup
+        /// returns -1, i.e. no suffix, for any other menu's cursor). Skips text that already carries it.
+        /// </summary>
+        private static string AppendCommandListPosition(string menuText, GameCursor cursor, int cursorIndex)
+        {
+            int count = Patches.TitleMenuPatches.TryGetActiveCommandCount(cursor);
+            if (count < 0)
+                count = Patches.FieldMenuPatches.TryGetFieldCommandCount(cursor);
+            if (count < 0)
+                return menuText;
+
+            string withPosition = MenuPosition.Format(menuText, cursorIndex, count);
+            string suffix = withPosition.Substring(menuText.Length);
+            return suffix.Length > 0 && menuText.EndsWith(suffix) ? menuText : withPosition;
         }
 
         /// <summary>

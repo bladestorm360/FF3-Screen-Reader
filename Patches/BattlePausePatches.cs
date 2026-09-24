@@ -70,8 +70,12 @@ namespace FFIII_ScreenReader.Patches
     internal static class BattlePausePatches
     {
 
-        // Track last announced button to avoid duplicates
+        // Track last announced button to avoid duplicates (reset per popup)
         private static int lastAnnouncedButtonIndex = -1;
+
+        // True from a CommonPopup's open until its message + focused button have been read together,
+        // so UpdateFocus doesn't speak the button before the message.
+        private static bool commonPopupReadPending = false;
 
         /// <summary>
         /// Apply battle pause menu patches.
@@ -126,7 +130,7 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                if (__instance == null) return;
+                if (__instance == null || commonPopupReadPending) return;
 
                 var popup = __instance as KeyInputCommonPopup;
                 if (popup == null) return;
@@ -182,12 +186,33 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
+        /// A CommonPopup opened: hold the focus reader until PopupPatches has read the message and the
+        /// focused button together.
+        /// </summary>
+        public static void BeginCommonPopupRead()
+        {
+            lastAnnouncedButtonIndex = -1;
+            commonPopupReadPending = true;
+        }
+
+        /// <summary>
+        /// The open-read spoke the button at focusedIndex (-1 if none): resume the focus reader without
+        /// repeating that button.
+        /// </summary>
+        public static void EndCommonPopupRead(int focusedIndex)
+        {
+            lastAnnouncedButtonIndex = focusedIndex;
+            commonPopupReadPending = false;
+        }
+
+        /// <summary>
         /// Reset state (called when battle ends or popup closes).
         /// </summary>
         public static void Reset()
         {
             BattlePauseState.Reset();
             lastAnnouncedButtonIndex = -1;
+            commonPopupReadPending = false;
         }
     }
 }

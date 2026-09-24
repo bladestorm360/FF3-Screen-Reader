@@ -7,7 +7,7 @@ using Il2CppLast.Battle.Function;
 using Il2CppLast.Systems;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
-using BattlePlayerData = Il2Cpp.BattlePlayerData;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFIII_ScreenReader.Patches
 {
@@ -26,58 +26,103 @@ namespace FFIII_ScreenReader.Patches
         // an unrelated later attack's damage announcement.
         public static int PendingHitCountFrame = -1;
 
-        [HarmonyPostfix]
-        public static void Postfix(BattleUnitData data, int value, HitType hitType, bool isRecovery)
+        // BattleBaseFunction.<battleActData>k__BackingField — a protected property, so read by offset.
+        private const int OFFSET_BATTLE_ACT_DATA = 0x28;
+        // Ability.TypeId of weapon attacks. BattleBasicFunction.CreateHitCount only draws the ×N for
+        // this type, so the calculated-hit-count fallback follows the same rule.
+        private const int WEAPON_ABILITY_TYPE = 4;
+
+        /// <summary>
+        /// The attack's own hit count against this target, from the function's calculation results
+        /// (ICalcResultDic → ICalcResult.GetHitCount). Used when no on-screen ×N was paired with the
+        /// damage view. Weapon attacks only; 1 for anything else or on any failure.
+        /// </summary>
+        private static int ReadWeaponHitCount(BattleBasicFunction function, BattleUnitData target)
         {
             try
             {
-                string targetName = "Unknown";
+                if (function == null || target == null) return 1;
+                IntPtr actPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(function.Pointer, OFFSET_BATTLE_ACT_DATA);
+                if (actPtr == IntPtr.Zero) return 1;
+                var abilities = new BattleActData(actPtr).abilityList;
+                if (abilities == null || abilities.Count == 0 || abilities[0] == null
+                    || abilities[0].TypeId != WEAPON_ABILITY_TYPE)
+                    return 1;
+                var results = function.ICalcResultDic;
+                if (results == null || !results.ContainsKey(target)) return 1;
+                var result = results[target];
+                return result != null ? Math.Max(1, result.GetHitCount()) : 1;
+            }
+            catch
+            {
+                return 1;
+            }
+        }
 
-                var playerData = data.TryCast<BattlePlayerData>();
-                if (playerData?.ownedCharacterData != null)
-                {
-                    targetName = playerData.ownedCharacterData.Name;
-                }
+        [HarmonyPostfix]
+        public static void Postfix(BattleBasicFunction __instance, BattleUnitData data, int value, HitType hitType, bool isRecovery)
+        {
+            try
+            {
+                if (data == null) return;
 
-                var enemyData = data.TryCast<BattleEnemyData>();
-                if (enemyData != null)
-                {
-                    string mesIdName = enemyData.GetMesIdName();
-                    var messageManager = MessageManager.Instance;
-                    if (messageManager != null && !string.IsNullOrEmpty(mesIdName))
-                    {
-                        string localizedName = messageManager.GetMessage(mesIdName);
-                        if (!string.IsNullOrEmpty(localizedName))
-                        {
-                            targetName = localizedName;
-                        }
-                    }
-                }
+                string targetName = BattleUnitHelper.GetUnitName(data) ?? T("Unknown");
 
                 // Consume the multi-hit count captured by CreateHitCount (it fires just before this
                 // view, on the same or adjacent frame). Reject a stale count from an earlier action
                 // that never produced a damage view, then reset to 1 so a later damage with no fresh
-                // hit count defaults to single.
+                // hit count defaults to single. When no ×N was paired with this view, fall back to the
+                // attack's own calculated hit count.
                 bool fresh = UnityEngine.Time.frameCount - PendingHitCountFrame <= 1;
                 int hitCount = fresh ? PendingHitCount : 1;
                 PendingHitCount = 1;
+                if (hitCount <= 1)
+                    hitCount = ReadWeaponHitCount(__instance, data);
 
                 string message;
-                if (hitType == HitType.Miss || value == 0)
+                if (hitType == HitType.Miss)
                 {
-                    message = $"{targetName}: Miss";
+                    message = string.Format(T("{0}: Miss"), targetName);
                 }
-                else if (isRecovery)
+                else if (value == 0)
                 {
-                    message = $"{targetName}: Recovered {value} HP";
+                    // Value-0 views, settled offline from GameAssembly.dll (debug.md, "Open-issues pass
+                    // (2026-09-23, session 2)"):
+                    //  - buffs/debuffs (AddCondition*, RandomAddCondition, Kill, UserAddCondition) carry
+                    //    Hit on success, Miss on failure; the condition itself is announced by the
+                    //    BattleConditionController.Add patch, so stay silent;
+                    //  - Zero is set only for a genuine zero result (DamageAggregater.CheckUndead,
+                    //    MagicAbsorptionFunction): "0 damage";
+                    //  - RecoveryCondition is never set by FF3: a status cure on a target that has the
+                    //    condition is GetFixedStatus(Hit), the same Hit/0 as other non-damage effects, so
+                    //    it cannot be told apart here. The branch is kept for parity with the other mods.
+                    MelonLogger.Msg($"[Battle] value-0 view: hitType={(int)hitType} isRecovery={isRecovery} target={targetName}");
+                    if (hitType == HitType.Zero)
+                        message = string.Format(T("{0}: {1} damage"), targetName, 0);
+                    else if (hitType == HitType.RecoveryCondition)
+                        message = string.Format(T("{0}: cured"), targetName);
+                    else
+                        return;
+                }
+                else if (hitType == HitType.MPRecovery)
+                {
+                    message = string.Format(T("{0}: Recovered {1} MP"), targetName, value);
+                }
+                else if (hitType == HitType.MPHit)
+                {
+                    message = string.Format(T("{0}: {1} MP damage"), targetName, value);
+                }
+                else if (hitType == HitType.Recovery || isRecovery)
+                {
+                    message = string.Format(T("{0}: Recovered {1} HP"), targetName, value);
                 }
                 else
                 {
                     // HP DAMAGE — optionally prepend the multi-hit "{N}x" multiplier (e.g. "14x1552
                     // damage"). The " damage" suffix stays so damage/recovery remain distinguishable.
                     message = (PreferencesManager.DamageDisplay == 1 && hitCount > 1)
-                        ? $"{targetName}: {hitCount}x{value} damage"
-                        : $"{targetName}: {value} damage";
+                        ? string.Format(T("{0}: {1}x{2} damage"), targetName, hitCount, value)
+                        : string.Format(T("{0}: {1} damage"), targetName, value);
                 }
 
                 // Damage doesn't interrupt - queues after action announcement
@@ -115,6 +160,15 @@ namespace FFIII_ScreenReader.Patches
     {
         private static string lastAnnouncement = "";
 
+        /// <summary>
+        /// Clears the last-announcement dedup (called at battle start) so a repeat of the previous
+        /// battle's final status line isn't swallowed.
+        /// </summary>
+        public static void ResetState()
+        {
+            lastAnnouncement = "";
+        }
+
         [HarmonyPostfix]
         public static void Postfix(BattleUnitData battleUnitData, int id)
         {
@@ -122,30 +176,7 @@ namespace FFIII_ScreenReader.Patches
             {
                 if (battleUnitData == null) return;
 
-                // Get target name
-                string targetName = "Unknown";
-                var playerData = battleUnitData.TryCast<BattlePlayerData>();
-                if (playerData?.ownedCharacterData != null)
-                {
-                    targetName = playerData.ownedCharacterData.Name;
-                }
-                else
-                {
-                    var enemyData = battleUnitData.TryCast<BattleEnemyData>();
-                    if (enemyData != null)
-                    {
-                        string mesIdName = enemyData.GetMesIdName();
-                        var messageManager = MessageManager.Instance;
-                        if (messageManager != null && !string.IsNullOrEmpty(mesIdName))
-                        {
-                            string localizedName = messageManager.GetMessage(mesIdName);
-                            if (!string.IsNullOrEmpty(localizedName))
-                            {
-                                targetName = localizedName;
-                            }
-                        }
-                    }
-                }
+                string targetName = BattleUnitHelper.GetUnitName(battleUnitData) ?? T("Unknown");
 
                 // Get condition name from ID
                 string conditionName = null;

@@ -1,49 +1,29 @@
 using System;
+using System.Collections;
 using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
-using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
 
 // FF3 types
-using MessageManager = Il2CppLast.Management.MessageManager;
 using BattleController = Il2CppLast.Battle.BattleController;
-using BattlePopPlug = Il2CppLast.Battle.BattlePopPlug;
-using BattlePlugManager = Il2CppLast.Battle.BattlePlugManager;
-using BattleUIManager = Il2CppLast.UI.BattleUIManager;
 
 namespace FFIII_ScreenReader.Patches
 {
     /// <summary>
-    /// Battle start patches for announcing battle conditions.
-    /// Handles: "Preemptive Attack!", "Back Attack!", "Ambush!", etc.
+    /// Battle-start lifecycle hook and the battle command-message window.
+    /// The start condition itself ("Preemptive strike!", "Back attack!", ...) is the game's own localized
+    /// message and is spoken where the game displays it (BattleSystemMessagePatches or the command-message
+    /// window below). No synthetic announcement is made here — that would duplicate it, and in English only.
     /// </summary>
     internal static class BattleStartPatches
     {
-
-        private static bool announcedBattleStart = false;
-
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
             try
             {
-                // Patch StartPreeMptiveMes for battle condition announcements
+                // Patch StartPreeMptiveMes as the battle-start lifecycle hook
                 PatchStartPreeMptiveMes(harmony);
-
-                // Patch ExitPreeMptive to reset state
-                PatchExitPreeMptive(harmony);
-
-                // Debug: Patch StartEscape to trace escape flow
-                PatchStartEscape(harmony);
-
-                // Debug: Patch UpdateEscape to trace escape flow
-                PatchUpdateEscape(harmony);
-
-                // Debug: Patch BattleUIManager.SetSystemMessage to find system message display
-                PatchBattleUIManagerSetSystemMessage(harmony);
-
-                // Debug: Patch EndEscapeFadeOut to trace escape completion
-                PatchEndEscapeFadeOut(harmony);
 
                 // Patch BattleCommandMessageController.SetMessage for battle system messages (defeat, escape, etc.)
                 PatchBattleCommandMessage(harmony);
@@ -57,7 +37,7 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Patch StartPreeMptiveMes to announce battle start condition.
+        /// Patch StartPreeMptiveMes to mark the battle start.
         /// </summary>
         private static void PatchStartPreeMptiveMes(HarmonyLib.Harmony harmony)
         {
@@ -89,286 +69,18 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Patch ExitPreeMptive to reset announcement state.
+        /// Postfix for StartPreeMptiveMes - marks the in-battle lifecycle.
         /// </summary>
-        private static void PatchExitPreeMptive(HarmonyLib.Harmony harmony)
+        public static void StartPreeMptiveMes_Postfix()
         {
             try
             {
-                var controllerType = typeof(BattleController);
-
-                // Use AccessTools.Method for IL2CPP compatibility (not Type.GetMethod)
-                var method = AccessTools.Method(controllerType, "ExitPreeMptive");
-
-                if (method != null)
-                {
-                    var prefix = typeof(BattleStartPatches).GetMethod(
-                        nameof(ExitPreeMptive_Prefix),
-                        BindingFlags.Public | BindingFlags.Static
-                    );
-
-                    harmony.Patch(method, prefix: new HarmonyMethod(prefix));
-                }
-                else
-                {
-                    MelonLogger.Warning("[Battle Start] ExitPreeMptive method not found");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Start] Error patching ExitPreeMptive: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Postfix for StartPreeMptiveMes - announces battle start condition.
-        /// </summary>
-        public static void StartPreeMptiveMes_Postfix(BattleController __instance)
-        {
-            try
-            {
-                if (announcedBattleStart) return;
-                announcedBattleStart = true;
-
-                // Get the preemptive state
-                int state = GetPreeMptiveState(__instance);
-
-                // Get announcement based on state
-                string announcement = GetBattleStartAnnouncement(state);
-                if (string.IsNullOrEmpty(announcement)) return;
-
-                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                BattleStateHelper.OnBattleStart();
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Battle Start] Error in StartPreeMptiveMes_Postfix: {ex.Message}");
             }
-        }
-
-        /// <summary>
-        /// Prefix for ExitPreeMptive - resets announcement state.
-        /// </summary>
-        public static void ExitPreeMptive_Prefix()
-        {
-            // Reset for next battle
-            announcedBattleStart = false;
-        }
-
-        /// <summary>
-        /// Get the preemptive state from BattlePlugManager (singleton).
-        /// Uses direct IL2CPP access instead of .NET reflection.
-        /// </summary>
-        private static int GetPreeMptiveState(BattleController controller)
-        {
-            try
-            {
-                // BattlePopPlug is stored in BattlePlugManager singleton, not BattleController
-                var plugManager = BattlePlugManager.Instance();
-                if (plugManager == null)
-                {
-                    MelonLogger.Warning("[Battle Start] BattlePlugManager.Instance() is null");
-                    return IL2CppOffsets.BattleStart.STATE_NORMAL;
-                }
-
-                // Direct IL2CPP property access (not .NET reflection)
-                var battlePopPlug = plugManager.BattlePopPlug;
-                if (battlePopPlug == null)
-                {
-                    MelonLogger.Warning("[Battle Start] BattlePopPlug is null");
-                    return IL2CppOffsets.BattleStart.STATE_NORMAL;
-                }
-
-                // Direct method call on IL2CPP type
-                var result = battlePopPlug.GetResult();
-                return (int)result;
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Start] Error getting PreeMptiveState: {ex.Message}");
-            }
-
-            return IL2CppOffsets.BattleStart.STATE_NORMAL;
-        }
-
-        /// <summary>
-        /// Get announcement text for battle start condition.
-        /// </summary>
-        private static string GetBattleStartAnnouncement(int state)
-        {
-            switch (state)
-            {
-                case IL2CppOffsets.BattleStart.STATE_PREEMPTIVE:
-                    return "Preemptive attack!";
-                case IL2CppOffsets.BattleStart.STATE_BACK_ATTACK:
-                    return "Back attack!";
-                case IL2CppOffsets.BattleStart.STATE_ENEMY_PREEMPTIVE:
-                    return "Ambush!";
-                case IL2CppOffsets.BattleStart.STATE_ENEMY_SIDE_ATTACK:
-                    return "Enemy side attack!";
-                case IL2CppOffsets.BattleStart.STATE_SIDE_ATTACK:
-                    return "Side attack!";
-                case IL2CppOffsets.BattleStart.STATE_NORMAL:
-                case IL2CppOffsets.BattleStart.STATE_NON:
-                default:
-                    return null; // No announcement for normal battles
-            }
-        }
-
-        /// <summary>
-        /// Reset state (call at battle end).
-        /// </summary>
-        public static void ResetState()
-        {
-            announcedBattleStart = false;
-        }
-
-        /// <summary>
-        /// Debug: Patch StartEscape to trace escape flow.
-        /// </summary>
-        private static void PatchStartEscape(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                var controllerType = typeof(BattleController);
-                var method = AccessTools.Method(controllerType, "StartEscape");
-
-                if (method != null)
-                {
-                    var postfix = typeof(BattleStartPatches).GetMethod(
-                        nameof(StartEscape_Postfix),
-                        BindingFlags.Public | BindingFlags.Static
-                    );
-
-                    harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Warning("[Battle Start] StartEscape method not found");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Start] Error patching StartEscape: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Debug: Patch UpdateEscape to trace escape flow.
-        /// </summary>
-        private static void PatchUpdateEscape(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                var controllerType = typeof(BattleController);
-                var method = AccessTools.Method(controllerType, "UpdateEscape");
-
-                if (method != null)
-                {
-                    var postfix = typeof(BattleStartPatches).GetMethod(
-                        nameof(UpdateEscape_Postfix),
-                        BindingFlags.Public | BindingFlags.Static
-                    );
-
-                    harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Warning("[Battle Start] UpdateEscape method not found");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Start] Error patching UpdateEscape: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Debug postfix for StartEscape.
-        /// </summary>
-        public static void StartEscape_Postfix()
-        {
-        }
-
-        /// <summary>
-        /// Debug postfix for UpdateEscape - called each frame during escape.
-        /// Only log once to avoid spam.
-        /// </summary>
-        public static void UpdateEscape_Postfix()
-        {
-        }
-
-        /// <summary>
-        /// Debug: Patch BattleUIManager.SetSystemMessage to find system message display.
-        /// </summary>
-        private static void PatchBattleUIManagerSetSystemMessage(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                var uiManagerType = typeof(BattleUIManager);
-                var method = AccessTools.Method(uiManagerType, "SetSystemMessage");
-
-                if (method != null)
-                {
-                    var postfix = typeof(BattleStartPatches).GetMethod(
-                        nameof(BattleUIManager_SetSystemMessage_Postfix),
-                        BindingFlags.Public | BindingFlags.Static
-                    );
-
-                    harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Warning("[Battle Start] BattleUIManager.SetSystemMessage method not found");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Start] Error patching BattleUIManager.SetSystemMessage: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Debug postfix for BattleUIManager.SetSystemMessage - logs when system messages are displayed.
-        /// </summary>
-        public static void BattleUIManager_SetSystemMessage_Postfix(string messageId)
-        {
-        }
-
-        /// <summary>
-        /// Debug: Patch EndEscapeFadeOut to trace escape completion.
-        /// </summary>
-        private static void PatchEndEscapeFadeOut(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                var controllerType = typeof(BattleController);
-                var method = AccessTools.Method(controllerType, "EndEscapeFadeOut");
-
-                if (method != null)
-                {
-                    var postfix = typeof(BattleStartPatches).GetMethod(
-                        nameof(EndEscapeFadeOut_Postfix),
-                        BindingFlags.Public | BindingFlags.Static
-                    );
-
-                    harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Warning("[Battle Start] EndEscapeFadeOut method not found");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Start] Error patching EndEscapeFadeOut: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Debug postfix for EndEscapeFadeOut.
-        /// </summary>
-        public static void EndEscapeFadeOut_Postfix()
-        {
         }
 
         /// <summary>
@@ -419,12 +131,12 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        private static string lastBattleCommandMessage = "";
-
         /// <summary>
         /// Postfix for BattleCommandMessageController.SetMessage/SetSystemMessage.
         /// Uses __0 instead of named string param to avoid IL2CPP crash.
-        /// Whitelist filter: only announces battle conclusion messages, not spell/ability names.
+        /// The same window also shows the name of the executing ability/item, which the CreateActFunction
+        /// patch already speaks as "Actor: Action"; those are filtered by comparing against the recorded
+        /// action name (language-independent), everything else is announced.
         /// </summary>
         public static void BattleCommandMessage_Postfix(object __0)
         {
@@ -434,39 +146,26 @@ namespace FFIII_ScreenReader.Patches
                 string message = __0?.ToString();
                 if (string.IsNullOrEmpty(message)) return;
 
-                // WHITELIST: Only announce battle conclusion/system messages
-                // Skip spell/ability names (already announced by CreateActFunction)
-                bool isSystemMessage =
-                    message.Contains("defeated", StringComparison.OrdinalIgnoreCase) ||
-                    message.Contains("victory", StringComparison.OrdinalIgnoreCase) ||
-                    message.Contains("escape", StringComparison.OrdinalIgnoreCase) ||
-                    message.Contains("fled", StringComparison.OrdinalIgnoreCase) ||
-                    message.Contains("annihilat", StringComparison.OrdinalIgnoreCase) ||
-                    message.Contains("wiped", StringComparison.OrdinalIgnoreCase);
-
-                if (!isSystemMessage) return;
-
-                // Deduplicate
-                if (message == lastBattleCommandMessage) return;
-                lastBattleCommandMessage = message;
-
-                // Clean up the message
-                string cleanMessage = TextUtils.StripIconMarkup(message);
-                cleanMessage = cleanMessage.Replace("\n", " ").Replace("\r", " ").Trim();
-                while (cleanMessage.Contains("  "))
-                    cleanMessage = cleanMessage.Replace("  ", " ");
-
+                string cleanMessage = TextUtils.NormalizeWhitespace(TextUtils.StripIconMarkup(message));
                 if (string.IsNullOrEmpty(cleanMessage)) return;
 
-                // Use interrupt for defeat message
-                bool isDefeatMessage = cleanMessage.Contains("defeated", StringComparison.OrdinalIgnoreCase);
-
-                FFIII_ScreenReaderMod.SpeakText(cleanMessage, interrupt: isDefeatMessage);
+                // Decide one frame later so the action name is recorded whichever hook fires first.
+                CoroutineManager.StartManaged(AnnounceUnlessActionName(cleanMessage));
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Battle Start] Error in BattleCommandMessage_Postfix: {ex.Message}");
             }
+        }
+
+        private static IEnumerator AnnounceUnlessActionName(string message)
+        {
+            yield return null;
+
+            if (message == ParameterActFunctionManagment_CreateActFunction_Patch.LastActionName)
+                yield break;
+
+            GlobalBattleMessageTracker.TryAnnounce(message, "BattleCommandMessage");
         }
 
         /// <summary>

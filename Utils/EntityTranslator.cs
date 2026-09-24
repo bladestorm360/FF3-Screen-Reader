@@ -263,7 +263,7 @@ namespace FFIII_ScreenReader.Utils
             {
                 string currentMap = MapNameResolver.GetCurrentMapName();
                 if (string.IsNullOrEmpty(currentMap))
-                    return "Could not determine current map.";
+                    return ModTextTranslator.T("Could not determine current map");
 
                 string gameDataPath = Application.dataPath;
                 string gameRoot = Path.GetDirectoryName(gameDataPath);
@@ -283,11 +283,11 @@ namespace FFIII_ScreenReader.Utils
 
                 // Check if map already exists in file
                 if (existingData.ContainsKey(currentMap))
-                    return "Entity data already exists for this map.";
+                    return ModTextTranslator.T("Entity data already exists for this map");
 
                 // Check if we have untranslated names for this map
                 if (!untranslatedNamesByMap.ContainsKey(currentMap) || untranslatedNamesByMap[currentMap].Count == 0)
-                    return "No untranslated names for this map.";
+                    return ModTextTranslator.T("No untranslated names for this map");
 
                 // Add current map's names to data
                 var mapNames = new Dictionary<string, string>();
@@ -301,12 +301,12 @@ namespace FFIII_ScreenReader.Utils
                 WriteNestedJson(dumpPath, existingData);
 
                 int count = mapNames.Count;
-                return $"Dumped {count} names for {currentMap}";
+                return string.Format(ModTextTranslator.T("Dumped {0} names for {1}"), count, currentMap);
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"[EntityTranslator] Failed to save EntityNames.json: {ex.Message}");
-                return "Failed to dump entity names.";
+                return ModTextTranslator.T("Failed to dump entity names");
             }
         }
 

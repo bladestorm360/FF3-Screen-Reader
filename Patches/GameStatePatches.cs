@@ -63,16 +63,26 @@ namespace FFIII_ScreenReader.Patches
                 if (stateValue == IL2CppOffsets.GameState.STATE_FIELD_READY || stateValue == IL2CppOffsets.GameState.STATE_PLAYER || stateValue == IL2CppOffsets.GameState.STATE_CHANGE_MAP)
                 {
                     // Clear battle state when returning to field
+                    BattleStateHelper.TryClearOnBattleEnd();
                     ClearAllBattleState();
 
                     // If we were in config bestiary, handle exit
                     if (BestiaryPatches.ConfigBestiaryStateHandler.WasInConfigBestiary)
                     {
                         BestiaryPatches.ConfigBestiaryStateHandler.HandleExit();
+                        // Returning from the bestiary lands back on the config menu, which resumes
+                        // without re-firing SelectCommand; the re-read self-gates on the config menu
+                        // actually being shown, so an exit to the field stays silent.
+                        ConfigActualDetails_SelectCommand_Patch.ReannounceFocusedConfigOption();
                     }
 
                     // Check for map transition
                     CheckMapTransition();
+                }
+                // Battle lifecycle start (StartPreeMptiveMes marks it too; both are idempotent)
+                else if (stateValue == IL2CppOffsets.GameState.STATE_BATTLE)
+                {
+                    BattleStateHelper.OnBattleStart();
                 }
                 // Config menu bestiary states
                 else if (stateValue == 17 || stateValue == 18)
@@ -83,6 +93,7 @@ namespace FFIII_ScreenReader.Patches
                 else if (BestiaryPatches.ConfigBestiaryStateHandler.WasInConfigBestiary)
                 {
                     BestiaryPatches.ConfigBestiaryStateHandler.HandleExit();
+                    ConfigActualDetails_SelectCommand_Patch.ReannounceFocusedConfigOption();
                 }
             }
             catch (Exception ex)
@@ -107,6 +118,11 @@ namespace FFIII_ScreenReader.Patches
 
                 if (currentMapId != lastAnnouncedMapId && lastAnnouncedMapId != -1)
                 {
+                    // Map actually changed, so the transition is over (no menu can be open during
+                    // one): clear any menu flag stuck by a missed close, which would otherwise
+                    // silently block field context on the new map.
+                    FFIII_ScreenReaderMod.ClearMenuFlagsForMapTransition();
+
                     // Map has changed - announce new map
                     string mapName = MapNameResolver.GetCurrentMapName();
                     string fullMessage = string.Format(T("Entering {0}"), mapName);

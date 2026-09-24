@@ -272,7 +272,7 @@ namespace FFIII_ScreenReader.Patches
                     int level = parameter.ConfirmedLevel();
                     if (level > 0)
                     {
-                        announcement += $", Level {level}";
+                        announcement += ", " + string.Format(ModTextTranslator.T("Level {0}"), level);
                     }
                 }
 

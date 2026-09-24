@@ -294,12 +294,94 @@ namespace FFIII_ScreenReader.Field
                 filteredEntities = filteredEntities.OrderBy(e => Vector3.Distance(e.Position, playerPos.Value)).ToList();
             }
 
+            // Map exit filter: one exit per destination (runs after the sort so the closest is kept)
+            if (PreferencesManager.MapExitFilterEnabled)
+            {
+                filteredEntities = DeduplicateMapExits(filteredEntities);
+            }
+
             // Restore focus to previously selected entity after re-sorting
             int restoredIndex = FindEntityByIdentifier();
             if (restoredIndex >= 0)
             {
                 currentIndex = restoredIndex;
             }
+        }
+
+        /// <summary>
+        /// Groups map exits by destination map ID, keeping only the closest of each.
+        /// List must already be sorted by distance (closest first).
+        /// Exits with unresolved destinations (ID &lt;= 0) are kept individually.
+        /// </summary>
+        private List<NavigableEntity> DeduplicateMapExits(List<NavigableEntity> source)
+        {
+            var result = new List<NavigableEntity>();
+            var seenDestinations = new HashSet<int>();
+
+            foreach (var entity in source)
+            {
+                if (entity is MapExitEntity mapExit && mapExit.DestinationMapId > 0)
+                {
+                    if (!seenDestinations.Add(mapExit.DestinationMapId))
+                        continue;
+                }
+                result.Add(entity);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Re-applies filters without rescanning. Used when filter toggles change.
+        /// </summary>
+        public void ReapplyFilter()
+        {
+            ApplyFilter();
+            if (currentIndex >= filteredEntities.Count)
+                currentIndex = 0;
+        }
+
+        /// <summary>
+        /// Returns true if the pathfinding filter is enabled and no entity in the list has a valid path.
+        /// </summary>
+        public bool NoReachableEntities()
+        {
+            if (!pathfindingFilter.IsEnabled || filteredEntities.Count == 0)
+                return false;
+
+            var context = new FilterContext();
+            foreach (var entity in filteredEntities)
+            {
+                if (pathfindingFilter.PassesFilter(entity, context))
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// When the pathfinding filter is on, moves the selection to the first reachable entity,
+        /// searching from the current index (inclusive) and wrapping; returns false if none are
+        /// reachable. With the filter off, leaves the selection unchanged and returns whether the
+        /// list is non-empty. Used by category change so it lands on a reachable entity.
+        /// </summary>
+        public bool SelectFirstReachable()
+        {
+            if (filteredEntities.Count == 0)
+                return false;
+            if (!pathfindingFilter.IsEnabled)
+                return true;
+
+            var context = new FilterContext();
+            for (int i = 0; i < filteredEntities.Count; i++)
+            {
+                int idx = (currentIndex + i) % filteredEntities.Count;
+                if (pathfindingFilter.PassesFilter(filteredEntities[idx], context))
+                {
+                    currentIndex = idx;
+                    SaveSelectedEntityIdentifier();
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>

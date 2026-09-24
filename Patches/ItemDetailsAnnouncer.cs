@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using MelonLoader;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for IL2CPP types
 using MasterManager = Il2CppLast.Data.Master.MasterManager;
@@ -17,8 +18,9 @@ using ContentType = Il2CppLast.Defaine.Content.ContentType;
 namespace FFIII_ScreenReader.Patches
 {
     /// <summary>
-    /// Announces equipment job requirements when 'I' key is pressed in Items menu.
+    /// Announces equipment job requirements when 'U' key is pressed in Items menu.
     /// Only works for equipment (weapons/armor), silent for consumables/key items.
+    /// The lookup helpers are shared with UsableByAnnouncer (shop items).
     /// </summary>
     internal static class ItemDetailsAnnouncer
     {
@@ -31,11 +33,11 @@ namespace FFIII_ScreenReader.Patches
         /// Only announces for weapons and armor, silent for other items.
         /// </summary>
         /// <param name="interrupt">
-        /// When true (the on-demand 'I' key), interrupts current speech. Auto Detail passes
+        /// When true (the on-demand 'U' key), interrupts current speech. Auto Detail passes
         /// false so this queues after the item-name announce instead of cutting it off.
         /// </param>
         /// <param name="announceIfEmpty">
-        /// When true (the 'I' key), speaks "No unlocked jobs can equip" when no unlocked job
+        /// When true (the 'U' key), speaks "No unlocked jobs can equip" when no unlocked job
         /// qualifies. Auto Detail passes false so it stays silent rather than appending that
         /// after every unequippable item on focus.
         /// </param>
@@ -97,7 +99,7 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// Gets the EquipJobGroupId from weapon or armor master data.
         /// </summary>
-        private static int GetEquipJobGroupId(MasterManager masterManager, int itemType, int itemId)
+        internal static int GetEquipJobGroupId(MasterManager masterManager, int itemType, int itemId)
         {
             try
             {
@@ -129,7 +131,7 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// Gets the set of job IDs that have been unlocked (released) by the player.
         /// </summary>
-        private static HashSet<int> GetUnlockedJobIds()
+        internal static HashSet<int> GetUnlockedJobIds()
         {
             var unlockedIds = new HashSet<int>();
 
@@ -169,7 +171,7 @@ namespace FFIII_ScreenReader.Patches
         /// Gets list of job names that can equip based on JobGroup accept flags.
         /// Only includes jobs that are unlocked (released) to avoid spoilers.
         /// </summary>
-        private static List<string> GetEquippableJobs(MasterManager masterManager, JobGroup jobGroup, HashSet<int> unlockedJobIds)
+        internal static List<string> GetEquippableJobs(MasterManager masterManager, JobGroup jobGroup, HashSet<int> unlockedJobIds)
         {
             var jobNames = new List<string>();
             var messageManager = MessageManager.Instance;
@@ -232,14 +234,14 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// Builds the announcement string from the list of equippable jobs.
         /// </summary>
-        private static string BuildAnnouncement(List<string> jobNames)
+        internal static string BuildAnnouncement(List<string> jobNames)
         {
             if (jobNames == null || jobNames.Count == 0)
             {
-                return "No unlocked jobs can equip";
+                return T("No unlocked jobs can equip");
             }
 
-            return "Can equip: " + string.Join(", ", jobNames);
+            return string.Format(T("Can equip: {0}"), string.Join(", ", jobNames));
         }
     }
 }

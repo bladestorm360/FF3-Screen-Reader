@@ -8,6 +8,7 @@ using Il2CppLast.UI.Common.Library;
 using MelonLoader;
 using UnityEngine;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFIII_ScreenReader.Menus
 {
@@ -49,7 +50,7 @@ namespace FFIII_ScreenReader.Menus
                 catch { }
             }
 
-            return $"Bestiary. Encountered: {encountered} of {total}";
+            return string.Format(T("Bestiary. Encountered: {0} of {1}"), encountered, total);
         }
 
         /// <summary>
@@ -165,7 +166,7 @@ namespace FFIII_ScreenReader.Menus
                         }
                     }
 
-                    string value = details.Count > 0 ? string.Join(", ", details) : "None";
+                    string value = details.Count > 0 ? string.Join(", ", details) : T("None");
                     entries.Add(new BestiaryStatEntry(title, value, group));
                 }
                 catch (Exception ex)
@@ -248,15 +249,13 @@ namespace FFIII_ScreenReader.Menus
                         names.Add(name);
                 }
 
-                if (names.Count == 0)
-                    return $"Formation {formationIndex + 1}: Empty";
-
-                return $"Formation {formationIndex + 1}: {string.Join(", ", names)}";
+                string members = names.Count > 0 ? string.Join(", ", names) : T("Empty");
+                return string.Format(T("Formation {0}: {1}"), formationIndex + 1, members);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Bestiary] Error reading formation: {ex.Message}");
-                return $"Formation {formationIndex + 1}: Error";
+                return string.Format(T("Formation {0}: {1}"), formationIndex + 1, T("Unknown"));
             }
         }
 
@@ -268,25 +267,27 @@ namespace FFIII_ScreenReader.Menus
             try
             {
                 var masterManager = MasterManager.Instance;
-                if (masterManager == null) return $"Monster {monsterId}";
+                if (masterManager == null) return FallbackMonsterName(monsterId);
 
                 var monsterDict = masterManager.GetList<Monster>();
                 if (monsterDict == null || !monsterDict.ContainsKey(monsterId))
-                    return $"Monster {monsterId}";
+                    return FallbackMonsterName(monsterId);
 
                 var monster = monsterDict[monsterId];
-                if (monster == null) return $"Monster {monsterId}";
+                if (monster == null) return FallbackMonsterName(monsterId);
 
                 string mesId = monster.MesIdName;
-                if (string.IsNullOrEmpty(mesId)) return $"Monster {monsterId}";
+                if (string.IsNullOrEmpty(mesId)) return FallbackMonsterName(monsterId);
 
-                return LocalizationHelper.GetText(mesId) ?? $"Monster {monsterId}";
+                return LocalizationHelper.GetText(mesId) ?? FallbackMonsterName(monsterId);
             }
             catch
             {
-                return $"Monster {monsterId}";
+                return FallbackMonsterName(monsterId);
             }
         }
+
+        private static string FallbackMonsterName(int monsterId) => string.Format(T("Monster {0}"), monsterId);
 
         /// <summary>
         /// Read stealable and dropped items directly from Monster master data.
@@ -311,8 +312,8 @@ namespace FFIII_ScreenReader.Menus
                     if (!string.IsNullOrEmpty(name))
                         stealNames.Add(name);
                 }
-                entries.Add(new BestiaryStatEntry("Stealable Items",
-                    stealNames.Count > 0 ? string.Join(", ", stealNames) : "None",
+                entries.Add(new BestiaryStatEntry(T("Stealable Items"),
+                    stealNames.Count > 0 ? string.Join(", ", stealNames) : T("None"),
                     BestiaryStatGroup.Items));
 
                 // Dropped items (8 slots)
@@ -326,8 +327,8 @@ namespace FFIII_ScreenReader.Menus
                     if (!string.IsNullOrEmpty(name))
                         dropNames.Add(name);
                 }
-                entries.Add(new BestiaryStatEntry("Dropped Items",
-                    dropNames.Count > 0 ? string.Join(", ", dropNames) : "None",
+                entries.Add(new BestiaryStatEntry(T("Dropped Items"),
+                    dropNames.Count > 0 ? string.Join(", ", dropNames) : T("None"),
                     BestiaryStatGroup.Items));
             }
             catch (Exception ex)
@@ -375,18 +376,18 @@ namespace FFIII_ScreenReader.Menus
             {
                 var habitatNames = data.HabitatNameList;
                 if (habitatNames == null || habitatNames.Count == 0)
-                    return "No habitat data";
+                    return T("No habitat data");
 
                 if (mapIndex < 0 || mapIndex >= habitatNames.Count)
                     mapIndex = 0;
 
                 string name = habitatNames[mapIndex];
-                return !string.IsNullOrEmpty(name) ? name : "Unknown location";
+                return !string.IsNullOrEmpty(name) ? name : T("Unknown location");
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Bestiary] Error reading map name: {ex.Message}");
-                return "Error reading habitat";
+                return T("Unknown location");
             }
         }
     }

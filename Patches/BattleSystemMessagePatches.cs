@@ -105,8 +105,12 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        public static void SetSystemMessageAtKey_Postfix(string messageConclusionKey)
+        // IL2CPP rule: string parameters are taken positionally (__N), never by name.
+
+        /// <summary>Postfix for BattleUtility.SetSystemMessageAtKey(string messageConclusionKey).</summary>
+        public static void SetSystemMessageAtKey_Postfix(string __0)
         {
+            string messageConclusionKey = __0;
             try
             {
                 if (string.IsNullOrWhiteSpace(messageConclusionKey))
@@ -135,8 +139,13 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        public static void SetSystemMessageAtKey3_Postfix(string messageConclusionKey)
+        /// <summary>
+        /// Postfix for BattleUtility.SetSystemMessageAtKey(BattleUIManager, MessageManager, string
+        /// messageConclusionKey): the key is the third parameter.
+        /// </summary>
+        public static void SetSystemMessageAtKey3_Postfix(string __2)
         {
+            string messageConclusionKey = __2;
             try
             {
                 if (string.IsNullOrWhiteSpace(messageConclusionKey))
@@ -165,8 +174,10 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        public static void SystemMessageManager_SetMessage_Postfix(string messageId)
+        /// <summary>Postfix for SystemMessageWindowManager.SetMessage(string messageId).</summary>
+        public static void SystemMessageManager_SetMessage_Postfix(string __0)
         {
+            string messageId = __0;
             try
             {
                 if (string.IsNullOrWhiteSpace(messageId))
@@ -209,8 +220,10 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        public static void SystemMessageController_SetMessage_Postfix(string messageId)
+        /// <summary>Postfix for SystemMessageWindowController.SetMessage(string messageId, TextAnchor).</summary>
+        public static void SystemMessageController_SetMessage_Postfix(string __0)
         {
+            string messageId = __0;
             try
             {
                 if (string.IsNullOrWhiteSpace(messageId))
@@ -253,27 +266,44 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        public static void SystemMessageView_SetMessage_Postfix(string message)
+        /// <summary>
+        /// Postfix for SystemMessageWindowView.SetMessage(string message). Its native body (RVA
+        /// 0x3C5AE0) is shared with 46 other string setters (SetName, SetNameText, SetShopNameText,
+        /// SetDescriptionText, SetConditionText, ...), so this detour fires for all of them: act only
+        /// when the object really is a SystemMessageWindowView.
+        /// </summary>
+        public static void SystemMessageView_SetMessage_Postfix(SystemMessageWindowView __instance, string __0)
         {
+            string message = __0;
             try
             {
+                if (!IsSystemMessageView(__instance))
+                    return;
                 if (string.IsNullOrWhiteSpace(message))
                     return;
 
-                string cleanMessage = message.Trim();
-
-                if (cleanMessage.IndexOf("escape", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    cleanMessage.IndexOf("fled", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    GlobalBattleMessageTracker.ClearFleeInProgress();
-                }
-
-                GlobalBattleMessageTracker.TryAnnounce(cleanMessage, "SystemMessageView");
+                // The view only receives display text, so the flee flag is left to the message-id
+                // hooks (ESCAPE keys) and the next turn's SetCommandData.
+                GlobalBattleMessageTracker.TryAnnounce(message.Trim(), "SystemMessageView");
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[System Message View] Error in SetMessage postfix: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// True when the native object's IL2CPP class is (or derives from) SystemMessageWindowView; the
+        /// managed wrapper type proves nothing on a shared body.
+        /// </summary>
+        private static bool IsSystemMessageView(SystemMessageWindowView instance)
+        {
+            if ((object)instance == null || instance.Pointer == IntPtr.Zero)
+                return false;
+            IntPtr cls = Il2CppInterop.Runtime.Il2CppClassPointerStore<SystemMessageWindowView>.NativeClassPtr;
+            return cls != IntPtr.Zero
+                && Il2CppInterop.Runtime.IL2CPP.il2cpp_class_is_assignable_from(
+                    cls, Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(instance.Pointer));
         }
     }
 }

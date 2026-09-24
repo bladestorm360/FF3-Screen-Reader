@@ -10,7 +10,8 @@ namespace FFIII_ScreenReader.Patches
 {
     /// <summary>
     /// Suppresses wall tones during map transitions by polling FadeManager state.
-    /// Uses cached delegate calls to IsFadeFinish() â€?    /// no Harmony patches on FadeManager (avoids IL2CPP trampoline issues with Nullable params).
+    /// Uses cached delegate calls to IsFadeFinish() â€“
+    /// no Harmony patches on FadeManager (avoids IL2CPP trampoline issues with Nullable params).
     /// Polled every 100ms from WallToneLoop().
     /// </summary>
     internal static class MapTransitionPatches
@@ -91,7 +92,7 @@ namespace FFIII_ScreenReader.Patches
 
                 if (isFadeFinishMethod == null)
                 {
-                    MelonLogger.Warning("[MapTransition] IsFadeFinish not found â€?fade detection disabled");
+                    MelonLogger.Warning("[MapTransition] IsFadeFinish not found â€“ fade detection disabled");
                     return;
                 }
 

@@ -63,6 +63,8 @@ namespace FFIII_ScreenReader.Core
         {
             bool newValue = !ExpCounterEnabled;
             PreferencesManager.SaveExpCounter(newValue);
+            // Turned off mid-tally: stop the tone that is playing
+            if (!newValue) BattleResultState.StopExpCounterIfPlaying();
         }
 
         // Category count derived from enum for safe cycling
@@ -132,12 +134,20 @@ namespace FFIII_ScreenReader.Core
             BattleMagicPatchesApplier.ApplyPatches(harmony);
             BattlePausePatches.ApplyPatches(harmony);
             TryPatchBattleTargetShowWindow(harmony);
+            BattleTargetPatches.ApplyPatches(harmony);
+            BattleControllerPatches.ApplyPatches(harmony);
+            BattleCommandManualPatches.ApplyPatches(harmony);
+            BattleResultPatches.ApplyPatches(harmony);
             JobMenuPatches.ApplyPatches(harmony);
             ShopPatches.ApplyPatches(harmony);
             MagicMenuPatches.ApplyPatches(harmony);
             StatusMenuPatches.ApplyPatches(harmony);
             EquipMenuState.ApplyTransitionPatches(harmony);
             ItemMenuState.ApplyTransitionPatches(harmony);
+            FieldItemReannouncePatches.ApplyPatches(harmony);
+            FieldMenuPatches.ApplyPatches(harmony);
+            TitleMenuPatches.ApplyPatches(harmony);
+            SaveListPatches.ApplyPatches(harmony);
             StatusDetailsPatches.ApplyPatches(harmony);
             MovementSpeechPatches.ApplyPatches(harmony);
             VehicleLandingPatches.ApplyPatches(harmony);
@@ -148,6 +158,7 @@ namespace FFIII_ScreenReader.Core
             EventItemSelectPatches.Apply(harmony);
             GameStatePatches.ApplyPatches(harmony);
             MapTransitionPatches.ApplyPatches(harmony);
+            GameToggleAnnouncer.ApplyPatches(harmony);
             InputPassthroughPatches.ApplyPatches(harmony);
             try { GalleryPatches.ApplyPatches(harmony); }
             catch (Exception ex) { LoggerInstance.Error($"[Gallery] Fatal error loading patches: {ex}"); }
@@ -234,11 +245,29 @@ namespace FFIII_ScreenReader.Core
             tolk?.Unload();
         }
 
+        // Previous scene name, for battle-exit detection
+        private string previousSceneName = "";
+
         private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
         {
             try
             {
+                LoggerInstance.Msg($"[ComponentCache] Scene loaded: {scene.name}");
+
+                // The title "Press any button" prompt is spoken by TitleScreenPatches from the game's own
+                // SystemIndicator.Hide call that precedes it (boot and return to title), not from here.
+
+                // Leaving a battle scene: backstop for the BattleController end hooks
+                if (previousSceneName.Contains("Battle") && !scene.name.Contains("Battle"))
+                    BattleStateHelper.TryClearOnBattleEnd();
+                previousSceneName = scene.name;
+
                 GameObjectCache.ClearAll();
+
+                // Config menu / controls pop-up state must never survive a scene change (a stale
+                // config flag would otherwise leak into the next screen).
+                ConfigMenuState.ResetState();
+                KeyHelpReader.CloseControlsHelp();
 
                 audioLoopManager.StopWallToneLoop();
                 audioLoopManager.StopBeaconLoop();
@@ -246,6 +275,11 @@ namespace FFIII_ScreenReader.Core
                 audioLoopManager.beaconSuppressedUntil = Time.time + 1.0f;
 
                 MovementSoundPatches.ResetState();
+
+                // Reset the location message tracker (not GameStatePatches' last map id — battle
+                // transitions change scenes without changing maps)
+                LocationMessageTracker.Reset();
+
                 CoroutineManager.StartManaged(DelayedInitialScan());
             }
             catch (Exception ex)
@@ -273,6 +307,9 @@ namespace FFIII_ScreenReader.Core
                 LoggerInstance.Warning($"[ComponentCache] Error caching FieldMap: {ex.Message}");
             }
 
+            // Re-seed the walk/run + encounter toggles (a loaded save may differ from the last seed)
+            GameToggleAnnouncer.Seed();
+
             if (PreferencesManager.WallTonesEnabled) audioLoopManager.StartWallToneLoop();
             if (PreferencesManager.AudioBeaconsEnabled) audioLoopManager.StartBeaconLoop();
         }
@@ -289,6 +326,17 @@ namespace FFIII_ScreenReader.Core
         public void ForceEntityRescan()
         {
             entityScanner?.ForceRescan();
+        }
+
+        /// <summary>
+        /// Backtick: user-requested full rescan, with spoken confirmation. (ForceEntityRescan stays
+        /// silent because map transitions call it.)
+        /// </summary>
+        internal void ManualEntityRescan()
+        {
+            if (!EnsureFieldContext()) return;
+            entityScanner.ForceRescan();
+            SpeakText(T("Entity scan complete"));
         }
 
         public bool IsCurrentMapWorldMap()
@@ -317,7 +365,7 @@ namespace FFIII_ScreenReader.Core
             NavigationTargetTracker.MarkEntity();
 
             var playerPos = GetPlayerPosition();
-            if (!playerPos.HasValue) { SpeakText(entity.Name); return; }
+            if (!playerPos.HasValue) { SpeakText(entity.SpokenName); return; }
 
             string pathDescription = FieldNavigationHelper.GetPathDescription(entity.Position);
             string announcement = !string.IsNullOrEmpty(pathDescription)
@@ -331,36 +379,68 @@ namespace FFIII_ScreenReader.Core
         {
             if (!EnsureFieldContext()) return;
             RefreshEntitiesIfNeeded();
-            if (entityScanner.Entities.Count == 0) { SpeakText(T("No entities found")); return; }
             entityScanner.NextEntity();
-            NavigationTargetTracker.MarkEntity();
-            AnnounceEntityOnly();
+            if (entityScanner.NoReachableEntities()) { SpeakText(T("No reachable entities")); return; }
+            SpeakSelectedEntity(); // already scanned above: one scan per cycle
         }
 
         internal void CyclePrevious()
         {
             if (!EnsureFieldContext()) return;
             RefreshEntitiesIfNeeded();
-            if (entityScanner.Entities.Count == 0) { SpeakText(T("No entities found")); return; }
             entityScanner.PreviousEntity();
-            NavigationTargetTracker.MarkEntity();
-            AnnounceEntityOnly();
+            if (entityScanner.NoReachableEntities()) { SpeakText(T("No reachable entities")); return; }
+            SpeakSelectedEntity(); // already scanned above: one scan per cycle
         }
 
+        /// <summary>
+        /// K: rescans, then speaks the selected entity's name, direction and index, and makes it the
+        /// navigation target.
+        /// </summary>
         internal void AnnounceEntityOnly()
         {
             if (!EnsureFieldContext()) return;
+            RefreshEntitiesIfNeeded();
+            SpeakSelectedEntity();
+        }
 
+        /// <summary>
+        /// Speaks the selected entity (no rescan: the caller has just scanned) and makes it the
+        /// navigation target.
+        /// </summary>
+        private void SpeakSelectedEntity()
+        {
+            string announcement = FormatCurrentEntity();
+            if (announcement == null)
+            {
+                if (entityScanner.Entities.Count > 0)
+                    SpeakText(T("No entity selected"));
+                else if (currentCategory == EntityCategory.All)
+                    SpeakText(T("No entities found"));
+                else
+                    SpeakText(string.Format(T("No {0} found"), GetCategoryName(currentCategory)));
+                return;
+            }
+
+            NavigationTargetTracker.MarkEntity();
+            SpeakText(announcement);
+        }
+
+        /// <summary>
+        /// The selected entity's description plus its "N of M" index, or null if none is selected.
+        /// </summary>
+        private string FormatCurrentEntity()
+        {
             var entity = entityScanner.CurrentEntity;
-            if (entity == null) { SpeakText(T("No entity selected")); return; }
+            if (entity == null) return null;
 
             var playerPos = GetPlayerPosition();
-            if (!playerPos.HasValue) { SpeakText(entity.Name); return; }
+            if (!playerPos.HasValue) return entity.SpokenName;
 
-            string announcement = entity.FormatDescription(playerPos.Value);
+            string description = entity.FormatDescription(playerPos.Value);
             int index = entityScanner.CurrentIndex + 1;
             int total = entityScanner.Entities.Count;
-            SpeakText(string.Format(T("{0}, {1} of {2}"), announcement, index, total));
+            return string.Format(T("{0}, {1} of {2}"), description, index, total);
         }
 
         // Delta-scans entities on every navigation input. The scanner handles map-change
@@ -377,7 +457,6 @@ namespace FFIII_ScreenReader.Core
             if (!EnsureFieldContext()) return;
             currentCategory = (EntityCategory)(((int)currentCategory + 1) % CategoryCount);
             entityScanner.CurrentCategory = currentCategory;
-            NavigationTargetTracker.MarkEntity();
             AnnounceCategoryChange();
         }
 
@@ -388,7 +467,6 @@ namespace FFIII_ScreenReader.Core
             if (prev < 0) prev = CategoryCount - 1;
             currentCategory = (EntityCategory)prev;
             entityScanner.CurrentCategory = currentCategory;
-            NavigationTargetTracker.MarkEntity();
             AnnounceCategoryChange();
         }
 
@@ -401,9 +479,25 @@ namespace FFIII_ScreenReader.Core
             AnnounceCategoryChange();
         }
 
+        /// <summary>
+        /// Speaks "Category: X" plus the category's nearest entity (the nearest reachable one when the
+        /// pathfinding filter is on), which becomes the navigation target. An empty category, or one with
+        /// nothing reachable, speaks only its name.
+        /// </summary>
         private void AnnounceCategoryChange()
         {
-            SpeakText(string.Format(T("Category: {0}"), GetCategoryName(currentCategory)));
+            string categoryText = string.Format(T("Category: {0}"), GetCategoryName(currentCategory));
+
+            RefreshEntitiesIfNeeded();
+            string entityDescription = entityScanner.SelectFirstReachable() ? FormatCurrentEntity() : null;
+            if (entityDescription == null)
+            {
+                SpeakText(categoryText);
+                return;
+            }
+
+            NavigationTargetTracker.MarkEntity();
+            SpeakText($"{categoryText}, {entityDescription}");
         }
 
         internal static string GetCategoryName(EntityCategory category)
@@ -436,7 +530,7 @@ namespace FFIII_ScreenReader.Core
                 string direction = Math.Abs(offset.x) > Math.Abs(offset.y)
                     ? (offset.x > 0 ? T("east") : T("west"))
                     : (offset.y > 0 ? T("north") : T("south"));
-                SpeakText(string.Format(T("Teleported to {0} of {1}"), direction, entity.Name));
+                SpeakText(string.Format(T("Teleported to {0} of {1}"), direction, entity.SpokenName));
             }
             catch (Exception ex)
             {
@@ -461,6 +555,7 @@ namespace FFIII_ScreenReader.Core
         {
             bool newVal = !PreferencesManager.MapExitFilterEnabled;
             PreferencesManager.SaveMapExitFilter(newVal);
+            entityScanner?.ReapplyFilter();
             SpeakText(string.Format(T("Map exit filter {0}"), newVal ? T("on") : T("off")));
         }
 
@@ -599,7 +694,40 @@ namespace FFIII_ScreenReader.Core
         /// </summary>
         public static void SpeakText(string text, bool interrupt = true)
         {
-            tolk?.Speak(text, interrupt);
+            MelonLogger.Msg($"[TTS] {text}");
+            tolk?.Speak(TextUtils.StripRichTextTags(text), interrupt);
+        }
+
+        /// <summary>
+        /// Clears menu and popup flags after a map transition completes. Battle flags are left alone
+        /// (battle scene transitions don't change the map id, so this never runs mid-battle). POPUP is
+        /// cleared because some flows (game over → load, scene reset) dismiss popups without Close,
+        /// leaking the flag and silently making IsFieldActive false on the next map.
+        /// </summary>
+        public static void ClearMenuFlagsForMapTransition()
+        {
+            var stuck = MenuStateRegistry.GetActiveStates();
+            if (stuck.Count > 0)
+                MelonLogger.Msg($"[MapTransition] Pre-clear active flags: {string.Join(",", stuck)}");
+
+            MenuStateRegistry.Reset(
+                MenuStateRegistry.CONFIG_MENU,
+                MenuStateRegistry.EQUIP_MENU,
+                MenuStateRegistry.ITEM_MENU,
+                MenuStateRegistry.JOB_MENU,
+                MenuStateRegistry.MAGIC_MENU,
+                MenuStateRegistry.SAVE_LOAD_MENU,
+                MenuStateRegistry.SHOP_MENU,
+                MenuStateRegistry.STATUS_MENU,
+                MenuStateRegistry.STATUS_DETAILS,
+                MenuStateRegistry.EVENT_ITEM_SELECT,
+                MenuStateRegistry.GALLERY,
+                MenuStateRegistry.MUSIC_PLAYER,
+                MenuStateRegistry.BESTIARY_LIST,
+                MenuStateRegistry.BESTIARY_DETAIL,
+                MenuStateRegistry.BESTIARY_FORMATION,
+                MenuStateRegistry.BESTIARY_MAP,
+                MenuStateRegistry.POPUP);
         }
 
         /// <summary>
@@ -696,7 +824,8 @@ namespace FFIII_ScreenReader.Core
                 var suppressionResult = CursorSuppressionCheck.Check();
                 if (suppressionResult.ShouldSuppress)
                 {
-                    if (suppressionResult.IsPopup)
+                    // A popup with its own focus reader (CommonPopup.UpdateFocus) already reads the button
+                    if (suppressionResult.IsPopup && !Patches.PopupState.HasOwnFocusReader)
                         Patches.PopupPatches.ReadCurrentButton(cursor);
                     return;
                 }

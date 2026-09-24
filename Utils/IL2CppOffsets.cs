@@ -87,6 +87,8 @@ namespace FFIII_ScreenReader.Utils
 
             public const int STATE_NONE = 0;             // Menu closed
             public const int STATE_SELECT_COMMAND = 1;   // Command bar (Buy/Sell/Equipment/Back)
+            public const int STATE_SELECT_PRODUCT = 2;   // Buy list
+            public const int STATE_SELECT_SELL_ITEM = 3; // Sell list
 
             // ShopTradeWindowController offsets
             public const int OFFSET_TRADE_VIEW = 0x30;          // ShopTradeWindowView
@@ -121,17 +123,19 @@ namespace FFIII_ScreenReader.Utils
         }
 
         /// <summary>
-        /// PreeMptiveState (battle start conditions)
+        /// BattleTargetSelectController (KeyInput) — initial target focus read on state entry
         /// </summary>
-        internal static class BattleStart
+        internal static class BattleTarget
         {
-            public const int STATE_NON = -1;
-            public const int STATE_NORMAL = 0;              // Normal encounter
-            public const int STATE_PREEMPTIVE = 1;          // Party preemptive
-            public const int STATE_BACK_ATTACK = 2;
-            public const int STATE_ENEMY_PREEMPTIVE = 3;    // Enemy preemptive
-            public const int STATE_ENEMY_SIDE_ATTACK = 4;
-            public const int STATE_SIDE_ATTACK = 5;
+            public const int OFFSET_PLAYER_DATA_LIST = 0x30;     // IEnumerable<BattlePlayerData> playerDataList
+            public const int OFFSET_ENEMY_DATA_LIST = 0x38;      // IEnumerable<BattleEnemyData> enemyDataList
+            public const int OFFSET_TARGET_PLAYER_LIST = 0x98;   // <TargetPlayerList>k__BackingField
+            public const int OFFSET_TARGET_ENEMY_LIST = 0xA0;    // <TargetEnamyList>k__BackingField (game typo)
+            public const int OFFSET_SELECT_CURSOR = 0xD0;        // Cursor selectCursor
+            public const int OFFSET_STATE_MACHINE = 0xD8;
+
+            public const int STATE_PLAYERS = 1;      // Single ally target
+            public const int STATE_ENEMYS = 3;       // Single enemy target (game typo)
         }
 
         /// <summary>

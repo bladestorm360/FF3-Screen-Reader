@@ -21,15 +21,15 @@ namespace FFIII_ScreenReader.Utils
             if (angle < 0) angle += 360;
 
             // Convert to cardinal/intercardinal directions
-            if (angle >= 337.5 || angle < 22.5) return "North";
-            else if (angle >= 22.5 && angle < 67.5) return "Northeast";
-            else if (angle >= 67.5 && angle < 112.5) return "East";
-            else if (angle >= 112.5 && angle < 157.5) return "Southeast";
-            else if (angle >= 157.5 && angle < 202.5) return "South";
-            else if (angle >= 202.5 && angle < 247.5) return "Southwest";
-            else if (angle >= 247.5 && angle < 292.5) return "West";
-            else if (angle >= 292.5 && angle < 337.5) return "Northwest";
-            else return "Unknown";
+            if (angle >= 337.5 || angle < 22.5) return ModTextTranslator.T("North");
+            else if (angle >= 22.5 && angle < 67.5) return ModTextTranslator.T("Northeast");
+            else if (angle >= 67.5 && angle < 112.5) return ModTextTranslator.T("East");
+            else if (angle >= 112.5 && angle < 157.5) return ModTextTranslator.T("Southeast");
+            else if (angle >= 157.5 && angle < 202.5) return ModTextTranslator.T("South");
+            else if (angle >= 202.5 && angle < 247.5) return ModTextTranslator.T("Southwest");
+            else if (angle >= 247.5 && angle < 292.5) return ModTextTranslator.T("West");
+            else if (angle >= 292.5 && angle < 337.5) return ModTextTranslator.T("Northwest");
+            else return ModTextTranslator.T("Unknown");
         }
 
         /// <summary>
@@ -38,8 +38,8 @@ namespace FFIII_ScreenReader.Utils
         public static string FormatSteps(float distance)
         {
             float steps = distance / 16f;
-            string stepLabel = Math.Abs(steps - 1f) < 0.1f ? "step" : "steps";
-            return $"{steps:F1} {stepLabel}";
+            string format = Math.Abs(steps - 1f) < 0.1f ? ModTextTranslator.T("{0} step") : ModTextTranslator.T("{0} steps");
+            return string.Format(format, steps.ToString("F1"));
         }
     }
 }

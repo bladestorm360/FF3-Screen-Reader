@@ -13,9 +13,12 @@ using FFIII_ScreenReader.Field;
 namespace FFIII_ScreenReader.Patches
 {
     /// <summary>
-    /// Patches for playing sound effects during player movement (wall bumps).
-    /// Uses coroutine-based approach: captures position before movement input,
-    /// waits for movement to process, then checks if position changed.
+    /// Sound effects during player movement.
+    /// Wall bumps: coroutine-based — captures position before movement input, waits for movement to
+    /// process, then checks if position changed.
+    /// Footsteps: PollFootsteps, a per-tile check driven from InputManager.Update (the existing
+    /// per-frame input loop, not a Harmony patch). The movement-input hook can't drive them: it only
+    /// samples once per wall-check coroutine, which skipped tiles while dashing.
     /// </summary>
     [HarmonyPatch]
     internal static class MovementSoundPatches
@@ -35,10 +38,7 @@ namespace FFIII_ScreenReader.Patches
         // Prevent multiple wall-check coroutines from stacking up
         private static bool wallCheckPending = false;
 
-        // Audio feedback cooldowns
         private const float TILE_SIZE = FF3Constants.TILE_SIZE;
-        private static float lastFootstepTime = 0f;
-        private const float FOOTSTEP_COOLDOWN = 0.15f;
 
         // Tile position tracking for footsteps
         private static Vector2Int lastTilePosition = Vector2Int.zero;
@@ -118,16 +118,6 @@ namespace FFIII_ScreenReader.Patches
                 // Calculate distance moved
                 float distanceMoved = Vector3.Distance(positionBefore, positionAfter);
 
-                // Check tile position change for footsteps
-                Vector2Int currentTile = GetTilePosition(positionAfter);
-
-                // Initialize tile tracking if needed
-                if (!tileTrackingInitialized)
-                {
-                    lastTilePosition = currentTile;
-                    tileTrackingInitialized = true;
-                }
-
                 // If position didn't change (within small threshold), player hit a wall
                 if (distanceMoved < 0.1f)
                 {
@@ -168,23 +158,7 @@ namespace FFIII_ScreenReader.Patches
                 {
                     // Player successfully moved - reset collision counter
                     samePositionCount = 0;
-
-                    if (currentTile != lastTilePosition)
-                    {
-                        lastTilePosition = currentTile;
-
-                        if (PreferencesManager.FootstepsEnabled)
-                        {
-                            float currentTime = Time.time;
-                            if (currentTime - lastFootstepTime >= FOOTSTEP_COOLDOWN)
-                            {
-                                SoundPlayer.PlayFootstep();
-                                lastFootstepTime = currentTime;
-                            }
-                        }
-                    }
                 }
-
             }
             catch (Exception ex)
             {
@@ -225,6 +199,42 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
+        /// Per-tile footstep check, called every frame from InputManager.Update. Plays a footstep when
+        /// the player's tile changes, so the cadence tracks the actual movement speed (walk vs. dash).
+        /// Silent in vehicles and outside field gameplay (menus, battle).
+        /// </summary>
+        public static void PollFootsteps()
+        {
+            try
+            {
+                if (!ControllerRouter.IsFieldActive) return;
+                if (!PreferencesManager.FootstepsEnabled) return;
+                if (!MoveStateHelper.IsOnFoot()) return;
+
+                var player = FFIII_ScreenReaderMod.Instance?.GetFieldPlayer();
+                if (player?.transform == null) return;
+
+                Vector2Int currentTile = GetTilePosition(player.transform.localPosition);
+
+                if (!tileTrackingInitialized)
+                {
+                    lastTilePosition = currentTile;
+                    tileTrackingInitialized = true;
+                    return;
+                }
+
+                if (currentTile == lastTilePosition) return;
+
+                lastTilePosition = currentTile;
+                SoundPlayer.PlayFootstep();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error in PollFootsteps: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Resets all static state. Called on map transitions to prevent stale
         /// collision/footstep data from the previous map.
         /// </summary>
@@ -234,7 +244,6 @@ namespace FFIII_ScreenReader.Patches
             lastCollisionPos = Vector3.zero;
             samePositionCount = 0;
             wallCheckPending = false;
-            lastFootstepTime = 0f;
             lastTilePosition = Vector2Int.zero;
             tileTrackingInitialized = false;
         }

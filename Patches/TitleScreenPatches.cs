@@ -1,42 +1,48 @@
 using System;
+using System.Collections;
 using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
+using UnityEngine;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
 using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
-// Splash/Title screen
-using SplashController = Il2CppLast.UI.SplashController;
+// Title screen
+using TitleWindowController = Il2CppLast.UI.KeyInput.TitleWindowController;
 using KeyInputTitleMenuCommandController = Il2CppLast.UI.KeyInput.TitleMenuCommandController;
 using TouchTitleMenuCommandController = Il2CppLast.UI.Touch.TitleMenuCommandController;
 
 namespace FFIII_ScreenReader.Patches
 {
     /// <summary>
-    /// Patches for title screen "Press any button" using combination approach:
-    /// 1. SplashController.InitializeTitle - stores text silently (fires early during loading)
-    /// 2. SystemIndicator.Show - tracks when title loading starts
-    /// 3. SystemIndicator.Hide - speaks stored text when loading completes (indicator hidden)
-    /// 4. TitleMenuCommandController.SetEnableMainMenu - clears state on title menu activation
+    /// Title screen "Press any button" prompt and title-menu state clearing. Event hooks only, no wait:
+    /// 1. KeyInput TitleWindowController.Initialize(GameObject) postfix keeps the title window. Its only
+    ///    caller is SceneTitleScreen.CreateTitleWindow (from CreateInstance), which builds the title
+    ///    screen on boot AND on every return to title.
+    /// 2. SystemIndicator.Hide postfix. The prompt is shown in one place only: the None state's
+    ///    TitleWindowController.UpdateNone calls SystemIndicator.Hide (0x8CD798) and, straight after it
+    ///    returns, activates view.startParent (0x8CD7AF); input is accepted from that frame. So one frame
+    ///    after a Hide, if the kept window is in the None state and its startText went from hidden to
+    ///    shown, the prompt has just appeared: speak it. Hide's other callers (CreateInstance before the
+    ///    fade-in, field map loads, the config font switch) leave the prompt hidden or have no title
+    ///    window, and stay silent. InitShortcutCommand (return from the Extras) shows startParent
+    ///    without a Hide and outside the None state, and is correctly ignored.
+    /// 3. TitleMenuCommandController.SetEnableMainMenu clears state when the title menu activates.
     /// </summary>
     internal static class TitleScreenPatches
     {
-        /// <summary>
-        /// Stores the "Press any button" text captured during InitializeTitle.
-        /// Spoken when SystemIndicator.Hide() is called (loading indicator hidden).
-        ///
-        /// KNOWN ISSUE: Speech occurs ~1 second before user input is actually available.
-        /// No hookable method exists that fires exactly when input becomes available.
-        /// </summary>
-        private static string pendingTitleText = null;
+        // KeyInput TitleWindowController.stateMachine / .view, TitleWindowView.startText
+        private const int OFFSET_STATE_MACHINE = 0x18;
+        private const int OFFSET_TITLE_VIEW = 0x48;
+        private const int OFFSET_START_TEXT = 0x30;
+        private const int STATE_NONE = 0; // TitleWindowController.State.None: the press-any-button state
 
-        /// <summary>
-        /// Guard flag: only true when we've captured title screen text and are waiting to speak it.
-        /// This ensures speech only triggers for title screen, not other loading sequences.
-        /// Set true ONLY by InitializeTitle, cleared when speech occurs.
-        /// </summary>
-        private static bool isTitleScreenTextPending = false;
+        // The live title window (null off the title; a destroyed instance compares equal to null)
+        private static TitleWindowController titleWindow;
+
+        // Only the check scheduled by the latest Hide runs
+        private static int promptCheckGen;
 
         /// <summary>
         /// Apply title screen patches.
@@ -45,58 +51,21 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                // Step 1: Patch SplashController.InitializeTitle to capture and store the text
-                Type splashControllerType = typeof(SplashController);
-                var initTitleMethod = AccessTools.Method(splashControllerType, "InitializeTitle");
-
-                if (initTitleMethod != null)
+                var initMethod = AccessTools.Method(typeof(TitleWindowController), "Initialize", new[] { typeof(GameObject) });
+                if (initMethod != null)
                 {
-                    var postfix = typeof(TitleScreenPatches).GetMethod(nameof(SplashController_InitializeTitle_Postfix),
+                    var postfix = typeof(TitleScreenPatches).GetMethod(nameof(TitleWindowController_Initialize_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(initTitleMethod, postfix: new HarmonyMethod(postfix));
+                    harmony.Patch(initMethod, postfix: new HarmonyMethod(postfix));
                 }
                 else
                 {
-                    MelonLogger.Warning("[TitleScreen] SplashController.InitializeTitle method not found");
+                    MelonLogger.Warning("[TitleScreen] KeyInput.TitleWindowController.Initialize not found");
                 }
 
-                // Step 2 & 3: Patch SystemIndicator.Show and Hide
-                // SystemIndicator is internal in Last.Systems.Indicator namespace, need runtime lookup
-                Type systemIndicatorType = null;
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    try
-                    {
-                        systemIndicatorType = asm.GetType("Il2CppLast.Systems.Indicator.SystemIndicator");
-                        if (systemIndicatorType != null)
-                        {
-                            break;
-                        }
-                    }
-                    catch { }
-                }
-
-                if (systemIndicatorType == null)
-                {
-                    MelonLogger.Warning("[TitleScreen] SystemIndicator type not found");
-                    return;
-                }
-
-                // Patch Show(Mode) to track when title loading starts
-                var showMethod = AccessTools.Method(systemIndicatorType, "Show");
-                if (showMethod != null)
-                {
-                    var postfix = typeof(TitleScreenPatches).GetMethod(nameof(SystemIndicator_Show_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(showMethod, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Warning("[TitleScreen] SystemIndicator.Show method not found");
-                }
-
-                // Patch Hide() to speak when loading completes
-                var hideMethod = AccessTools.Method(systemIndicatorType, "Hide");
+                // SystemIndicator is internal in the game assembly: look it up at runtime
+                Type indicatorType = AccessTools.TypeByName("Il2CppLast.Systems.Indicator.SystemIndicator");
+                var hideMethod = indicatorType != null ? AccessTools.Method(indicatorType, "Hide") : null;
                 if (hideMethod != null)
                 {
                     var postfix = typeof(TitleScreenPatches).GetMethod(nameof(SystemIndicator_Hide_Postfix),
@@ -105,10 +74,9 @@ namespace FFIII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[TitleScreen] SystemIndicator.Hide method not found");
+                    MelonLogger.Warning("[TitleScreen] SystemIndicator.Hide not found");
                 }
 
-                // Step 4: Patch TitleMenuCommandController.SetEnableMainMenu
                 TryPatchTitleMenuCommand(harmony);
             }
             catch (Exception ex)
@@ -159,86 +127,79 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Postfix for SplashController.InitializeTitle.
+        /// Postfix for KeyInput TitleWindowController.Initialize(GameObject): the title screen was built
+        /// (boot or return to title). Keeps the instance so the Hide postfix needs no scene search.
         /// </summary>
-        public static void SplashController_InitializeTitle_Postfix(SplashController __instance)
+        public static void TitleWindowController_Initialize_Postfix(TitleWindowController __instance)
         {
-            try
-            {
-                if (__instance == null)
-                    return;
-
-                // Try to read the localized "Press any button" text from UiMessageConstants
-                string pressText = null;
-
-                try
-                {
-                    var uiMsgType = Type.GetType("Il2CppUiMessageConstants, Assembly-CSharp")
-                                 ?? Type.GetType("UiMessageConstants, Assembly-CSharp");
-
-                    if (uiMsgType != null)
-                    {
-                        var field = uiMsgType.GetField("MENU_TITLE_PRESS_TEXT", BindingFlags.Public | BindingFlags.Static);
-                        if (field != null)
-                        {
-                            pressText = field.GetValue(null) as string;
-                        }
-                    }
-                }
-                catch { }
-
-                if (!string.IsNullOrWhiteSpace(pressText))
-                {
-                    pendingTitleText = TextUtils.StripIconMarkup(pressText.Trim());
-                }
-                else
-                {
-                    pendingTitleText = T("Press any button");
-                }
-
-                isTitleScreenTextPending = true;
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[TitleScreen] Error in SplashController.InitializeTitle postfix: {ex.Message}");
-                pendingTitleText = "Press any button";
-                isTitleScreenTextPending = true;
-            }
+            titleWindow = __instance;
         }
 
         /// <summary>
-        /// Postfix for SystemIndicator.Show(Mode).
-        /// </summary>
-        public static void SystemIndicator_Show_Postfix(int mode)
-        {
-            try
-            {
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[TitleScreen] Error in SystemIndicator.Show postfix: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Postfix for SystemIndicator.Hide().
+        /// Postfix for SystemIndicator.Hide. Runs before UpdateNone activates the prompt, so it records
+        /// whether the prompt is visible now and checks again one frame later.
         /// </summary>
         public static void SystemIndicator_Hide_Postfix()
         {
             try
             {
-                if (isTitleScreenTextPending && !string.IsNullOrWhiteSpace(pendingTitleText))
-                {
-                    FFIII_ScreenReaderMod.SpeakText(pendingTitleText, interrupt: false);
+                var window = titleWindow;
+                if (window == null) return; // not on the title screen
+                bool visibleBefore = TryGetVisiblePrompt(window, out _);
+                CoroutineManager.StartManaged(CheckPromptNextFrame(window, visibleBefore, ++promptCheckGen));
+            }
+            catch
+            {
+                titleWindow = null; // stale instance
+            }
+        }
 
-                    pendingTitleText = null;
-                    isTitleScreenTextPending = false;
-                }
+        private static IEnumerator CheckPromptNextFrame(TitleWindowController window, bool visibleBefore, int gen)
+        {
+            yield return null; // one frame: UpdateNone activates startParent right after Hide returns
+            if (gen != promptCheckGen) yield break;
+            SpeakPromptIfJustShown(window, visibleBefore);
+        }
+
+        /// <summary>
+        /// Speaks the prompt if it was hidden at the Hide call, is on screen now, and the title is still in
+        /// the press-any-button state (a key pressed in the same frame has already moved it to Select).
+        /// </summary>
+        private static void SpeakPromptIfJustShown(TitleWindowController window, bool visibleBefore)
+        {
+            try
+            {
+                if (visibleBefore || window == null) return;
+                if (StateReaderHelper.ReadStateTag(window.Pointer, OFFSET_STATE_MACHINE) != STATE_NONE) return;
+                if (!TryGetVisiblePrompt(window, out string prompt)) return;
+
+                MelonLogger.Msg("[TitleScreen] Press-any-button prompt shown");
+                FFIII_ScreenReaderMod.SpeakText(prompt, interrupt: false);
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[TitleScreen] Error in SystemIndicator.Hide postfix: {ex.Message}");
+                MelonLogger.Warning($"[TitleScreen] Error reading the press prompt: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// True when the window's prompt Text (TitleWindowView.startText) is on screen; text is its
+        /// displayed string, or the mod's "Press any button" if the label is empty.
+        /// </summary>
+        private static bool TryGetVisiblePrompt(TitleWindowController window, out string text)
+        {
+            text = null;
+            IntPtr viewPtr = StateReaderHelper.ReadPointerField(window.Pointer, OFFSET_TITLE_VIEW);
+            if (viewPtr == IntPtr.Zero) return false;
+            IntPtr textPtr = StateReaderHelper.ReadPointerField(viewPtr, OFFSET_START_TEXT);
+            if (textPtr == IntPtr.Zero) return false;
+
+            var startText = new UnityEngine.UI.Text(textPtr);
+            if (startText.gameObject == null || !startText.gameObject.activeInHierarchy) return false;
+
+            string raw = startText.text;
+            text = !string.IsNullOrWhiteSpace(raw) ? TextUtils.StripIconMarkup(raw.Trim()) : T("Press any button");
+            return true;
         }
 
         /// <summary>
@@ -250,6 +211,7 @@ namespace FFIII_ScreenReader.Patches
             {
                 if (isEnable)
                 {
+                    BattleStateHelper.TryClearOnBattleEnd();
                     MenuStateRegistry.ResetAll();
                     BattleResultPatches.ClearAllBattleMenuFlags();
                 }

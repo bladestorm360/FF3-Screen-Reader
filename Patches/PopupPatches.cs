@@ -41,6 +41,7 @@ namespace FFIII_ScreenReader.Patches
                 CurrentPopupType = null;
                 ActivePopupPtr = IntPtr.Zero;
                 CommandListOffset = -1;
+                HasOwnFocusReader = false;
             });
         }
 
@@ -54,12 +55,19 @@ namespace FFIII_ScreenReader.Patches
         public static IntPtr ActivePopupPtr { get; private set; }
         public static int CommandListOffset { get; private set; }
 
-        public static void SetActive(string typeName, IntPtr ptr, int cmdListOffset)
+        /// <summary>
+        /// True when the popup has its OWN focus reader (CommonPopup.UpdateFocus). The generic cursor
+        /// reader must then not also call ReadCurrentButton, or the button is read twice per move.
+        /// </summary>
+        public static bool HasOwnFocusReader { get; private set; }
+
+        public static void SetActive(string typeName, IntPtr ptr, int cmdListOffset, bool hasOwnFocusReader = false)
         {
             IsConfirmationPopupActive = true;
             CurrentPopupType = typeName;
             ActivePopupPtr = ptr;
             CommandListOffset = cmdListOffset;
+            HasOwnFocusReader = hasOwnFocusReader;
         }
 
         public static void Clear()
@@ -267,7 +275,7 @@ namespace FFIII_ScreenReader.Patches
         {
             // GameOverSelectPopup has no title/message, just buttons
             // Announce "Game Over" as context
-            return "Game Over";
+            return ModTextTranslator.T("Game Over");
         }
 
         private static string ReadInfomationPopup(IntPtr ptr)
@@ -384,12 +392,15 @@ namespace FFIII_ScreenReader.Patches
                 // Use TryCast for IL2CPP-safe type detection
                 // KeyInput types first (more common for keyboard/gamepad)
 
-                // CommonPopup - general confirmations
+                // CommonPopup - general confirmations. Read the message and the focused button together
+                // (message first); its own UpdateFocus reader (BattlePausePatches) handles navigation, so
+                // the generic cursor reader must not also read the button.
                 var commonPopup = __instance.TryCast<KeyInputCommonPopup>();
                 if (commonPopup != null)
                 {
-                    HandlePopupDetected("CommonPopup", commonPopup.Pointer, COMMON_CMDLIST_OFFSET,
-                        () => ReadCommonPopup(commonPopup.Pointer));
+                    BattlePausePatches.BeginCommonPopupRead();
+                    PopupState.SetActive("CommonPopup", commonPopup.Pointer, COMMON_CMDLIST_OFFSET, hasOwnFocusReader: true);
+                    CoroutineManager.StartManaged(DelayedCommonPopupRead(commonPopup.Pointer));
                     return;
                 }
 
@@ -503,6 +514,55 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
+        /// CommonPopup open-read: the message FIRST, then the focused button ("Return to the title
+        /// screen? No"). Primes the UpdateFocus reader with that button so it isn't repeated.
+        /// </summary>
+        private static IEnumerator DelayedCommonPopupRead(IntPtr popupPtr)
+        {
+            yield return null; // Wait 1 frame
+
+            string announcement = null;
+            try
+            {
+                string message = ReadCommonPopup(popupPtr);
+                string button = ReadFocusedButton(popupPtr, IL2CppOffsets.BattlePause.OFFSET_SELECT_CURSOR,
+                    COMMON_CMDLIST_OFFSET, out int focusedIndex);
+                BattlePausePatches.EndCommonPopupRead(focusedIndex);
+
+                if (!string.IsNullOrWhiteSpace(message) && !string.IsNullOrWhiteSpace(button))
+                    announcement = $"{message} {button}";
+                else
+                    announcement = string.IsNullOrWhiteSpace(message) ? button : message;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Popup] Error in CommonPopup read: {ex.Message}");
+                BattlePausePatches.EndCommonPopupRead(-1);
+            }
+
+            if (!string.IsNullOrWhiteSpace(announcement))
+                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
+        }
+
+        /// <summary>
+        /// Reads a popup's currently focused button label from its cursor + commandList.
+        /// Returns null (index -1) if it can't be read.
+        /// </summary>
+        internal static string ReadFocusedButton(IntPtr popupPtr, int cursorOffset, int cmdListOffset, out int index)
+        {
+            index = -1;
+            try
+            {
+                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + cursorOffset);
+                if (cursorPtr == IntPtr.Zero) return null;
+                index = new GameCursor(cursorPtr).Index;
+                string button = ReadButtonFromCommandList(popupPtr, cmdListOffset, index);
+                return string.IsNullOrWhiteSpace(button) ? null : TextUtils.StripIconMarkup(button);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
         /// Postfix for base Popup.Close - clears state.
         /// </summary>
         public static void PopupClose_Postfix()
@@ -514,8 +574,14 @@ namespace FFIII_ScreenReader.Patches
                     PopupState.Clear();
                 }
 
-                // Reset GameOverLoadPopup button dedup state
+                // Reset button dedup state (CommonPopup and GameOverLoadPopup readers)
+                BattlePausePatches.Reset();
                 AnnouncementDeduplicator.Reset(AnnouncementContexts.POPUP_GAMEOVER_LOAD_BUTTON);
+
+                // A Quit / Return to Title popup over the config menu closes without changing config
+                // state, so SelectCommand doesn't re-fire: re-read the focused config option.
+                if (ConfigMenuState.IsActive)
+                    ConfigActualDetails_SelectCommand_Patch.ReannounceAfterPopup();
             }
             catch (Exception ex)
             {

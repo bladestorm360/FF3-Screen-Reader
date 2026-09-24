@@ -252,5 +252,34 @@ namespace FFIII_ScreenReader.Utils
                 return false;
             }
         }
+
+        /// <summary>
+        /// Patches a method (resolved with AccessTools.Method, as IL2CPP requires) with a postfix.
+        /// Pass paramTypes to disambiguate overloads. Always logs a warning when the target is missing.
+        /// </summary>
+        /// <returns>True if patch was applied successfully</returns>
+        public static bool PatchPostfix(HarmonyLib.Harmony harmony, Type targetType, string methodName, Type patchType,
+            string postfixName, string logPrefix, Type[] paramTypes = null)
+        {
+            try
+            {
+                var method = paramTypes != null
+                    ? AccessTools.Method(targetType, methodName, paramTypes)
+                    : AccessTools.Method(targetType, methodName);
+                if (method == null)
+                {
+                    MelonLogger.Warning($"{logPrefix} {targetType.Name}.{methodName} not found");
+                    return false;
+                }
+
+                harmony.Patch(method, postfix: new HarmonyMethod(AccessTools.Method(patchType, postfixName)));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"{logPrefix} Failed to patch {targetType.Name}.{methodName}: {ex.Message}");
+                return false;
+            }
+        }
     }
 }

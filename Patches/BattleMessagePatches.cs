@@ -81,6 +81,12 @@ namespace FFIII_ScreenReader.Patches
     [HarmonyPatch(typeof(ParameterActFunctionManagment), nameof(ParameterActFunctionManagment.CreateActFunction))]
     internal static class ParameterActFunctionManagment_CreateActFunction_Patch
     {
+        /// <summary>
+        /// Stripped name of the most recent action. The battle command-message window shows the same
+        /// name; BattleStartPatches compares against it so the name isn't spoken a second time.
+        /// </summary>
+        public static string LastActionName { get; private set; }
+
         [HarmonyPostfix]
         public static void Postfix(BattleActData battleActData)
         {
@@ -89,45 +95,20 @@ namespace FFIII_ScreenReader.Patches
                 if (battleActData == null) return;
 
                 string actorName = GetActorName(battleActData);
-                string actionName = GetActionName(battleActData);
+                string actionName = TextUtils.StripIconMarkup(GetActionName(battleActData));
+                LastActionName = actionName;
 
                 if (string.IsNullOrEmpty(actorName)) return;
 
-                // Check if this is a flee/escape command
-                bool isFlee = IsFleeCommand(battleActData);
-
-                string announcement;
-                if (isFlee)
-                {
-                    // Set flee flag to suppress command menu announcements
+                // Flee: set the flag that suppresses the command-menu cursor reset during the escape
+                if (IsFleeCommand(battleActData))
                     GlobalBattleMessageTracker.SetFleeInProgress(true);
-                    announcement = $"{actorName} flees";
-                }
-                else if (!string.IsNullOrEmpty(actionName))
-                {
-                    string actionLower = actionName.ToLower();
-                    if (actionLower == "attack" || actionLower == "fight")
-                    {
-                        announcement = $"{actorName} attacks";
-                    }
-                    else if (actionLower == "defend" || actionLower == "guard")
-                    {
-                        announcement = $"{actorName} defends";
-                    }
-                    else if (actionLower == "item")
-                    {
-                        announcement = $"{actorName} uses item";
-                    }
-                    else
-                    {
-                        string cleanActionName = TextUtils.StripIconMarkup(actionName);
-                        announcement = $"{actorName}, {cleanActionName}";
-                    }
-                }
-                else
-                {
-                    announcement = $"{actorName} attacks";
-                }
+
+                // Consistent "Actor: Action" for every action (basic attack included), using the game's
+                // localized command/ability/item name; actor only when the action name is unknown.
+                string announcement = string.IsNullOrEmpty(actionName)
+                    ? actorName
+                    : $"{actorName}: {actionName}";
                 // Use object-based deduplication (not text-based) so different enemies
                 // with the same name attacking in succession are both announced
                 if (AnnouncementDeduplicator.ShouldAnnounce(AnnouncementContexts.BATTLE_ACTION, battleActData))
@@ -283,17 +264,6 @@ namespace FFIII_ScreenReader.Patches
                 MelonLogger.Warning($"Error getting item name: {ex.Message}");
             }
             return null;
-        }
-    }
-
-    /// <summary>
-    /// Resets message tracking state.
-    /// </summary>
-    internal static class BattleMessageReset
-    {
-        public static void ResetState()
-        {
-            GlobalBattleMessageTracker.Reset();
         }
     }
 }

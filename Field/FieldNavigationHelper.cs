@@ -361,7 +361,7 @@ namespace FFIII_ScreenReader.Field
         private static string DescribePath(List<Vector3> worldPath)
         {
             if (worldPath == null || worldPath.Count < 2)
-                return "No movement needed";
+                return ModTextTranslator.T("No movement needed");
 
             var segments = new List<string>();
             Vector3 currentDir = Vector3.zero;
@@ -405,22 +405,22 @@ namespace FFIII_ScreenReader.Field
         {
             if (Mathf.Abs(dir.x) > 0.4f && Mathf.Abs(dir.y) > 0.4f)
             {
-                if (dir.y > 0 && dir.x > 0) return "Northeast";
-                if (dir.y > 0 && dir.x < 0) return "Northwest";
-                if (dir.y < 0 && dir.x > 0) return "Southeast";
-                if (dir.y < 0 && dir.x < 0) return "Southwest";
+                if (dir.y > 0 && dir.x > 0) return ModTextTranslator.T("Northeast");
+                if (dir.y > 0 && dir.x < 0) return ModTextTranslator.T("Northwest");
+                if (dir.y < 0 && dir.x > 0) return ModTextTranslator.T("Southeast");
+                if (dir.y < 0 && dir.x < 0) return ModTextTranslator.T("Southwest");
             }
 
             if (Mathf.Abs(dir.y) > Mathf.Abs(dir.x))
             {
-                return dir.y > 0 ? "North" : "South";
+                return dir.y > 0 ? ModTextTranslator.T("North") : ModTextTranslator.T("South");
             }
             else if (Mathf.Abs(dir.x) > 0.1f)
             {
-                return dir.x > 0 ? "East" : "West";
+                return dir.x > 0 ? ModTextTranslator.T("East") : ModTextTranslator.T("West");
             }
 
-            return "Unknown";
+            return ModTextTranslator.T("Unknown");
         }
 
         /// <summary>
@@ -428,22 +428,7 @@ namespace FFIII_ScreenReader.Field
         /// </summary>
         public static string GetDirection(Vector3 from, Vector3 to)
         {
-            Vector3 diff = to - from;
-            float angle = Mathf.Atan2(diff.x, diff.y) * Mathf.Rad2Deg;
-
-            // Normalize to 0-360
-            if (angle < 0) angle += 360;
-
-            // Convert to cardinal/intercardinal directions
-            if (angle >= 337.5 || angle < 22.5) return "North";
-            else if (angle >= 22.5 && angle < 67.5) return "Northeast";
-            else if (angle >= 67.5 && angle < 112.5) return "East";
-            else if (angle >= 112.5 && angle < 157.5) return "Southeast";
-            else if (angle >= 157.5 && angle < 202.5) return "South";
-            else if (angle >= 202.5 && angle < 247.5) return "Southwest";
-            else if (angle >= 247.5 && angle < 292.5) return "West";
-            else if (angle >= 292.5 && angle < 337.5) return "Northwest";
-            else return "Unknown";
+            return DirectionHelper.GetDirection(from, to);
         }
 
         /// <summary>
@@ -471,9 +456,9 @@ namespace FFIII_ScreenReader.Field
             float distance = GetDistance(from, to);
             string direction = GetDirection(from, to);
             float steps = DistanceToSteps(distance);
-            string stepLabel = Math.Abs(steps - 1f) < 0.1f ? "step" : "steps";
+            string format = Math.Abs(steps - 1f) < 0.1f ? ModTextTranslator.T("{0} step") : ModTextTranslator.T("{0} steps");
 
-            return $"{steps:F0} {stepLabel} {direction}";
+            return $"{string.Format(format, steps.ToString("F0"))} {direction}";
         }
 
         /// <summary>

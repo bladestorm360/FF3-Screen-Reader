@@ -8,6 +8,7 @@ using UnityEngine.UI;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
 using Il2CppLast.Management;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for IL2CPP types
 using KeyInputJobChangeWindowController = Il2CppSerial.FF3.UI.KeyInput.JobChangeWindowController;
@@ -31,13 +32,26 @@ namespace FFIII_ScreenReader.Patches
 
         static JobMenuState()
         {
-            _helper.RegisterResetHandler();
+            _helper.RegisterResetHandler(() => { FocusedJob = null; });
         }
 
         public static bool IsActive
         {
             get => _helper.IsActive;
             set => _helper.IsActive = value;
+        }
+
+        /// <summary>
+        /// The job last announced in the job list, for the I key description.
+        /// </summary>
+        public static Job FocusedJob { get; set; }
+
+        /// <summary>
+        /// Localized description of the focused job (Job.MesIdDescription), or null.
+        /// </summary>
+        public static string GetFocusedJobDescription()
+        {
+            return FocusedJob != null ? LocalizationHelper.GetText(FocusedJob.MesIdDescription) : null;
         }
 
         public static bool ShouldSuppress() => IsActive;
@@ -338,8 +352,8 @@ namespace FFIII_ScreenReader.Patches
 
                 // Build announcement: "Job Name, Job Level X" or "Job Name, Job Level X. Equipped."
                 string announcement = isEquipped
-                    ? $"{jobName}, Job Level {jobLevel}. Equipped."
-                    : $"{jobName}, Job Level {jobLevel}";
+                    ? string.Format(T("{0}, Job Level {1}. Equipped."), jobName, jobLevel)
+                    : string.Format(T("{0}, Job Level {1}"), jobName, jobLevel);
 
                 // Skip duplicates
                 if (!JobMenuState.ShouldAnnounce(announcement))
@@ -348,6 +362,7 @@ namespace FFIII_ScreenReader.Patches
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 // Also clear other menu states to prevent conflicts
                 MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.JOB_MENU);
+                JobMenuState.FocusedJob = targetJob;
 
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }

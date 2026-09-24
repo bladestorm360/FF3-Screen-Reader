@@ -145,7 +145,7 @@ namespace FFIII_ScreenReader.Field
                     // Skip redundant mapTitle if it equals areaName (e.g., vehicle interiors)
                     if (mapTitle == areaName)
                         return areaName;
-                    return $"{areaName} â€?{mapTitle}";  // en-dash U+2013
+                    return $"{areaName} â€“ {mapTitle}";  // en-dash U+2013
                 }
                 else if (!string.IsNullOrEmpty(areaName))
                 {

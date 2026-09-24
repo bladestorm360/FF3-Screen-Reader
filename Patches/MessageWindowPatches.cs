@@ -7,6 +7,7 @@ using MelonLoader;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
 using Il2CppInterop.Runtime;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFIII_ScreenReader.Patches
 {
@@ -38,18 +39,10 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// True while an NPC message box is open. Used to suppress mod audio (wall
-        /// tones / beacons) during dialogue. Cleared on Close_Postfix.
+        /// tones / beacons) during dialogue and to route R / mod-mode X to RepeatLastPage.
+        /// Cleared on Close_Postfix.
         /// </summary>
         public static bool IsInDialogue => isInDialogue;
-
-        /// <summary>
-        /// Known invalid speaker names (locations, menu labels, etc.)
-        /// </summary>
-        private static readonly string[] InvalidSpeakers = new string[]
-        {
-            "Load", "Save", "New Game", "Continue", "Config", "Quit",
-            "Yes", "No", "OK", "Cancel"
-        };
 
         /// <summary>
         /// Store messages and page breaks for per-page retrieval.
@@ -113,22 +106,12 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Check if a speaker name is valid (not a location or menu label).
+        /// Check if a speaker name is valid (not a location name).
         /// </summary>
         private static bool IsValidSpeaker(string speaker)
         {
             // Filter location names with separators
-            if (speaker.Contains("–") || speaker.Contains("-"))
-                return false;
-
-            // Filter known invalid strings
-            foreach (var invalid in InvalidSpeakers)
-            {
-                if (speaker.Equals(invalid, StringComparison.OrdinalIgnoreCase))
-                    return false;
-            }
-
-            return true;
+            return !speaker.Contains("–") && !speaker.Contains("-");
         }
 
         /// <summary>
@@ -241,6 +224,25 @@ namespace FFIII_ScreenReader.Patches
         public static void ClearLastAnnouncedSpeaker()
         {
             lastAnnouncedSpeaker = "";
+        }
+
+        /// <summary>
+        /// Re-speaks the most recently announced dialogue page (with the speaker prefix if known).
+        /// Used by R on the keyboard and mod mode + X on a controller while a message window is open.
+        /// </summary>
+        public static void RepeatLastPage()
+        {
+            string pageText = isInDialogue ? GetPageText(lastAnnouncedPageIndex) : null;
+            if (string.IsNullOrWhiteSpace(pageText))
+            {
+                FFIII_ScreenReaderMod.SpeakText(T("Nothing to repeat"), interrupt: true);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(lastAnnouncedSpeaker))
+                pageText = $"{lastAnnouncedSpeaker}: {pageText}";
+
+            FFIII_ScreenReaderMod.SpeakText(pageText, interrupt: true);
         }
     }
 

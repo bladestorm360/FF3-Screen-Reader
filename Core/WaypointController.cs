@@ -101,6 +101,15 @@ namespace FFIII_ScreenReader.Core
 
             NavigationTargetTracker.MarkWaypoint();
 
+            // Beacon mode: just restart the beacon to re-ping toward this waypoint.
+            if (PreferencesManager.AudioBeaconsEnabled)
+            {
+                mod.RestartBeacon();
+                if (PreferencesManager.AnnounceOnBeaconRestartEnabled)
+                    FFIII_ScreenReaderMod.SpeakText(waypointNavigator.FormatCurrentWaypoint());
+                return;
+            }
+
             var playerPos = mod.GetPlayerPosition();
             if (!playerPos.HasValue)
             {
@@ -134,12 +143,18 @@ namespace FFIII_ScreenReader.Core
             string mapId = mod.GetCurrentMapIdString();
             string defaultName = waypointManager.GetNextWaypointName(mapId);
 
+            // File the waypoint under the category being browsed; "All" is a filter, not a category,
+            // so it keeps the Miscellaneous default.
+            WaypointCategory category = waypointNavigator.CurrentCategory == WaypointCategory.All
+                ? WaypointCategory.Miscellaneous
+                : waypointNavigator.CurrentCategory;
+
             TextInputWindow.Open(
                 T("Enter waypoint name"),
                 "",
                 onConfirm: (name) =>
                 {
-                    waypointManager.AddWaypoint(name, playerPos.Value, mapId);
+                    waypointManager.AddWaypoint(name, playerPos.Value, mapId, category);
                     waypointNavigator.RefreshList(mapId);
                     FFIII_ScreenReaderMod.SpeakText(string.Format(T("Waypoint added: {0}"), name));
                 },

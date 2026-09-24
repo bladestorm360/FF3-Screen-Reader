@@ -77,7 +77,7 @@ namespace FFIII_ScreenReader.Patches
 
         static BattleMagicMenuState()
         {
-            _helper.RegisterResetHandler(() => { CurrentPlayer = null; });
+            _helper.RegisterResetHandler(() => { CurrentPlayer = null; LastFocusedDescription = null; });
         }
 
         public static bool IsActive
@@ -91,6 +91,12 @@ namespace FFIII_ScreenReader.Patches
 
         // Cache the current player data for charge lookup
         public static BattlePlayerData CurrentPlayer { get; set; } = null;
+
+        /// <summary>
+        /// Stripped description of the focused battle spell, refreshed on every cursor move regardless of
+        /// Auto Detail. Read on demand by the I key / right stick up.
+        /// </summary>
+        public static string LastFocusedDescription { get; set; }
     }
 
     /// <summary>
@@ -118,34 +124,22 @@ namespace FFIII_ScreenReader.Patches
                 if (index < 0 || index >= contents.Count)
                     return;
 
-                // Get content at index
-                var contentController = contents[index];
-                if (contentController == null)
-                {
-                    // Empty slot
-                    if (BattleMagicMenuState.ShouldAnnounce(T("Empty")))
-                    {
-                        MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
-                        FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, contents.Count), interrupt: true);
-                    }
-                    return;
-                }
-
-                // Get ability data
-                var ability = contentController.Data;
+                // Get ability data (null content or data = empty slot)
+                var ability = contents[index]?.Data;
                 if (ability == null)
                 {
-                    // Empty slot
                     if (BattleMagicMenuState.ShouldAnnounce(T("Empty")))
                     {
+                        BattleMagicMenuState.LastFocusedDescription = null;
                         MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
+                        BattleCommandSelectController_SetCursor_Patch.NotifyCommandSubmenuActive();
                         FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, contents.Count), interrupt: true);
                     }
                     return;
                 }
 
                 // Format and announce
-                string announcement = FormatAbilityAnnouncement(ability);
+                string announcement = FormatAbilityAnnouncement(ability, out string description);
                 if (string.IsNullOrEmpty(announcement))
                     return;
 
@@ -156,6 +150,10 @@ namespace FFIII_ScreenReader.Patches
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 // Also clear other menu states to prevent conflicts
                 MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
+                BattleMagicMenuState.LastFocusedDescription = description;
+
+                // Restore the command-announce window + arm the command back-out re-announce
+                BattleCommandSelectController_SetCursor_Patch.NotifyCommandSubmenuActive();
 
                 announcement = MenuPosition.Format(announcement, index, contents.Count);
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
@@ -168,10 +166,12 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// Format ability data into announcement string.
-        /// Format: "Spell Name: MP: X/Y. Description"
+        /// Format: "Spell Name: MP: X/Y", plus ". Description" when Auto Detail is on.
+        /// The stripped description is returned either way for the on-demand I key.
         /// </summary>
-        private static string FormatAbilityAnnouncement(OwnedAbility ability)
+        private static string FormatAbilityAnnouncement(OwnedAbility ability, out string description)
         {
+            description = null;
             try
             {
                 // Get spell name
@@ -203,8 +203,11 @@ namespace FFIII_ScreenReader.Patches
                 // Try to get description
                 try
                 {
-                    string description = LocalizationHelper.GetText(ability.MesIdDescription, stripMarkup: false);
-                    announcement = AnnouncementBuilder.AppendDescription(announcement, description);
+                    string text = TextUtils.StripIconMarkup(LocalizationHelper.GetText(ability.MesIdDescription, stripMarkup: false));
+                    if (!string.IsNullOrWhiteSpace(text))
+                        description = text;
+                    if (PreferencesManager.AutoDetailEnabled)
+                        announcement = AnnouncementBuilder.AppendDescription(announcement, description);
                 }
                 catch { }
 

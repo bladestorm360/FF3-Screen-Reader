@@ -5,6 +5,7 @@ using UnityEngine;
 using MelonLoader;
 using FFIII_ScreenReader.Field;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFIII_ScreenReader.Core
 {
@@ -19,7 +20,6 @@ namespace FFIII_ScreenReader.Core
         private int currentIndex = -1;
         private WaypointCategory currentCategory = WaypointCategory.All;
 
-        private static readonly string[] CategoryNames = WaypointEntity.GetCategoryNames();
         private static readonly int CategoryCount = Enum.GetValues(typeof(WaypointCategory)).Length;
 
         /// <summary>
@@ -121,7 +121,7 @@ namespace FFIII_ScreenReader.Core
             int nextVal = ((int)currentCategory + 1) % CategoryCount;
             currentCategory = (WaypointCategory)nextVal;
             RefreshList(mapId);
-            return CategoryNames[(int)currentCategory];
+            return WaypointEntity.GetCategoryName(currentCategory);
         }
 
         /// <summary>
@@ -132,7 +132,7 @@ namespace FFIII_ScreenReader.Core
             int prevVal = ((int)currentCategory - 1 + CategoryCount) % CategoryCount;
             currentCategory = (WaypointCategory)prevVal;
             RefreshList(mapId);
-            return CategoryNames[(int)currentCategory];
+            return WaypointEntity.GetCategoryName(currentCategory);
         }
 
         /// <summary>
@@ -142,14 +142,14 @@ namespace FFIII_ScreenReader.Core
         {
             var waypoint = SelectedWaypoint;
             if (waypoint == null)
-                return "No waypoints";
+                return T("No waypoints");
 
             Vector3 playerPos = GetPlayerPosition();
             string description = waypoint.FormatDescription(playerPos);
 
             if (currentList.Count > 1)
             {
-                description += $", {currentIndex + 1} of {currentList.Count}";
+                description += ", " + string.Format(T("{0} of {1}"), currentIndex + 1, currentList.Count);
             }
 
             return description;
@@ -160,9 +160,9 @@ namespace FFIII_ScreenReader.Core
         /// </summary>
         public string GetCategoryAnnouncement()
         {
-            string categoryName = CategoryNames[(int)currentCategory];
+            string categoryName = WaypointEntity.GetCategoryName(currentCategory);
             int count = currentList.Count;
-            string plural = count == 1 ? "waypoint" : "waypoints";
+            string plural = count == 1 ? T("waypoint") : T("waypoints");
             return $"{categoryName}: {count} {plural}";
         }
 

@@ -3,6 +3,7 @@ using MelonLoader;
 using UnityEngine;
 using AbilityCommandContentView = Il2CppSerial.FF3.UI.KeyInput.AbilityCommandContentView;
 using AbilityCommandId = Il2CppLast.Defaine.UI.AbilityCommandId;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFIII_ScreenReader.Menus
 {
@@ -88,17 +89,17 @@ namespace FFIII_ScreenReader.Menus
         }
 
         /// <summary>
-        /// Map AbilityCommandId to display name.
+        /// Map AbilityCommandId to display name (fallback when CommandData.Name is empty).
         /// </summary>
         private static string GetCommandName(AbilityCommandId commandId)
         {
             return commandId switch
             {
-                AbilityCommandId.Use => "Use",
-                AbilityCommandId.Forget => "Forget",
-                AbilityCommandId.Memorize => "Learn",  // Memorize is displayed as "Learn" in UI
-                AbilityCommandId.Remove => "Remove",
-                AbilityCommandId.Exchange => "Exchange",
+                AbilityCommandId.Use => T("Use"),
+                AbilityCommandId.Forget => T("Forget"),
+                AbilityCommandId.Memorize => T("Learn"),  // Memorize is displayed as "Learn" in UI
+                AbilityCommandId.Remove => T("Remove"),
+                AbilityCommandId.Exchange => T("Exchange"),
                 _ => null
             };
         }

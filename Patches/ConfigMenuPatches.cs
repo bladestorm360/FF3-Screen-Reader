@@ -5,6 +5,7 @@ using Il2CppLast.UI.KeyInput;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Menus;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 using UnityEngine;
 using Key = Il2CppSystem.Input.Key;
 using ConfigActualDetailsControllerBase_KeyInput = Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase;
@@ -20,7 +21,7 @@ namespace FFIII_ScreenReader.Patches
     internal static class ConfigMenuState
     {
         private static readonly MenuStateHelper _helper = new(MenuStateRegistry.CONFIG_MENU,
-            AnnouncementContexts.CONFIG_TEXT, AnnouncementContexts.CONFIG_SETTING, AnnouncementContexts.CONFIG_ARROW,
+            AnnouncementContexts.CONFIG_ARROW,
             AnnouncementContexts.CONFIG_SLIDER, AnnouncementContexts.CONFIG_SLIDER_CONTROLLER,
             AnnouncementContexts.CONFIG_TOUCH_ARROW, AnnouncementContexts.CONFIG_TOUCH_SLIDER, AnnouncementContexts.CONFIG_TOUCH_SLIDER_CONTROLLER,
             AnnouncementContexts.CONFIG_KEYS_SETTING);
@@ -46,6 +47,12 @@ namespace FFIII_ScreenReader.Patches
             if (!IsActive)
                 return false;
 
+            // The details controller last read is still shown (title Options or in-game Config): no
+            // scene search. This runs on every generic cursor move, and the title Options screen has
+            // no ConfigController, so the lookup below would otherwise scan the scene each time.
+            if (ConfigActualDetails_SelectCommand_Patch.IsLastDetailsControllerShown())
+                return true;
+
             // Validate config UI is actually visible (handles title screen config menu case)
             var configController = GameObjectCache.GetOrFind<Il2CppLast.UI.KeyInput.ConfigController>();
             if (configController != null && configController.gameObject.activeInHierarchy)
@@ -67,113 +74,210 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Controller-based patches for config menu navigation.
-    /// Announces menu items directly from ConfigCommandController when navigating with up/down arrows.
+    /// Config menu row announcements. Hooks ConfigActualDetailsControllerBase.SelectCommand — the
+    /// private method the game invokes once per up/down cursor move (ConfigCommandController.SetFocus,
+    /// by contrast, is re-asserted every frame). Event-driven, so no dedup is needed. The in-game
+    /// ConfigController also fires it for the first row on open; the title Options screen does not,
+    /// so it gets a one-frame-delayed initial read from OptionController.ShowConfig / InitSelectLanguage.
     /// </summary>
-    [HarmonyPatch(typeof(Il2CppLast.UI.KeyInput.ConfigCommandController), nameof(Il2CppLast.UI.KeyInput.ConfigCommandController.SetFocus))]
-    internal static class ConfigCommandController_SetFocus_Patch
+    internal static class ConfigActualDetails_SelectCommand_Patch
     {
-        private const string CONTEXT_TEXT = AnnouncementContexts.CONFIG_TEXT;
-        private const string CONTEXT_SETTING = AnnouncementContexts.CONFIG_SETTING;
+        // detailsController on the KeyInput ConfigController (typed read avoids FindObjectOfType picking
+        // the cheatSettingsController, which is the same type)
+        private const int OFFSET_DETAILS_CONTROLLER = 0x48;
 
-        [HarmonyPostfix]
-        public static void Postfix(Il2CppLast.UI.KeyInput.ConfigCommandController __instance, bool isFocus)
+        // Bestiary-return re-announce: max wait for the config menu to come back after the loading screen
+        private const float REANNOUNCE_TIMEOUT_SECONDS = 10f;
+
+        public static void Postfix(ConfigActualDetailsControllerBase_KeyInput __instance)
         {
             try
             {
-                // Set active state when config menu is in use
-                if (isFocus)
-                {
-                    MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.CONFIG_MENU);
-                }
-
-                // Only announce when gaining focus (not losing it)
-                if (!isFocus)
-                {
+                // Gate on a real config menu being open (ConfigController / OptionController.SetActive):
+                // the base class is shared with the load-game flow and other screens.
+                if (!ConfigMenuState.IsActive)
                     return;
-                }
 
-                // Safety checks
-                if (__instance == null)
-                {
-                    return;
-                }
-
-                // Don't announce if controller is not active (prevents announcements during scene loading)
-                if (!__instance.gameObject.activeInHierarchy)
-                {
-                    return;
-                }
-
-                // Verify this controller is actually the selected one by checking the parent ConfigActualDetailsControllerBase
-                var configDetailsController = GameObjectCache.GetOrFind<ConfigActualDetailsControllerBase_KeyInput>();
-                if (configDetailsController != null)
-                {
-                    var selectedCommand = configDetailsController.SelectedCommand;
-                    if (selectedCommand != null && selectedCommand != __instance)
-                    {
-                        // This is not the selected controller, skip
-                        return;
-                    }
-                }
-
-                // Get the view which contains the localized text
-                var view = __instance.view;
-                if (view == null)
-                {
-                    return;
-                }
-
-                // Get the name text (localized)
-                var nameText = view.NameText;
-                if (nameText == null || string.IsNullOrWhiteSpace(nameText.text))
-                {
-                    return;
-                }
-
-                string menuText = nameText.text.Trim();
-
-                // Filter out template/placeholder values
-                if (menuText == "NewText" || menuText == "Text" || menuText == "Name" || menuText == "Label")
-                {
-                    return;
-                }
-
-                // Also try to get the current value for this config option
-                string configValue = ConfigMenuReader.FindConfigValueFromController(__instance);
-
-                string announcement = menuText;
-                if (!string.IsNullOrWhiteSpace(configValue))
-                {
-                    announcement = $"{menuText}: {configValue}";
-                }
-
-                // Skip duplicate announcements
-                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_TEXT, announcement))
-                {
-                    return;
-                }
-
-                // Check if this is the same setting re-focused (from arrow key value change)
-                string lastSettingName = AnnouncementDeduplicator.GetLastString(CONTEXT_SETTING);
-                if (menuText == lastSettingName)
-                {
-                    // Same setting re-focused - SwitchArrowSelectTypeProcess handles value announcements
-                    return;
-                }
-
-                // Different setting - update setting name tracker
-                AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SETTING, menuText);
-
-                MelonLogger.Msg($"[Config Menu] {announcement}");
-                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                AnnounceSelectedConfigCommand(__instance);
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error in ConfigCommandController.SetFocus patch: {ex.Message}");
+                MelonLogger.Warning($"Error in ConfigActualDetails.SelectCommand patch: {ex.Message}");
             }
         }
 
+        /// <summary>
+        /// Announces the focused config row as "Name: Value" plus its "(X of Y)" position within the
+        /// config list. Returns the spoken text, or null if nothing was spoken.
+        /// </summary>
+        internal static string AnnounceSelectedConfigCommand(ConfigActualDetailsControllerBase_KeyInput instance)
+        {
+            if (instance == null)
+                return null;
+
+            var selected = instance.SelectedCommand;
+            if (selected == null || !selected.gameObject.activeInHierarchy)
+                return null;
+
+            var view = selected.view;
+            var nameText = view?.NameText;
+            if (nameText == null || string.IsNullOrWhiteSpace(nameText.text))
+                return null;
+
+            string menuText = nameText.text.Trim();
+
+            // Filter out template/placeholder values
+            if (menuText == "NewText" || menuText == "Text" || menuText == "Name" || menuText == "Label")
+                return null;
+
+            string configValue = ConfigMenuReader.FindConfigValueFromController(selected);
+            string announcement = string.IsNullOrWhiteSpace(configValue)
+                ? menuText
+                : $"{menuText}: {configValue}";
+
+            // Position of the focused row within the list the cursor navigates (best-effort)
+            int index = -1, count = -1;
+            try
+            {
+                var list = instance.CommandList;
+                if (list != null)
+                {
+                    count = list.Count;
+                    for (int i = 0; i < count; i++)
+                    {
+                        var c = list[i];
+                        if (c != null && c.Pointer == selected.Pointer) { index = i; break; }
+                    }
+                }
+            }
+            catch { }
+
+            announcement = MenuPosition.Format(announcement, index, count);
+            FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+            lastDetailsController = instance;
+            return announcement;
+        }
+
+        // The details controller of the config screen being navigated (title Options or in-game Config),
+        // from the latest row read: lets the popup-close re-read find it without a scene search.
+        private static ConfigActualDetailsControllerBase_KeyInput lastDetailsController;
+
+        internal static bool IsLastDetailsControllerShown()
+        {
+            try
+            {
+                var details = lastDetailsController;
+                return details != null && details.gameObject != null && details.gameObject.activeInHierarchy;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// A popup over the config screen closed (Quit / Return to Title answered No): SelectCommand does
+        /// not re-fire, so re-read the focused row one frame later through the controller last read.
+        /// The config screen is already on screen, so there is nothing to wait for and nothing to search
+        /// (the title Options screen has no ConfigController, which made the bounded wait below search
+        /// the scene for its full 10 s).
+        /// </summary>
+        internal static void ReannounceAfterPopup()
+        {
+            CoroutineManager.StartManaged(ReannounceNextFrame(++reannounceGen));
+        }
+
+        private static System.Collections.IEnumerator ReannounceNextFrame(int gen)
+        {
+            yield return null;
+            if (gen != reannounceGen) yield break;
+            try
+            {
+                var details = lastDetailsController;
+                if (ConfigMenuState.IsActive && details != null && details.gameObject.activeInHierarchy)
+                    AnnounceSelectedConfigCommand(details);
+            }
+            catch { }
+        }
+
+        // Frame the pending initial-focus read was armed (-1 = none). A frame stamp, not a bool: if
+        // CoroutineManager evicts the coroutine before it runs, a stamp older than a few frames is
+        // treated as free instead of blocking the read forever.
+        private static int initialFocusPendingFrame = -1;
+        private const int INITIAL_FOCUS_STALE_FRAMES = 10;
+
+        /// <summary>
+        /// One-frame-delayed initial-focus read for the title-screen Options config, whose
+        /// OptionController doesn't fire SelectCommand on open. The pending guard collapses a same-frame
+        /// ShowConfig + InitSelectLanguage pair into one read.
+        /// </summary>
+        internal static void AnnounceInitialFocusDelayed(Il2CppLast.UI.KeyInput.OptionController inst)
+        {
+            if (inst == null) return;
+            if (initialFocusPendingFrame >= 0 && Time.frameCount - initialFocusPendingFrame < INITIAL_FOCUS_STALE_FRAMES) return;
+            initialFocusPendingFrame = Time.frameCount;
+            CoroutineManager.StartManaged(InitialFocusCoroutine(inst));
+        }
+
+        private static System.Collections.IEnumerator InitialFocusCoroutine(Il2CppLast.UI.KeyInput.OptionController inst)
+        {
+            yield return null;
+            initialFocusPendingFrame = -1;
+            try
+            {
+                if (inst != null && ConfigMenuState.IsActive)
+                {
+                    // The Options screen keeps several details controllers active; use the one it is
+                    // showing (a blind FindObjectOfType can return the language section).
+                    var ctrl = inst.configActualDetailsController
+                        ?? GameObjectCache.GetOrFind<ConfigActualDetailsControllerBase_KeyInput>();
+                    AnnounceSelectedConfigCommand(ctrl);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error announcing initial config focus: {ex.Message}");
+            }
+        }
+
+        private static int reannounceGen;
+
+        /// <summary>
+        /// Re-reads the focused config row once the config menu is back after the config-menu bestiary
+        /// (which resumes the menu without firing SelectCommand). Waits out the loading screen, bounded.
+        /// </summary>
+        internal static void ReannounceFocusedConfigOption()
+        {
+            CoroutineManager.StartManaged(ReannounceWhenConfigReady(++reannounceGen));
+        }
+
+        private static System.Collections.IEnumerator ReannounceWhenConfigReady(int gen)
+        {
+            var wait = new WaitForSeconds(0.1f);
+            float elapsed = 0f;
+            while (elapsed < REANNOUNCE_TIMEOUT_SECONDS)
+            {
+                yield return wait;
+                elapsed += 0.1f;
+                if (gen != reannounceGen) yield break;
+
+                try
+                {
+                    var config = GameObjectCache.GetOrFind<Il2CppLast.UI.KeyInput.ConfigController>();
+                    if (config == null || !config.gameObject.activeInHierarchy)
+                        continue;
+
+                    IntPtr detailsPtr = StateReaderHelper.ReadPointerField(config.Pointer, OFFSET_DETAILS_CONTROLLER);
+                    if (detailsPtr == IntPtr.Zero)
+                        continue;
+
+                    if (AnnounceSelectedConfigCommand(new ConfigActualDetailsControllerBase_KeyInput(detailsPtr)) != null)
+                    {
+                        // A scene change may have reset the config state; the menu is open again.
+                        MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.CONFIG_MENU);
+                        yield break;
+                    }
+                }
+                catch { } // not ready yet — retry
+            }
+        }
     }
 
     /// <summary>
@@ -281,7 +385,7 @@ namespace FFIII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(percentage)) return;
 
                 // Check if we moved to a different controller (different option)
-                // If so, don't announce - let SetFocus handle the full "Name: Value" announcement
+                // If so, don't announce - SelectCommand handles the full "Name: Value" announcement
                 if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SLIDER_CONTROLLER, controller))
                 {
                     // Update the percentage tracker for the new controller
@@ -459,6 +563,23 @@ namespace FFIII_ScreenReader.Patches
                 typeof(ConfigMenuPatches), postfixName: nameof(OptionController_SetActive_Postfix),
                 logPrefix: "[Config Menu]");
 
+            // Config row navigation (once per cursor move) + title Options initial focus
+            try
+            {
+                var selectCommand = AccessTools.Method(typeof(ConfigActualDetailsControllerBase_KeyInput), "SelectCommand");
+                if (selectCommand != null)
+                    harmony.Patch(selectCommand, postfix: new HarmonyMethod(
+                        AccessTools.Method(typeof(ConfigActualDetails_SelectCommand_Patch), nameof(ConfigActualDetails_SelectCommand_Patch.Postfix))));
+                else
+                    MelonLogger.Warning("[Config Menu] ConfigActualDetailsControllerBase.SelectCommand not found");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Config Menu] Error patching SelectCommand: {ex.Message}");
+            }
+            PatchOption(harmony, "ShowConfig", nameof(OptionController_InitialFocus_Postfix));
+            PatchOption(harmony, "InitSelectLanguage", nameof(OptionController_InitialFocus_Postfix));
+
             // Patch controls/keys settings navigation
             try
             {
@@ -506,6 +627,16 @@ namespace FFIII_ScreenReader.Patches
             // binding is applied → announce the new mapping.
             PatchKeysSetting(harmony, "KeyboardSettingInit", nameof(KeyboardSettingInit_Postfix));
             PatchKeysSetting(harmony, "GamePadSettingInit", nameof(GamePadSettingInit_Postfix));
+
+            // Gamepad/Keyboard "Controls" pop-up (read-only list of every control) → navigation buffer.
+            // Entering the GamePad/Keyboard Help state shows HelpContentList/KeyboardHelpContentList;
+            // we render it once and hand it to KeyHelpReader so arrows/WASD/D-pad step the entries.
+            PatchKeysSetting(harmony, "GamePadHelpInit", nameof(GamePadHelpInit_Postfix));
+            PatchKeysSetting(harmony, "KeyboardHelpInit", nameof(KeyboardHelpInit_Postfix));
+            // Leaving the help state (back to the select list, or closing the controls screen) clears it.
+            PatchKeysSetting(harmony, "GamePadSelectInit", nameof(ControlsHelpClose_Postfix));
+            PatchKeysSetting(harmony, "KeyboardSelectInit", nameof(ControlsHelpClose_Postfix));
+            PatchKeysSetting(harmony, "Close", nameof(ControlsHelpClose_Postfix));
 
             // ChangeKeySetting is overloaded — patch every overload with the same __instance-only
             // postfix (avoids AmbiguousMatchException without needing an exact Type[]).
@@ -569,14 +700,28 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Postfix for ConfigController.SetActive - clears state when menu closes.
+        /// Postfix for ConfigController.SetActive - drives ConfigMenuState from the menu's lifecycle, so
+        /// the SelectCommand announcer only speaks inside the real config menu.
         /// </summary>
         public static void SetActive_Postfix(bool isActive)
         {
-            if (!isActive)
+            if (isActive)
+            {
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.CONFIG_MENU);
+            }
+            else
             {
                 ConfigMenuState.ResetState();
             }
+        }
+
+        /// <summary>
+        /// Postfix for OptionController.ShowConfig / InitSelectLanguage (title-screen Options): reads the
+        /// initially focused row, which the title screen doesn't announce through SelectCommand.
+        /// </summary>
+        public static void OptionController_InitialFocus_Postfix(Il2CppLast.UI.KeyInput.OptionController __instance)
+        {
+            ConfigActualDetails_SelectCommand_Patch.AnnounceInitialFocusDelayed(__instance);
         }
 
         /// <summary>
@@ -637,15 +782,22 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         private static string BuildCommandAnnouncement(
             Il2CppLast.UI.KeyInput.ConfigKeysSettingController owner,
-            Il2CppLast.UI.KeyInput.ConfigControllCommandController command)
+            Il2CppLast.UI.KeyInput.ConfigControllCommandController command,
+            bool isHelpList = false)
         {
             if (command == null) return null;
 
             var textParts = new System.Collections.Generic.List<string>();
 
-            // Action name from the view's nameTexts
-            if (command.view != null && command.view.nameTexts != null && command.view.nameTexts.Count > 0)
+            if (isHelpList)
             {
+                // Help rows (the read-only Controls pop-up) leave view.nameTexts as a placeholder and
+                // render the real name into the controller's own messageTexts; fall back to MessageId.
+                AppendHelpCommandName(textParts, command);
+            }
+            else if (command.view != null && command.view.nameTexts != null && command.view.nameTexts.Count > 0)
+            {
+                // Action name from the view's nameTexts
                 foreach (var textComp in command.view.nameTexts)
                 {
                     if (textComp != null && !string.IsNullOrWhiteSpace(textComp.text))
@@ -665,14 +817,108 @@ namespace FFIII_ScreenReader.Patches
             // exclusive per row: keyboard rows carry a key name, gamepad rows don't. So when the keyboard
             // icon is empty we're on the gamepad section — translate the LIVE bound button via
             // ControllerLabels (the keyboard binding above already handled keyboard-section rows).
-            if (ResolveGamepadButtonText(owner, command) is string btn && !string.IsNullOrEmpty(btn)
-                && !IconHasContent(command.keyboardIconController))
+            if (!IconHasContent(command.keyboardIconController))
             {
-                textParts.Add($"({btn})");
+                string btn = ResolveGamepadButtonText(owner, command);
+                // Help rows also list the fixed (non-remappable) buttons, which the live remap read
+                // can't resolve — map their rendered glyph sprite instead.
+                if (string.IsNullOrEmpty(btn) && isHelpList)
+                    btn = GetGamepadGlyphLabel(command);
+                if (!string.IsNullOrEmpty(btn))
+                    textParts.Add($"({btn})");
             }
 
             return textParts.Count == 0 ? null : string.Join(" ", textParts);
         }
+
+        /// <summary>Appends a help row's action name from messageTexts, falling back to its MessageId.</summary>
+        private static void AppendHelpCommandName(System.Collections.Generic.List<string> textParts,
+            Il2CppLast.UI.KeyInput.ConfigControllCommandController command)
+        {
+            var msgTexts = command.messageTexts;
+            if (msgTexts != null)
+            {
+                for (int i = 0; i < msgTexts.Count; i++)
+                {
+                    var t = msgTexts[i];
+                    if (t != null && IsRealName(t.text))
+                    {
+                        string s = t.text.Trim();
+                        if (!textParts.Contains(s)) textParts.Add(s);
+                    }
+                }
+            }
+
+            // Fallback: the rendered text wasn't ready — resolve the message id directly.
+            if (textParts.Count == 0)
+            {
+                string loc = LocalizationHelper.GetText(command.MessageId);
+                if (IsRealName(loc)) textParts.Add(loc.Trim());
+            }
+        }
+
+        /// <summary>True if the text is a usable name (not blank or an editor placeholder).</summary>
+        private static bool IsRealName(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            string t = s.Trim();
+            return t != "New Text" && t != "NewText" && t != "Text" && t != "Name" && t != "Label";
+        }
+
+        /// <summary>
+        /// Reads a help row's rendered gamepad glyph sprite (under view.gamePadIconsRoot) and maps it to a
+        /// controller-aware label. Used only for the fixed buttons the live remap read can't resolve.
+        /// </summary>
+        private static string GetGamepadGlyphLabel(Il2CppLast.UI.KeyInput.ConfigControllCommandController command)
+        {
+            try
+            {
+                var gpRoot = command?.view != null ? command.view.gamePadIconsRoot : null;
+                if (gpRoot == null || !gpRoot.activeSelf) return null;
+                var images = gpRoot.GetComponentsInChildren<UnityEngine.UI.Image>(true);
+                if (images == null) return null;
+                for (int i = 0; i < images.Length; i++)
+                {
+                    var img = images[i];
+                    if (img == null || !img.gameObject.activeInHierarchy) continue;
+                    var sp = img.sprite;
+                    if (sp == null) continue;
+                    string label = GamepadGlyphSpriteToLabel(sp.name);
+                    if (!string.IsNullOrEmpty(label)) return label;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
+        /// Maps a controls-screen glyph sprite name ("UI_Common_&lt;Button&gt;button01") to a controller-aware
+        /// label. Covers ONLY the fixed buttons; the remappable face buttons and unknowns return null.
+        /// </summary>
+        private static string GamepadGlyphSpriteToLabel(string spriteName)
+        {
+            if (string.IsNullOrEmpty(spriteName)) return null;
+
+            if (Has(spriteName, "LBbutton")) return ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+            if (Has(spriteName, "RBbutton")) return ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+            if (Has(spriteName, "LTbutton")) return ControllerLabels.GetLeftTriggerLabel();
+            if (Has(spriteName, "RTbutton")) return ControllerLabels.GetRightTriggerLabel();
+            if (Has(spriteName, "L3button")) return ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_LEFT_STICK);
+            if (Has(spriteName, "R3button")) return ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_RIGHT_STICK);
+            // Start opens the mod menu, so the game never sees it.
+            if (Has(spriteName, "Menubutton")) return T("used for mod menu");
+            if (Has(spriteName, "Backbutton") || Has(spriteName, "Selectbutton") || Has(spriteName, "Viewbutton"))
+                return ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_BACK);
+            // The D-pad and right stick drive mod navigation on the field, so only the left stick moves.
+            if (Has(spriteName, "Tenkeybutton") || Has(spriteName, "Dpadbutton")
+                || Has(spriteName, "Crossbutton") || Has(spriteName, "Directionbutton"))
+                return T("Left Stick");
+
+            return null;
+        }
+
+        private static bool Has(string s, string token)
+            => s.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
 
         /// <summary>True if an icon controller is currently showing readable binding text.</summary>
         private static bool IconHasContent(ConfigKeyIconController icon)
@@ -829,12 +1075,74 @@ namespace FFIII_ScreenReader.Patches
             try
             {
                 if (inst == null) return;
-                FFIII_ScreenReaderMod.SpeakText(gamepad ? "Press a button." : "Press a key.", interrupt: true);
+                FFIII_ScreenReaderMod.SpeakText(gamepad ? T("Press a button.") : T("Press a key."), interrupt: true);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error in assign-prompt patch: {ex.Message}");
             }
+        }
+
+        // ── Gamepad/Keyboard Controls pop-up (read-only controls list) → navigation buffer ──
+        // The pop-up is ConfigKeysSettingController entering its GamePad/Keyboard Help state (NOT the
+        // always-present KeyHelpController hint bar). On state entry we render the help list once and
+        // hand the strings to KeyHelpReader, which drives KeyContext.KeyHelp.
+
+        public static void GamePadHelpInit_Postfix(Il2CppLast.UI.KeyInput.ConfigKeysSettingController __instance)
+            => OpenControlsHelp(__instance, gamepad: true);
+
+        public static void KeyboardHelpInit_Postfix(Il2CppLast.UI.KeyInput.ConfigKeysSettingController __instance)
+            => OpenControlsHelp(__instance, gamepad: false);
+
+        /// <summary>Returning to the controls list (Select state) or closing the screen tears the buffer down.</summary>
+        public static void ControlsHelpClose_Postfix() => KeyHelpReader.CloseControlsHelp();
+
+        private static void OpenControlsHelp(Il2CppLast.UI.KeyInput.ConfigKeysSettingController inst, bool gamepad)
+        {
+            try
+            {
+                if (inst == null) return;
+                // One-frame delay so each row's binding text is populated before we render it.
+                CoroutineManager.StartManaged(DelayedOpenControlsHelp(inst, gamepad));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error opening controls help: {ex.Message}");
+            }
+        }
+
+        private static System.Collections.IEnumerator DelayedOpenControlsHelp(
+            Il2CppLast.UI.KeyInput.ConfigKeysSettingController inst, bool gamepad)
+        {
+            yield return null;
+            System.Collections.Generic.List<string> entries = null;
+            try
+            {
+                // The state machine can cycle its Help-state Init during scene construction; only
+                // build/announce while the controls screen is genuinely shown.
+                if (inst == null || inst.gameObject == null || !inst.gameObject.activeInHierarchy)
+                {
+                    KeyHelpReader.CloseControlsHelp();
+                    yield break;
+                }
+
+                var list = gamepad ? inst.HelpContentList : inst.KeyboardHelpContentList;
+                entries = new System.Collections.Generic.List<string>();
+                if (list != null)
+                {
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        string ann = BuildCommandAnnouncement(inst, list[i], isHelpList: true);
+                        if (!string.IsNullOrWhiteSpace(ann)) entries.Add(ann);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error reading controls help list: {ex.Message}");
+            }
+            if (entries != null && entries.Count > 0)
+                KeyHelpReader.OpenControlsHelp(inst, entries);
         }
 
         /// <summary>

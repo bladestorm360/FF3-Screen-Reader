@@ -1,33 +1,32 @@
 using System;
-using System.Linq;
-using System.Reflection;
-using HarmonyLib;
+using System.Collections.Generic;
 using MelonLoader;
-using UnityEngine;
 using FFIII_ScreenReader.Core;
+using FFIII_ScreenReader.Menus;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 // FF3 Shop UI types
-using ShopListItemContentController = Il2CppLast.UI.KeyInput.ShopListItemContentController;
-using ShopTradeWindowController = Il2CppLast.UI.KeyInput.ShopTradeWindowController;
-using ShopTradeWindowView = Il2CppLast.UI.KeyInput.ShopTradeWindowView;
+using ShopController = Il2CppLast.UI.KeyInput.ShopController;
 using ShopInfoController = Il2CppLast.UI.KeyInput.ShopInfoController;
-using KeyInputShopController = Il2CppLast.UI.KeyInput.ShopController;
+using ShopListMainContentController = Il2CppLast.UI.KeyInput.ShopListMainContentController;
+using ShopListItemContentController = Il2CppLast.UI.KeyInput.ShopListItemContentController;
+using ShopCommandMenuController = Il2CppLast.UI.KeyInput.ShopCommandMenuController;
+using ShopTradeWindowController = Il2CppLast.UI.KeyInput.ShopTradeWindowController;
+using ShopCommandId = Il2CppLast.Defaine.ShopCommandId;
+using GameCursor = Il2CppLast.UI.Cursor;
 
 // Master data types for item stats
 using MasterManager = Il2CppLast.Data.Master.MasterManager;
 using Weapon = Il2CppLast.Data.Master.Weapon;
 using Armor = Il2CppLast.Data.Master.Armor;
-using Item = Il2CppLast.Data.Master.Item;
-using Content = Il2CppLast.Data.Master.Content;
-using ContentType = Il2CppLast.Defaine.Content.ContentType;
 
 namespace FFIII_ScreenReader.Patches
 {
     /// <summary>
-    /// Tracks shop menu state for 'I' key description access and suppression.
-    /// Uses state machine validation to only suppress during item list navigation,
-    /// not during command menu (Buy/Sell/Exit) navigation.
+    /// Tracks shop menu state for 'I' / 'U' key access and generic-cursor suppression.
+    /// Active for the whole shop session — command bar, item lists, trade window, equipment — because
+    /// every shop panel has a dedicated announcer in ShopPatches.
     /// </summary>
     internal static class ShopMenuTracker
     {
@@ -39,8 +38,6 @@ namespace FFIII_ScreenReader.Patches
             {
                 LastItemName = null;
                 LastItemDescription = null;
-                LastItemPrice = null;
-                LastItemStats = null;
                 ShopPatches.ResetShopTracking();
             });
         }
@@ -53,12 +50,10 @@ namespace FFIII_ScreenReader.Patches
 
         public static string LastItemName { get; set; }
         public static string LastItemDescription { get; set; }
-        public static string LastItemPrice { get; set; }
-        public static string LastItemStats { get; set; }
 
         /// <summary>
         /// Returns true if generic cursor reading should be suppressed.
-        /// Validates state machine at runtime to detect return to command bar.
+        /// Validates the shop controller at runtime to detect the shop closing.
         /// </summary>
         public static bool ValidateState()
         {
@@ -66,7 +61,7 @@ namespace FFIII_ScreenReader.Patches
                 return false;
 
             int state = GetShopControllerState();
-            if (state == IL2CppOffsets.Shop.STATE_SELECT_COMMAND || state == IL2CppOffsets.Shop.STATE_NONE)
+            if (state == IL2CppOffsets.Shop.STATE_NONE || state < 0)
             {
                 IsShopMenuActive = false;
                 return false;
@@ -75,9 +70,12 @@ namespace FFIII_ScreenReader.Patches
             return true;
         }
 
-        private static int GetShopControllerState()
+        /// <summary>
+        /// ShopController state tag, or -1 when the shop controller isn't shown.
+        /// </summary>
+        internal static int GetShopControllerState()
         {
-            var shopController = GameObjectCache.GetOrFind<KeyInputShopController>();
+            var shopController = GameObjectCache.GetOrFind<ShopController>();
             if (shopController == null || !shopController.gameObject.activeInHierarchy)
                 return -1;
             return StateReaderHelper.ReadStateTag(shopController.Pointer, IL2CppOffsets.Shop.OFFSET_STATE_MACHINE);
@@ -85,7 +83,7 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Announces shop item details when 'I' key is pressed.
+    /// Announces shop item details when 'I' key is pressed (and after the item name with Auto Detail).
     /// Announces stats first, then description.
     /// Format: "Defense 3, Magic Defense 1. Armor made of leather."
     /// </summary>
@@ -104,40 +102,20 @@ namespace FFIII_ScreenReader.Patches
             try
             {
                 if (!ShopMenuTracker.ValidateState())
-                {
                     return;
-                }
 
-                // Build announcement: Stats first, then description
-                string stats = ShopMenuTracker.LastItemStats;
+                string stats = ShopPatches.GetItemStats(ShopMenuTracker.LastItemName);
                 string description = ShopMenuTracker.LastItemDescription;
 
-                string announcement = "";
-
-                // Add stats if available
-                if (!string.IsNullOrEmpty(stats))
-                {
-                    announcement = stats;
-                }
-
-                // Add description
+                string announcement = stats ?? "";
                 if (!string.IsNullOrEmpty(description))
-                {
-                    if (!string.IsNullOrEmpty(announcement))
-                    {
-                        announcement += ". " + description;
-                    }
-                    else
-                    {
-                        announcement = description;
-                    }
-                }
+                    announcement = string.IsNullOrEmpty(announcement) ? description : $"{announcement}. {description}";
 
                 if (string.IsNullOrEmpty(announcement))
                 {
                     if (!announceIfEmpty)
                         return;
-                    announcement = "No item details available";
+                    announcement = T("No item details available");
                 }
 
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: interrupt);
@@ -151,350 +129,270 @@ namespace FFIII_ScreenReader.Patches
 
     /// <summary>
     /// Shop menu patches using manual Harmony patching.
-    ///
-    /// CRITICAL: FF3 crashes with methods that have string parameters.
-    /// All patches here use methods with non-string params only.
+    ///   • ShopInfoController.SetDescription — fires on every cursor move in the buy/sell list,
+    ///     affordable or not; the focused item is read from ShopListMainContentController.
+    ///   • ShopCommandMenuController.SetCursor — the command bar (Buy / Sell / Equipment / Back).
+    ///   • ShopTradeWindowController.Show / AddCount / TakeCount — the quantity window.
+    ///   • ShopController.InitSelectCommand / Close — session start and end.
+    /// Postfixes never declare the string parameters of the patched methods (IL2CPP crash).
     /// </summary>
     internal static class ShopPatches
     {
+        private const string LOG = "[Shop]";
+
+        // ShopListMainContentController (KeyInput)
+        private const int OFFSET_LIST_SELECT_CURSOR = 0x48;
+        private const int OFFSET_PRODUCT_CONTENT_LIST = 0x68;   // List<ShopListItemContentController>
+
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
-            try
-            {
-                // Patch ShopListItemContentController.SetFocus(bool) - item selection (buy/sell lists)
-                PatchSetFocus(harmony);
-
-                // Patch ShopTradeWindowController.UpdateCotroller(bool) - quantity changes
-                // Note: AddCount/TakeCount are private and IL2CPP doesn't expose them
-                PatchTradeWindow(harmony);
-
-                // Patch SetActive for menu close detection
-                PatchSetActive(harmony);
-
-                MelonLogger.Msg("[Shop] All shop patches applied successfully");
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[Shop] Failed to apply shop patches: {ex.Message}");
-            }
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ShopInfoController), "SetDescription",
+                typeof(ShopPatches), nameof(SetDescription_Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ShopCommandMenuController), "SetCursor",
+                typeof(ShopPatches), nameof(CommandSetCursor_Postfix), LOG, new Type[] { typeof(int) });
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ShopTradeWindowController), "Show",
+                typeof(ShopPatches), nameof(TradeWindowShow_Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ShopTradeWindowController), "AddCount",
+                typeof(ShopPatches), nameof(TradeWindowCount_Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ShopTradeWindowController), "TakeCount",
+                typeof(ShopPatches), nameof(TradeWindowCount_Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ShopController), "InitSelectCommand",
+                typeof(ShopPatches), nameof(InitSelectCommand_Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ShopController), "Close",
+                typeof(ShopPatches), nameof(ShopClose_Postfix), LOG);
         }
 
-        private static void PatchSetActive(HarmonyLib.Harmony harmony)
-        {
-            HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputShopController), typeof(ShopPatches),
-                logPrefix: "[Shop]");
-        }
+        // ============ Item list ============
 
-        public static void SetActive_Postfix(bool isActive)
-        {
-            if (!isActive)
-            {
-                ShopMenuTracker.IsShopMenuActive = false;
-            }
-        }
+        // Scoped index dedup: SetDescription also fires when the stats/description panel is toggled for
+        // the same focused item, and no other signal covers unaffordable items.
+        private static int lastAnnouncedListIndex = -1;
 
-        private static void PatchSetFocus(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                Type controllerType = typeof(ShopListItemContentController);
-                var setFocusMethod = controllerType.GetMethod("SetFocus", new Type[] { typeof(bool) });
-
-                if (setFocusMethod == null)
-                {
-                    MelonLogger.Warning("[Shop] Could not find ShopListItemContentController.SetFocus(bool)");
-                    return;
-                }
-
-                harmony.Patch(setFocusMethod,
-                    postfix: new HarmonyMethod(typeof(ShopPatches), nameof(SetFocus_Postfix)));
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[Shop] Failed to patch SetFocus: {ex.Message}");
-            }
-        }
-
-        private static void PatchTradeWindow(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                Type tradeType = typeof(ShopTradeWindowController);
-
-                // UpdateCotroller is public (note: game typo - "Cotroller" not "Controller")
-                // This is called after count changes, more reliable than private AddCount/TakeCount
-                var updateMethod = tradeType.GetMethod("UpdateCotroller", new Type[] { typeof(bool) });
-                if (updateMethod != null)
-                {
-                    harmony.Patch(updateMethod,
-                        postfix: new HarmonyMethod(typeof(ShopPatches), nameof(UpdateCotroller_Postfix)));
-                }
-                else
-                {
-                    MelonLogger.Warning("[Shop] Could not find ShopTradeWindowController.UpdateCotroller");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[Shop] Failed to patch trade window: {ex.Message}");
-            }
-        }
-
-        // ============ Postfix Methods ============
-
-        private const string CONTEXT_ITEM = AnnouncementContexts.SHOP_ITEM;
-        private const string CONTEXT_QUANTITY = AnnouncementContexts.SHOP_QUANTITY;
+        private static ShopListMainContentController cachedMainList;
 
         /// <summary>
-        /// Called when an item in the shop list gains/loses focus.
-        /// Announces item name, price, and caches description and stats for 'I' key.
+        /// Fires whenever the shop description panel updates — on every cursor move in the item list,
+        /// affordable or not. Used as the cursor-moved signal; the focused item's data is read from the
+        /// list itself (the description parameter is not declared here).
         /// </summary>
-        public static void SetFocus_Postfix(ShopListItemContentController __instance, bool isFocus)
+        public static void SetDescription_Postfix()
         {
             try
             {
-                if (!isFocus || __instance == null)
+                // Only while a buy/sell list has focus; other states (command bar, trade window,
+                // transitions) also refresh the panel.
+                int state = ShopMenuTracker.GetShopControllerState();
+                if (state != IL2CppOffsets.Shop.STATE_SELECT_PRODUCT && state != IL2CppOffsets.Shop.STATE_SELECT_SELL_ITEM)
+                {
+                    lastAnnouncedListIndex = -1;
                     return;
+                }
 
-                // Mark shop as active and clear other menu states
-                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.SHOP_MENU);
+                AnnounceFocusedFromList();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"{LOG} Error in SetDescription_Postfix: {ex.Message}");
+            }
+        }
 
-                // Get item name from iconTextView
-                string itemName = null;
+        private static void AnnounceFocusedFromList()
+        {
+            var mainList = FindActiveMainContentController();
+            if (mainList == null)
+                return;
+
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.SHOP_MENU);
+
+            IntPtr ptr = mainList.Pointer;
+            IntPtr cursorPtr = StateReaderHelper.ReadPointerField(ptr, OFFSET_LIST_SELECT_CURSOR);
+            if (cursorPtr == IntPtr.Zero)
+                return;
+
+            int index = new GameCursor(cursorPtr).Index;
+            if (index < 0 || index == lastAnnouncedListIndex)
+                return;
+
+            IntPtr listPtr = StateReaderHelper.ReadPointerField(ptr, OFFSET_PRODUCT_CONTENT_LIST);
+            if (listPtr == IntPtr.Zero)
+                return;
+
+            var list = new Il2CppSystem.Collections.Generic.List<ShopListItemContentController>(listPtr);
+            if (index >= list.Count)
+                return;
+
+            lastAnnouncedListIndex = index;
+
+            // The product list is a fixed pool whose unused entries still carry other names, so the
+            // position counts the ACTIVE entries only.
+            int activeCount = 0;
+            for (int i = 0; i < list.Count; i++)
+            {
                 try
                 {
-                    itemName = __instance.iconTextView?.nameText?.text;
+                    var c = list[i];
+                    if (c != null && c.gameObject.activeInHierarchy) activeCount++;
                 }
                 catch { }
+            }
 
-                if (string.IsNullOrEmpty(itemName))
-                    return;
+            AnnounceFocusedItem(list[index], index, activeCount);
+        }
 
-                // Strip any icon markup
-                itemName = TextUtils.StripIconMarkup(itemName);
+        private static ShopListMainContentController FindActiveMainContentController()
+        {
+            try
+            {
+                if (cachedMainList != null && cachedMainList.gameObject != null && cachedMainList.gameObject.activeInHierarchy)
+                    return cachedMainList;
 
-                // Get price from shopListItemContentView
-                string price = null;
-                try
+                // Buy and sell each have their own list controller; use the one that is shown.
+                cachedMainList = null;
+                foreach (var candidate in UnityEngine.Object.FindObjectsOfType<ShopListMainContentController>())
                 {
-                    price = __instance.shopListItemContentView?.priceText?.text;
-                }
-                catch { }
-
-                // Get description from Message property (cached for 'I' key)
-                string description = null;
-                try
-                {
-                    description = __instance.Message;
-                }
-                catch { }
-
-                // Get item stats from master data (cached for 'I' key)
-                string stats = null;
-                try
-                {
-                    int contentId = __instance.ContentId;
-                    if (contentId > 0)
+                    if (candidate != null && candidate.gameObject.activeInHierarchy)
                     {
-                        stats = GetItemStats(contentId);
+                        cachedMainList = candidate;
+                        break;
                     }
                 }
-                catch { }
-
-                // Cache for 'I' key
-                ShopMenuTracker.LastItemName = itemName;
-                ShopMenuTracker.LastItemPrice = price;
-                ShopMenuTracker.LastItemDescription = description;
-                ShopMenuTracker.LastItemStats = stats;
-
-                // Build announcement: "Item Name, Price"
-                string announcement = string.IsNullOrEmpty(price) ? itemName : $"{itemName}, {price}";
-
-                // Skip duplicate announcements
-                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_ITEM, announcement))
-                {
-                    return;
-                }
-
-                FFIII_ScreenReaderMod.SpeakText(announcement);
-
-                // Auto Detail: queue the same stats/description the 'I' key reads AFTER the
-                // name/price announce (interrupt:false). Placed past the dedup above, so it only
-                // fires on a genuinely new item — cursoring to the same row won't restack it.
-                if (PreferencesManager.AutoDetailEnabled)
-                {
-                    ShopDetailsAnnouncer.AnnounceCurrentItemDetails(interrupt: false, announceIfEmpty: false);
-                }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[Shop] Error in SetFocus_Postfix: {ex.Message}");
-            }
+            catch { cachedMainList = null; }
+            return cachedMainList;
         }
 
         /// <summary>
-        /// Gets item stats by looking up master data.
-        /// ContentId is the Content system ID - we need to look up the Content
-        /// to get TypeValue (the actual weapon/armor ID for master data).
+        /// Announces the focused shop item as "Name, Price" plus its position, and caches it for the
+        /// I/U keys; with Auto Detail the stats/description follow (queued). An empty slot announces
+        /// "Empty" and keeps the previous item cached for I/U.
         /// </summary>
-        private static string GetItemStats(int contentId)
+        private static void AnnounceFocusedItem(ShopListItemContentController content, int index, int count)
         {
+            string itemName = null;
+            string price = null;
+            string description = null;
             try
             {
-                var masterManager = MasterManager.Instance;
-                if (masterManager == null)
-                    return null;
-
-                // Look up the Content to get the actual item ID (TypeValue) and type (TypeId)
-                var content = masterManager.GetData<Content>(contentId);
-                if (content == null)
-                    return null;
-
-                int typeId = content.TypeId;           // ContentType: 1=Item, 2=Weapon, 3=Armor
-                int actualItemId = content.TypeValue;  // The actual weapon/armor/item ID
-
-                // Look up stats based on content type
-                switch ((ContentType)typeId)
-                {
-                    case ContentType.Weapon:
-                        return GetWeaponStats(masterManager, actualItemId);
-
-                    case ContentType.Armor:
-                        return GetArmorStats(masterManager, actualItemId);
-
-                    default:
-                        // Regular items and other types don't have equipment stats
-                        return null;
-                }
+                itemName = TextUtils.StripIconMarkup(content?.iconTextView?.nameText?.text);
+                price = content?.shopListItemContentView?.priceText?.text;
+                description = content?.Message;
             }
-            catch
+            catch { }
+
+            if (string.IsNullOrEmpty(itemName))
             {
-                return null;
+                FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, count), interrupt: true);
+                return;
             }
+
+            ShopMenuTracker.LastItemName = itemName;
+            ShopMenuTracker.LastItemDescription = TextUtils.StripIconMarkup(description);
+
+            string announcement = string.IsNullOrEmpty(price) ? itemName : $"{itemName}, {price}";
+            FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(announcement, index, count), interrupt: true);
+
+            // Auto Detail: queue the same stats/description the 'I' key reads (interrupt:false)
+            if (PreferencesManager.AutoDetailEnabled)
+                ShopDetailsAnnouncer.AnnounceCurrentItemDetails(interrupt: false, announceIfEmpty: false);
         }
 
-        /// <summary>
-        /// Gets stats string for a weapon.
-        /// Format: "Attack X" (with optional additional stats)
-        /// </summary>
-        private static string GetWeaponStats(MasterManager masterManager, int weaponId)
-        {
-            try
-            {
-                var weapon = masterManager.GetData<Weapon>(weaponId);
-                if (weapon == null)
-                    return null;
-
-                var stats = new System.Collections.Generic.List<string>();
-
-                int attack = weapon.Attack;
-                if (attack > 0)
-                    stats.Add($"Attack {attack}");
-
-                int accuracy = weapon.AccuracyRate;
-                if (accuracy > 0)
-                    stats.Add($"Accuracy {accuracy}");
-
-                int evasion = weapon.EvasionRate;
-                if (evasion > 0)
-                    stats.Add($"Evasion {evasion}");
-
-                // Stat bonuses
-                if (weapon.Strength > 0) stats.Add($"Strength +{weapon.Strength}");
-                if (weapon.Vitality > 0) stats.Add($"Vitality +{weapon.Vitality}");
-                if (weapon.Agility > 0) stats.Add($"Agility +{weapon.Agility}");
-                if (weapon.Intelligence > 0) stats.Add($"Intelligence +{weapon.Intelligence}");
-                if (weapon.Spirit > 0) stats.Add($"Spirit +{weapon.Spirit}");
-                if (weapon.Magic > 0) stats.Add($"Magic +{weapon.Magic}");
-
-                return stats.Count > 0 ? string.Join(", ", stats) : null;
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Shop] Error getting weapon stats: {ex.Message}");
-                return null;
-            }
-        }
+        // ============ Command bar ============
 
         /// <summary>
-        /// Gets stats string for armor.
-        /// Format: "Defense X, Magic Defense Y" (with optional additional stats)
+        /// Cursor moved on the shop command bar. Announces only while the bar is the active panel
+        /// (SelectCommand): during shop preparation the cursor also moves while the state is already
+        /// SelectProduct, which would otherwise read a stray "Buy".
         /// </summary>
-        private static string GetArmorStats(MasterManager masterManager, int armorId)
-        {
-            try
-            {
-                var armor = masterManager.GetData<Armor>(armorId);
-                if (armor == null)
-                    return null;
-
-                var stats = new System.Collections.Generic.List<string>();
-
-                int defense = armor.Defense;
-                if (defense > 0)
-                    stats.Add($"Defense {defense}");
-
-                int magicDefense = armor.AbilityDefense;
-                if (magicDefense > 0)
-                    stats.Add($"Magic Defense {magicDefense}");
-
-                int evasion = armor.EvasionRate;
-                if (evasion > 0)
-                    stats.Add($"Evasion {evasion}");
-
-                int magicEvasion = armor.AbilityEvasionRate;
-                if (magicEvasion > 0)
-                    stats.Add($"Magic Evasion {magicEvasion}");
-
-                // Stat bonuses
-                if (armor.Strength > 0) stats.Add($"Strength +{armor.Strength}");
-                if (armor.Vitality > 0) stats.Add($"Vitality +{armor.Vitality}");
-                if (armor.Agility > 0) stats.Add($"Agility +{armor.Agility}");
-                if (armor.Intelligence > 0) stats.Add($"Intelligence +{armor.Intelligence}");
-                if (armor.Spirit > 0) stats.Add($"Spirit +{armor.Spirit}");
-                if (armor.Magic > 0) stats.Add($"Magic +{armor.Magic}");
-
-                return stats.Count > 0 ? string.Join(", ", stats) : null;
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Shop] Error getting armor stats: {ex.Message}");
-                return null;
-            }
-        }
-
-
-
-        /// <summary>
-        /// Called when the trade window updates (after quantity changes).
-        /// Announces the current quantity and total price.
-        /// </summary>
-        public static void UpdateCotroller_Postfix(ShopTradeWindowController __instance, bool isCount)
+        public static void CommandSetCursor_Postfix(ShopCommandMenuController __instance, int index)
         {
             try
             {
                 if (__instance == null)
                     return;
-
-                // Read selectedCount via pointer (offset 0x3C)
-                int selectedCount = GetSelectedCount(__instance);
-
-                // Skip if quantity hasn't changed (UpdateCotroller is called frequently)
-                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_QUANTITY, selectedCount))
+                if (ShopMenuTracker.GetShopControllerState() != IL2CppOffsets.Shop.STATE_SELECT_COMMAND)
                     return;
 
-                // Read total price text via pointer chain
-                string totalPrice = GetTotalPriceText(__instance);
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.SHOP_MENU);
+
+                var contentList = __instance.contentList;
+                var commandContent = SelectContentHelper.TryGetItem(contentList, index);
+                if (commandContent == null)
+                    return;
+
+                string commandName = GetCommandName(commandContent.CommandId);
+                if (string.IsNullOrEmpty(commandName))
+                    return;
+
+                FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(commandName, index, contentList.Count), interrupt: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"{LOG} Error in CommandSetCursor_Postfix: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// The command bar gained focus (shop opened on it, or backed out of a list). Marks the shop
+        /// session active so the generic cursor reader doesn't also read the bar.
+        /// </summary>
+        public static void InitSelectCommand_Postfix()
+        {
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.SHOP_MENU);
+            lastAnnouncedListIndex = -1;
+        }
+
+        internal static string GetCommandName(ShopCommandId commandId)
+        {
+            return commandId switch
+            {
+                ShopCommandId.Buy => T("Buy"),
+                ShopCommandId.Sell => T("Sell"),
+                ShopCommandId.Equipment => T("Equipment"),
+                ShopCommandId.Back => T("Back"),
+                _ => null
+            };
+        }
+
+        // ============ Trade window ============
+
+        /// <summary>
+        /// Fires once when the trade window opens (buy or sell confirm): announces the starting
+        /// quantity and total.
+        /// </summary>
+        public static void TradeWindowShow_Postfix(ShopTradeWindowController __instance)
+        {
+            lastAnnouncedListIndex = -1;
+            AnnounceQuantity(__instance);
+        }
+
+        /// <summary>
+        /// AddCount / TakeCount: each call is a discrete key press, so announce unconditionally (a press
+        /// against the max/min replays the same value, which confirms the limit).
+        /// </summary>
+        public static void TradeWindowCount_Postfix(ShopTradeWindowController __instance)
+        {
+            AnnounceQuantity(__instance);
+        }
+
+        private static void AnnounceQuantity(ShopTradeWindowController controller)
+        {
+            try
+            {
+                if (controller == null)
+                    return;
+
+                int selectedCount = GetSelectedCount(controller);
+                string totalPrice = GetTotalPriceText(controller);
 
                 string announcement = string.IsNullOrEmpty(totalPrice)
-                    ? selectedCount.ToString()
-                    : $"{selectedCount}, {totalPrice}";
+                    ? string.Format(T("Quantity: {0}"), selectedCount)
+                    : string.Format(T("Quantity: {0}, Total: {1}"), selectedCount, totalPrice);
 
                 FFIII_ScreenReaderMod.SpeakText(announcement);
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"[Shop] Error in UpdateCotroller_Postfix: {ex.Message}");
+                MelonLogger.Error($"{LOG} Error announcing quantity: {ex.Message}");
             }
         }
 
@@ -509,9 +407,7 @@ namespace FFIII_ScreenReader.Patches
                 {
                     IntPtr ptr = controller.Pointer;
                     if (ptr != IntPtr.Zero)
-                    {
                         return *(int*)((byte*)ptr.ToPointer() + IL2CppOffsets.Shop.OFFSET_SELECTED_COUNT);
-                    }
                 }
             }
             catch { }
@@ -519,50 +415,29 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Reads the total price text from the trade window view.
-        /// Uses pointer chain: controller -> view -> totarlPriceText -> text
+        /// Reads the total price text: controller -> view (0x30) -> totarlPriceText (0x70) -> text.
         /// </summary>
         private static string GetTotalPriceText(ShopTradeWindowController controller)
         {
             try
             {
-                // Try direct access first (IL2CPP wrapper might expose it)
-                var view = controller.view;
-                if (view != null)
-                {
-                    var priceText = view.totarlPriceText;
-                    if (priceText != null)
-                    {
-                        return priceText.text;
-                    }
-                }
+                IntPtr viewPtr = StateReaderHelper.ReadPointerField(controller.Pointer, IL2CppOffsets.Shop.OFFSET_TRADE_VIEW);
+                if (viewPtr == IntPtr.Zero) return null;
+
+                IntPtr textPtr = StateReaderHelper.ReadPointerField(viewPtr, IL2CppOffsets.Shop.OFFSET_TOTAL_PRICE_TEXT);
+                if (textPtr == IntPtr.Zero) return null;
+
+                return new UnityEngine.UI.Text(textPtr).text;
             }
-            catch
-            {
-                // Direct access failed, try pointer-based access
-                try
-                {
-                    unsafe
-                    {
-                        IntPtr controllerPtr = controller.Pointer;
-                        if (controllerPtr == IntPtr.Zero) return null;
+            catch { return null; }
+        }
 
-                        // Read view pointer at offset 0x30
-                        IntPtr viewPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Shop.OFFSET_TRADE_VIEW);
-                        if (viewPtr == IntPtr.Zero) return null;
+        // ============ Shop close ============
 
-                        // Read totarlPriceText pointer at offset 0x70
-                        IntPtr textPtr = *(IntPtr*)((byte*)viewPtr.ToPointer() + IL2CppOffsets.Shop.OFFSET_TOTAL_PRICE_TEXT);
-                        if (textPtr == IntPtr.Zero) return null;
-
-                        // Wrap as Text component and read text property
-                        var textComponent = new UnityEngine.UI.Text(textPtr);
-                        return textComponent.text;
-                    }
-                }
-                catch { }
-            }
-            return null;
+        public static void ShopClose_Postfix()
+        {
+            cachedMainList = null;
+            ShopMenuTracker.IsShopMenuActive = false;
         }
 
         /// <summary>
@@ -571,8 +446,79 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void ResetShopTracking()
         {
-            AnnouncementDeduplicator.Reset(CONTEXT_ITEM, CONTEXT_QUANTITY);
+            lastAnnouncedListIndex = -1;
         }
 
+        // ============ Item stats (I key / Auto Detail) ============
+
+        /// <summary>
+        /// Stats of a weapon or armor, resolved from master data by its displayed name (the list's
+        /// ContentId is not a reliable Content key). Null for other items.
+        /// </summary>
+        internal static string GetItemStats(string itemName)
+        {
+            try
+            {
+                var masterManager = MasterManager.Instance;
+                if (masterManager == null || string.IsNullOrEmpty(itemName))
+                    return null;
+
+                if (!UsableByAnnouncer.TryResolveContent(masterManager, itemName, out int typeId, out int itemId))
+                    return null;
+
+                if (typeId == FF3Constants.ItemContentTypes.WEAPON)
+                    return GetWeaponStats(masterManager.GetData<Weapon>(itemId));
+                if (typeId == FF3Constants.ItemContentTypes.ARMOR)
+                    return GetArmorStats(masterManager.GetData<Armor>(itemId));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"{LOG} Error getting item stats: {ex.Message}");
+            }
+            return null;
+        }
+
+        private static string GetWeaponStats(Weapon weapon)
+        {
+            if (weapon == null)
+                return null;
+
+            var stats = new List<string>();
+            AddStat(stats, T("Attack {0}"), weapon.Attack);
+            AddStat(stats, T("Accuracy {0}"), weapon.AccuracyRate);
+            AddStat(stats, T("Evasion {0}"), weapon.EvasionRate);
+            AddStatBonuses(stats, weapon.Strength, weapon.Vitality, weapon.Agility, weapon.Intelligence, weapon.Spirit, weapon.Magic);
+            return stats.Count > 0 ? string.Join(", ", stats) : null;
+        }
+
+        private static string GetArmorStats(Armor armor)
+        {
+            if (armor == null)
+                return null;
+
+            var stats = new List<string>();
+            AddStat(stats, T("Defense {0}"), armor.Defense);
+            AddStat(stats, T("Magic Defense {0}"), armor.AbilityDefense);
+            AddStat(stats, T("Evasion {0}"), armor.EvasionRate);
+            AddStat(stats, T("Magic Evasion {0}"), armor.AbilityEvasionRate);
+            AddStatBonuses(stats, armor.Strength, armor.Vitality, armor.Agility, armor.Intelligence, armor.Spirit, armor.Magic);
+            return stats.Count > 0 ? string.Join(", ", stats) : null;
+        }
+
+        private static void AddStatBonuses(List<string> stats, int strength, int vitality, int agility, int intelligence, int spirit, int magic)
+        {
+            AddStat(stats, T("Strength +{0}"), strength);
+            AddStat(stats, T("Vitality +{0}"), vitality);
+            AddStat(stats, T("Agility +{0}"), agility);
+            AddStat(stats, T("Intelligence +{0}"), intelligence);
+            AddStat(stats, T("Spirit +{0}"), spirit);
+            AddStat(stats, T("Magic +{0}"), magic);
+        }
+
+        private static void AddStat(List<string> stats, string format, int value)
+        {
+            if (value > 0)
+                stats.Add(string.Format(format, value));
+        }
     }
 }

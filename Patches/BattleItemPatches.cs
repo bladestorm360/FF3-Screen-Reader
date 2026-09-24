@@ -1,6 +1,5 @@
 using System;
 using System.Reflection;
-using System.Collections.Generic;
 using HarmonyLib;
 using MelonLoader;
 using FFIII_ScreenReader.Core;
@@ -8,12 +7,8 @@ using FFIII_ScreenReader.Utils;
 
 // Type aliases for IL2CPP types
 using BattleItemInfomationController = Il2CppLast.UI.KeyInput.BattleItemInfomationController;
-using BattleItemInfomationContentController = Il2CppLast.UI.KeyInput.BattleItemInfomationContentController;
-using BattleCommandSelectController = Il2CppLast.UI.KeyInput.BattleCommandSelectController;
 using ItemListContentData = Il2CppLast.UI.ItemListContentData;
-using OwnedItemData = Il2CppLast.Data.User.OwnedItemData;
 using GameCursor = Il2CppLast.UI.Cursor;
-using CustomScrollViewWithinRangeType = Il2CppLast.UI.CustomScrollView.WithinRangeType;
 
 namespace FFIII_ScreenReader.Patches
 {
@@ -74,7 +69,7 @@ namespace FFIII_ScreenReader.Patches
 
         static BattleItemMenuState()
         {
-            _helper.RegisterResetHandler();
+            _helper.RegisterResetHandler(() => { LastFocusedDescription = null; });
         }
 
         public static bool IsActive
@@ -85,6 +80,12 @@ namespace FFIII_ScreenReader.Patches
 
         public static bool ShouldSuppress() => IsActive;
         public static bool ShouldAnnounce(string announcement) => _helper.ShouldAnnounce(announcement);
+
+        /// <summary>
+        /// Stripped description of the focused battle item, refreshed on every cursor move regardless of
+        /// Auto Detail. Read on demand by the I key / right stick up.
+        /// </summary>
+        public static string LastFocusedDescription { get; set; }
     }
 
     /// <summary>
@@ -110,11 +111,15 @@ namespace FFIII_ScreenReader.Patches
 
                 int cursorIndex = targetCursor.Index;
 
-                // Try to get item data from the content list
-                string announcement = TryGetItemFromContentList(controller, cursorIndex);
+                var data = GetItemData(controller, cursorIndex, out int count);
+                if (data == null)
+                    return;
 
+                string announcement = FormatItemAnnouncement(data);
                 if (string.IsNullOrEmpty(announcement))
                     return;
+
+                announcement = MenuPosition.Format(announcement, cursorIndex, count);
 
                 // Skip duplicates
                 if (!BattleItemMenuState.ShouldAnnounce(announcement))
@@ -123,6 +128,9 @@ namespace FFIII_ScreenReader.Patches
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 // Also clear other menu states to prevent conflicts
                 MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_ITEM);
+
+                // Restore the command-announce window + arm the command back-out re-announce
+                BattleCommandSelectController_SetCursor_Patch.NotifyCommandSubmenuActive();
 
                 // Immediate speech - no delay needed
                 FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
@@ -134,119 +142,74 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Try to get item information from the controller's content list.
+        /// Gets the focused item's display data. Reads displayDataList (the list the view renders, with
+        /// name, count and description) by pointer, falling back to the content controllers.
         /// </summary>
-        private static string TryGetItemFromContentList(BattleItemInfomationController controller, int cursorIndex)
+        private static ItemListContentData GetItemData(BattleItemInfomationController controller, int cursorIndex, out int count)
         {
+            count = 0;
             try
             {
-                // The controller has a contentList field with BattleItemInfomationContentController instances
-                // Each content controller has a Data property of type ItemListContentData
-
-                // Use IL2CPP reflection to get the contentList field
-                var controllerType = controller.GetType();
-
-                // Try to find contentList as a property first (IL2CPP sometimes exposes fields as properties)
-                var contentListProp = controllerType.GetProperty("contentList",
-                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-
-                Il2CppSystem.Collections.Generic.List<BattleItemInfomationContentController> contentList = null;
-
-                if (contentListProp != null)
+                IntPtr listPtr = StateReaderHelper.ReadPointerField(controller.Pointer, OFFSET_DISPLAY_DATA_LIST);
+                if (listPtr != IntPtr.Zero)
                 {
-                    var propValue = contentListProp.GetValue(controller);
-                    contentList = propValue as Il2CppSystem.Collections.Generic.List<BattleItemInfomationContentController>;
-                }
-
-                if (contentList == null)
-                {
-                    // Try finding all active content controllers in scene
-                    var allContentControllers = UnityEngine.Object.FindObjectsOfType<BattleItemInfomationContentController>();
-                    if (allContentControllers != null && allContentControllers.Length > 0)
+                    var displayDataList = new Il2CppSystem.Collections.Generic.List<ItemListContentData>(listPtr);
+                    var data = SelectContentHelper.TryGetItem(displayDataList, cursorIndex);
+                    if (data != null)
                     {
-                        // Find the one at cursor index (they should be in order)
-                        foreach (var cc in allContentControllers)
-                        {
-                            if (cc == null || !cc.gameObject.activeInHierarchy)
-                                continue;
-
-                            // Check if this content controller has data
-                            var data = cc.Data;
-                            if (data != null)
-                            {
-                                // Check if this is the focused one
-                                if (data.IsFocus)
-                                {
-                                    return FormatItemAnnouncement(data);
-                                }
-                            }
-                        }
-
-                        // Fallback: try by index if no focused item found
-                        if (cursorIndex >= 0 && cursorIndex < allContentControllers.Length)
-                        {
-                            var cc = allContentControllers[cursorIndex];
-                            if (cc != null && cc.Data != null)
-                            {
-                                return MenuPosition.Format(FormatItemAnnouncement(cc.Data), cursorIndex, allContentControllers.Length);
-                            }
-                        }
+                        count = displayDataList.Count;
+                        return data;
                     }
                 }
-                else
+
+                var contentList = controller.contentList;
+                var contentController = SelectContentHelper.TryGetItem(contentList, cursorIndex);
+                if (contentController?.Data != null)
                 {
-                    if (cursorIndex >= 0 && cursorIndex < contentList.Count)
-                    {
-                        var contentController = contentList[cursorIndex];
-                        if (contentController != null)
-                        {
-                            var data = contentController.Data;
-                            if (data != null)
-                            {
-                                return MenuPosition.Format(FormatItemAnnouncement(data), cursorIndex, contentList.Count);
-                            }
-                        }
-                    }
+                    count = contentList.Count;
+                    return contentController.Data;
                 }
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Item] Error getting item from content list: {ex.Message}");
+                MelonLogger.Warning($"[Battle Item] Error getting item data: {ex.Message}");
             }
 
             return null;
         }
 
+        // BattleItemInfomationController (KeyInput) List<ItemListContentData> displayDataList
+        private const int OFFSET_DISPLAY_DATA_LIST = 0xE0;
+
         /// <summary>
-        /// Format item data into announcement string.
+        /// Format item data into announcement string: "Name, quantity", plus ": description" when
+        /// Auto Detail is on. The description is cached for the on-demand I key either way.
         /// </summary>
         private static string FormatItemAnnouncement(ItemListContentData data)
         {
             try
             {
+                string itemName = TextUtils.StripIconMarkup(data.Name);
+                if (string.IsNullOrEmpty(itemName))
+                    return null;
+
+                int quantity = data.Count;
+                string announcement = quantity > 0 ? $"{itemName}, {quantity}" : itemName;
+
                 string description = null;
                 try
                 {
-                    description = data.Description;
+                    description = TextUtils.StripIconMarkup(data.Description);
                 }
                 catch
                 {
                     // Description not available
                 }
 
-                // Format: "Item Name quantity: description"
-                string itemName = TextUtils.StripIconMarkup(data.Name);
-                int quantity = data.Count;
-                string announcement = quantity > 0 ? $"{itemName} {quantity}" : itemName;
+                BattleItemMenuState.LastFocusedDescription = string.IsNullOrWhiteSpace(description) ? null : description;
+                if (PreferencesManager.AutoDetailEnabled && BattleItemMenuState.LastFocusedDescription != null)
+                    announcement += $": {description}";
 
-                if (!string.IsNullOrWhiteSpace(description))
-                {
-                    description = TextUtils.StripIconMarkup(description);
-                    if (!string.IsNullOrWhiteSpace(description))
-                    {
-                        announcement += $": {description}";
-                    }
-                }
                 return announcement;
             }
             catch (Exception ex)

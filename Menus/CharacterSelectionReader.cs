@@ -3,13 +3,11 @@ using System.Collections.Generic;
 using MelonLoader;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using FFIII_ScreenReader.Utils;
 using static FFIII_ScreenReader.Utils.TextUtils;
 using MenuManager = Il2CppLast.UI.MenuManager;
 using StatusWindowContentControllerBase = Il2CppSerial.Template.UI.StatusWindowContentControllerBase;
 using OwnedCharacterData = Il2CppLast.Data.User.OwnedCharacterData;
-using UserDataManager = Il2CppLast.Management.UserDataManager;
-using Corps = Il2CppLast.Data.User.Corps;
-using CorpsId = Il2CppLast.Defaine.User.CorpsId;
 using MessageManager = Il2CppLast.Management.MessageManager;
 using MasterManager = Il2CppLast.Data.Master.MasterManager;
 using Job = Il2CppLast.Data.Master.Job;
@@ -255,14 +253,14 @@ namespace FFIII_ScreenReader.Menus
                     int level = parameter.BaseLevel;
                     if (level > 0)
                     {
-                        parts.Add($"Level {level}");
+                        parts.Add(string.Format(ModTextTranslator.T("Level {0}"), level));
                     }
 
                     int currentHp = parameter.currentHP;
                     int maxHp = parameter.ConfirmedMaxHp();
                     if (maxHp > 0)
                     {
-                        parts.Add($"HP {currentHp}/{maxHp}");
+                        parts.Add(string.Format(ModTextTranslator.T("HP {0}/{1}"), currentHp, maxHp));
                     }
                 }
 
@@ -318,32 +316,10 @@ namespace FFIII_ScreenReader.Menus
         }
 
         /// <summary>
-        /// Gets the character's row (Front Row / Back Row) from Corps data.
+        /// Gets the character's localized row (Front Row / Back Row) from Corps data.
         /// </summary>
         private static string GetCharacterRow(OwnedCharacterData characterData)
-        {
-            try
-            {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager == null)
-                    return null;
-
-                var corpsList = userDataManager.GetCorpsListClone();
-                if (corpsList == null)
-                    return null;
-
-                int characterId = characterData.Id;
-                foreach (var corps in corpsList)
-                {
-                    if (corps != null && corps.CharacterId == characterId)
-                    {
-                        return corps.Id == CorpsId.Front ? "Front Row" : "Back Row";
-                    }
-                }
-            }
-            catch { }
-            return null;
-        }
+            => CharacterDataHelper.GetCharacterRow(characterData);
 
         /// <summary>
         /// Read character information from text components.
@@ -459,27 +435,16 @@ namespace FFIII_ScreenReader.Menus
                 // Add level
                 if (!string.IsNullOrEmpty(level))
                 {
-                    if (!string.IsNullOrEmpty(announcement))
-                    {
-                        announcement += ", Level " + level;
-                    }
-                    else
-                    {
-                        announcement = "Level " + level;
-                    }
+                    string levelText = string.Format(ModTextTranslator.T("Level {0}"), level);
+                    announcement = !string.IsNullOrEmpty(announcement) ? $"{announcement}, {levelText}" : levelText;
                 }
 
                 // Add HP
                 if (!string.IsNullOrEmpty(currentHP))
                 {
-                    if (!string.IsNullOrEmpty(maxHP))
-                    {
-                        announcement += $", HP {currentHP}/{maxHP}";
-                    }
-                    else
-                    {
-                        announcement += $", HP {currentHP}";
-                    }
+                    announcement += ", " + (!string.IsNullOrEmpty(maxHP)
+                        ? string.Format(ModTextTranslator.T("HP {0}/{1}"), currentHP, maxHP)
+                        : string.Format(ModTextTranslator.T("HP {0}"), currentHP));
                 }
 
                 // Note: FF3 uses spell charges per level, not MP. MP display removed.

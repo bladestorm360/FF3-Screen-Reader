@@ -27,6 +27,8 @@ namespace FFIII_ScreenReader.Core
         private abstract class MenuItem
         {
             public string Name { get; protected set; }
+            // Read by the I key. A lambda so toggle descriptions follow the current state.
+            public Func<string> DescriptionGetter { get; protected set; } = () => "";
             public abstract string GetValueString();
             public abstract void Adjust(int delta);
             public abstract void Toggle();
@@ -37,11 +39,12 @@ namespace FFIII_ScreenReader.Core
             private readonly Func<bool> getter;
             private readonly Action toggle;
 
-            public ToggleItem(string name, Func<bool> getter, Action toggle)
+            public ToggleItem(string name, Func<bool> getter, Action toggle, Func<string> description)
             {
                 Name = name;
                 this.getter = getter;
                 this.toggle = toggle;
+                DescriptionGetter = description;
             }
 
             public override string GetValueString() => getter() ? T("On") : T("Off");
@@ -54,11 +57,12 @@ namespace FFIII_ScreenReader.Core
             private readonly Func<int> getter;
             private readonly Action<int> setter;
 
-            public VolumeItem(string name, Func<int> getter, Action<int> setter)
+            public VolumeItem(string name, Func<int> getter, Action<int> setter, Func<string> description)
             {
                 Name = name;
                 this.getter = getter;
                 this.setter = setter;
+                DescriptionGetter = description;
             }
 
             public override string GetValueString() => $"{getter()}%";
@@ -84,12 +88,13 @@ namespace FFIII_ScreenReader.Core
             private readonly Func<int> getter;
             private readonly Action<int> setter;
 
-            public EnumItem(string name, string[] options, Func<int> getter, Action<int> setter)
+            public EnumItem(string name, string[] options, Func<int> getter, Action<int> setter, Func<string> description)
             {
                 Name = name;
                 this.options = options;
                 this.getter = getter;
                 this.setter = setter;
+                DescriptionGetter = description;
             }
 
             public override string GetValueString()
@@ -128,10 +133,11 @@ namespace FFIII_ScreenReader.Core
         {
             private readonly Action action;
 
-            public ActionItem(string name, Action action)
+            public ActionItem(string name, Action action, Func<string> description)
             {
                 Name = name;
                 this.action = action;
+                DescriptionGetter = description;
             }
 
             public override string GetValueString() => "";
@@ -153,81 +159,122 @@ namespace FFIII_ScreenReader.Core
                 new SectionHeader(T("Audio Feedback")),
                 new ToggleItem(T("Wall Tones"),
                     () => PreferencesManager.WallTonesEnabled,
-                    () => FFIII_ScreenReaderMod.Instance?.ToggleWallTones()),
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleWallTones(),
+                    () => PreferencesManager.WallTonesEnabled
+                        ? T("On. Directional tones play as you approach walls.")
+                        : T("Off. No directional wall feedback.")),
                 new ToggleItem(T("Footsteps"),
                     () => PreferencesManager.FootstepsEnabled,
-                    () => FFIII_ScreenReaderMod.Instance?.ToggleFootsteps()),
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleFootsteps(),
+                    () => PreferencesManager.FootstepsEnabled
+                        ? T("On. A click plays for each tile you walk.")
+                        : T("Off. No per-tile movement sound.")),
                 new ToggleItem(T("Audio Beacons"),
                     () => PreferencesManager.AudioBeaconsEnabled,
-                    () => FFIII_ScreenReaderMod.Instance?.ToggleAudioBeacons()),
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleAudioBeacons(),
+                    () => PreferencesManager.AudioBeaconsEnabled
+                        ? T("On. A ping sounds toward the selected destination, and the pathfind keys restart it instead of speaking directions.")
+                        : T("Off. The pathfind keys speak turn-by-turn directions.")),
                 new ToggleItem(T("Beacon Destination Announcement"),
                     () => FFIII_ScreenReaderMod.AnnounceOnBeaconRestartEnabled,
-                    () => FFIII_ScreenReaderMod.Instance?.ToggleAnnounceOnBeaconRestart()),
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleAnnounceOnBeaconRestart(),
+                    () => FFIII_ScreenReaderMod.AnnounceOnBeaconRestartEnabled
+                        ? T("On. Restarting the beacon also speaks the destination.")
+                        : T("Off. Restarting the beacon only pings.")),
 
                 // Volume Controls section
                 new SectionHeader(T("Volume Controls")),
                 new VolumeItem(T("Wall Bump Volume"),
                     () => PreferencesManager.WallBumpVolume,
-                    PreferencesManager.SetWallBumpVolume),
+                    PreferencesManager.SetWallBumpVolume,
+                    () => T("Volume of the wall bump sound, 0 to 100 percent.")),
                 new VolumeItem(T("Footstep Volume"),
                     () => PreferencesManager.FootstepVolume,
-                    PreferencesManager.SetFootstepVolume),
+                    PreferencesManager.SetFootstepVolume,
+                    () => T("Volume of the footstep click, 0 to 100 percent.")),
                 new VolumeItem(T("Wall Tone Volume"),
                     () => PreferencesManager.WallToneVolume,
-                    PreferencesManager.SetWallToneVolume),
+                    PreferencesManager.SetWallToneVolume,
+                    () => T("Volume of the directional wall tones, 0 to 100 percent.")),
                 new VolumeItem(T("Beacon Volume"),
                     () => PreferencesManager.BeaconVolume,
-                    PreferencesManager.SetBeaconVolume),
+                    PreferencesManager.SetBeaconVolume,
+                    () => T("Volume of the audio beacon ping, 0 to 100 percent.")),
 
                 // Navigation Filters section
                 new SectionHeader(T("Navigation Filters")),
                 new ToggleItem(T("Pathfinding Filter"),
                     () => PreferencesManager.PathfindingFilterEnabled,
-                    () => FFIII_ScreenReaderMod.Instance?.TogglePathfindingFilter()),
+                    () => FFIII_ScreenReaderMod.Instance?.TogglePathfindingFilter(),
+                    () => PreferencesManager.PathfindingFilterEnabled
+                        ? T("On. Entity cycling lists only entities with a walkable path.")
+                        : T("Off. Every entity is listed, including unreachable ones.")),
                 new ToggleItem(T("Map Exit Filter"),
                     () => PreferencesManager.MapExitFilterEnabled,
-                    () => FFIII_ScreenReaderMod.Instance?.ToggleMapExitFilter()),
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleMapExitFilter(),
+                    () => PreferencesManager.MapExitFilterEnabled
+                        ? T("On. Exits leading to the same map are merged into the closest one.")
+                        : T("Off. Every map exit is listed.")),
                 new ToggleItem(T("Layer Transition Filter"),
                     () => PreferencesManager.ToLayerFilterEnabled,
-                    () => FFIII_ScreenReaderMod.Instance?.ToggleToLayerFilter()),
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleToLayerFilter(),
+                    () => PreferencesManager.ToLayerFilterEnabled
+                        ? T("On. Stairs and ladders between floors are left out of the entity list.")
+                        : T("Off. Stairs and ladders between floors are listed.")),
 
                 // Battle Settings section
                 new SectionHeader(T("Battle Settings")),
                 new EnumItem(T("Enemy HP Display"),
                     new[] { T("Numbers"), T("Percentage"), T("Hidden") },
                     () => PreferencesManager.EnemyHPDisplay,
-                    PreferencesManager.SetEnemyHPDisplay),
+                    PreferencesManager.SetEnemyHPDisplay,
+                    () => T("How enemy HP is read when targeting: numbers, percentage of maximum, or not at all.")),
                 new EnumItem(T("Multi-hit Damage"),
                     new[] { T("Total only"), T("With hit count") },
                     () => PreferencesManager.DamageDisplay,
-                    PreferencesManager.SetDamageDisplay),
+                    PreferencesManager.SetDamageDisplay,
+                    () => T("For attacks that hit several times, optionally say the number of hits before the damage, for example 4x120 damage.")),
 
                 // Battle Results section
                 new SectionHeader(T("Battle Results")),
                 new ToggleItem(T("EXP Counter Sound"),
                     () => PreferencesManager.ExpCounterEnabled,
-                    FFIII_ScreenReaderMod.ToggleExpCounter),
+                    FFIII_ScreenReaderMod.ToggleExpCounter,
+                    () => PreferencesManager.ExpCounterEnabled
+                        ? T("On. A rapid tick plays while the EXP bar fills after battle.")
+                        : T("Off. The EXP bar fills silently after battle.")),
                 new VolumeItem(T("EXP Counter Volume"),
                     () => PreferencesManager.ExpCounterVolume,
-                    PreferencesManager.SetExpCounterVolume),
+                    PreferencesManager.SetExpCounterVolume,
+                    () => T("Volume of the EXP counter tick, 0 to 100 percent.")),
 
                 // Announcements section
                 new SectionHeader(T("Announcements")),
                 new ToggleItem(T("Auto Detail"),
                     () => PreferencesManager.AutoDetailEnabled,
-                    () => FFIII_ScreenReaderMod.Instance?.ToggleAutoDetail()),
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleAutoDetail(),
+                    () => PreferencesManager.AutoDetailEnabled
+                        ? T("On. Descriptions and stats are read automatically for items, spells, equipment and shop goods.")
+                        : T("Off. Only names are read; press I for the description.")),
                 new ToggleItem(T("Menu Position Announcements"),
                     () => PreferencesManager.MenuPositionAnnouncementsEnabled,
-                    () => FFIII_ScreenReaderMod.Instance?.ToggleMenuPositionAnnouncements()),
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleMenuPositionAnnouncements(),
+                    () => PreferencesManager.MenuPositionAnnouncementsEnabled
+                        ? T("On. List entries include their position, for example 3 of 12.")
+                        : T("Off. List entries are read without their position.")),
 
                 // Controller Settings section
                 new SectionHeader(T("Controller Settings")),
                 new ToggleItem(T("Stick Click Normalization"),
                     () => PreferencesManager.StickClickNormalization,
-                    () => FFIII_ScreenReaderMod.Instance?.ToggleStickClickNormalization()),
+                    () => FFIII_ScreenReaderMod.Instance?.ToggleStickClickNormalization(),
+                    () => PreferencesManager.StickClickNormalization
+                        ? T("On. L3 and R3 go to the game (auto-dash and encounters); their mod functions move to mod mode.")
+                        : T("Off. L3 toggles audio beacons and R3 the pathfinding filter; the game does not receive them.")),
 
                 // Close Menu action
-                new ActionItem(T("Close Menu"), Close)
+                new ActionItem(T("Close Menu"), Close,
+                    () => T("Closes the mod menu and returns to the game."))
             };
 
             MelonLogger.Msg("[ModMenu] Initialized with " + items.Count + " items");
@@ -333,7 +380,22 @@ namespace FFIII_ScreenReader.Core
                 return true;
             }
 
+            // I - read the current item's description
+            if (GamepadManager.IsKeyCodePressed(KeyCode.I))
+            {
+                AnnounceCurrentItemDescription();
+                return true;
+            }
+
             return true; // Consume all input while menu is open
+        }
+
+        private static void AnnounceCurrentItemDescription()
+        {
+            if (currentIndex < 0 || currentIndex >= items.Count) return;
+
+            string desc = items[currentIndex].DescriptionGetter?.Invoke();
+            FFIII_ScreenReaderMod.SpeakText(string.IsNullOrWhiteSpace(desc) ? T("No description") : desc, interrupt: true);
         }
 
         public static void NavigateNext()

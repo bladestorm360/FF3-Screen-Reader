@@ -10,14 +10,11 @@ namespace FFIII_ScreenReader.Utils
         // Battle
         public const string BATTLE_MESSAGE = "Battle.Message";
         public const string BATTLE_ACTION = "BattleAction";
-        public const string BATTLE_COMMAND_CURSOR = "BattleCommand.Cursor";
         public const string BATTLE_TARGET_PLAYER = "BattleTarget.Player";
         public const string BATTLE_TARGET_ENEMY = "BattleTarget.Enemy";
         public const string BATTLE_RESULT_DATA = "BattleResult.Data";
 
         // Config menu
-        public const string CONFIG_TEXT = "ConfigMenu.Text";
-        public const string CONFIG_SETTING = "ConfigMenu.Setting";
         public const string CONFIG_ARROW = "ConfigMenu.Arrow";
         public const string CONFIG_SLIDER = "ConfigMenu.Slider";
         public const string CONFIG_SLIDER_CONTROLLER = "ConfigMenu.SliderController";
@@ -36,10 +33,6 @@ namespace FFIII_ScreenReader.Utils
 
         // Magic
         public const string MAGIC_TARGET = "MagicTarget";
-
-        // Shop
-        public const string SHOP_ITEM = "Shop.Item";
-        public const string SHOP_QUANTITY = "Shop.Quantity";
 
         // Extras: Gallery
         public const string GALLERY_LIST_ENTRY = "Gallery.ListEntry";

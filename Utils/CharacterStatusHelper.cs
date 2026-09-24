@@ -27,37 +27,11 @@ namespace FFIII_ScreenReader.Utils
             {
                 int currentHP = parameter.CurrentHP;
                 int maxHP = parameter.ConfirmedMaxHp();
-                return $"HP {currentHP}/{maxHP}";
+                return string.Format(ModTextTranslator.T("HP {0}/{1}"), currentHP, maxHP);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"CharacterStatusHelper.GetHPString error: {ex.Message}");
-                return string.Empty;
-            }
-        }
-
-        /// <summary>
-        /// Gets the HP and MP string for a character parameter.
-        /// </summary>
-        /// <param name="parameter">The character's parameter data</param>
-        /// <returns>Formatted string like "HP 100/200, MP 50/100" or empty string if parameter is null</returns>
-        public static string GetVitalsString(CharacterParameterBase parameter)
-        {
-            if (parameter == null)
-                return string.Empty;
-
-            try
-            {
-                int currentHP = parameter.CurrentHP;
-                int maxHP = parameter.ConfirmedMaxHp();
-                int currentMP = parameter.CurrentMP;
-                int maxMP = parameter.ConfirmedMaxMp();
-
-                return $"HP {currentHP}/{maxHP}, MP {currentMP}/{maxMP}";
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"CharacterStatusHelper.GetVitalsString error: {ex.Message}");
                 return string.Empty;
             }
         }

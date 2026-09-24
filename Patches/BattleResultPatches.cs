@@ -67,6 +67,33 @@ namespace FFIII_ScreenReader.Patches
         private static HashSet<string> announcedLevelUps = new HashSet<string>();
 
         /// <summary>
+        /// Manual registrations (attribute patches crash on IL2CPP) of the EXP-tone stop safety nets:
+        /// the result phases that follow the points tally, and the results screen closing.
+        /// Every target's RVA is unique in dump.cs.
+        /// </summary>
+        public static void ApplyPatches(HarmonyLib.Harmony harmony)
+        {
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_KeyInput), "ShowGetAbilitysInit",
+                typeof(BattleResultPatches), nameof(StopExpCounter_Postfix), "[BattleResult]");
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_KeyInput), "ShowLevelUpAbilitysInit",
+                typeof(BattleResultPatches), nameof(StopExpCounter_Postfix), "[BattleResult]");
+            // Touch: the phase directly after points is the skill/job level list (RVA 0x48D6B0)
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_Touch), "ShowSkillLevelsInit",
+                typeof(BattleResultPatches), nameof(StopExpCounter_Postfix), "[BattleResult]");
+            // Final catch-all: the KeyInput results screen closing (RVA 0x61AEC0, called by
+            // ResultUIManager.Close). Replaces the EndWaitInit hook, whose body (0x53E420) is shared
+            // with Touch WarehousePopupController.Close.
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_KeyInput), "Close",
+                typeof(BattleResultPatches), nameof(StopExpCounter_Postfix), "[BattleResult]");
+        }
+
+        public static void StopExpCounter_Postfix()
+        {
+            try { BattleResultState.StopExpCounterIfPlaying(); }
+            catch (Exception ex) { MelonLogger.Warning($"[BattleResult] Error in ability-phase postfix: {ex.Message}"); }
+        }
+
+        /// <summary>
         /// Reset tracking when a new battle result starts
         /// </summary>
         public static void ResetTracking(BattleResultData data)
@@ -78,6 +105,18 @@ namespace FFIII_ScreenReader.Patches
 
             // Then track for deduplication
             AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_DATA, data);
+        }
+
+        /// <summary>
+        /// Reset result tracking at battle start, and hard-stop any EXP tone left over from a previous,
+        /// abnormally-ended result screen.
+        /// </summary>
+        public static void ResetState()
+        {
+            announcedPoints = false;
+            announcedItems = false;
+            announcedLevelUps.Clear();
+            BattleResultState.StopExpCounterIfPlaying();
         }
 
         /// <summary>
@@ -142,7 +181,8 @@ namespace FFIII_ScreenReader.Patches
         {
             if (data == null || announcedItems) return;
 
-            ResetTracking(data);
+            // No ResetTracking here: that would clear announcedLevelUps mid-result and let a later
+            // level-up hook speak the same level-up twice.
             announcedItems = true;
 
             var itemList = data.ItemList;
@@ -255,12 +295,14 @@ namespace FFIII_ScreenReader.Patches
             string charName = afterData.Name;
             if (string.IsNullOrEmpty(charName)) return;
 
+            // FF3's job level is proficiency: the result data flags it as IsJobProficiencyLevelUp,
+            // so check that as well as the generic IsJobLevelUp.
+            if (!charResult.IsJobLevelUp && !charResult.IsJobProficiencyLevelUp) return;
+
             // Check if already announced this character's job level up
             string key = $"{charName}_joblevelup";
             if (announcedLevelUps.Contains(key)) return;
             announcedLevelUps.Add(key);
-
-            if (!charResult.IsJobLevelUp) return;
 
             // Try to get job level from OwnedJob
             int jobLevel = 0;
@@ -296,54 +338,77 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Get list of stat gains between before and after parameters
+        /// Get list of stat gains between before and after parameters.
+        /// Prefers the Confirmed*() methods (effective values, as FF1 does): comparing the Base* fields
+        /// only ever produced an HP gain. Base* stays as a fallback in case a Confirmed*() call throws.
         /// </summary>
         private static List<string> GetStatGains(CharacterParameterBase before, CharacterParameterBase after)
         {
             var gains = new List<string>();
 
-            int hpGain = after.BaseMaxHp - before.BaseMaxHp;
-            if (hpGain > 0) gains.Add(string.Format(T("HP +{0}"), hpGain));
-
-            int powerGain = after.BasePower - before.BasePower;
-            if (powerGain > 0) gains.Add(string.Format(T("Strength +{0}"), powerGain));
-
-            int vitalityGain = after.BaseVitality - before.BaseVitality;
-            if (vitalityGain > 0) gains.Add(string.Format(T("Vitality +{0}"), vitalityGain));
-
-            int agilityGain = after.BaseAgility - before.BaseAgility;
-            if (agilityGain > 0) gains.Add(string.Format(T("Agility +{0}"), agilityGain));
-
-            int intelligenceGain = after.BaseIntelligence - before.BaseIntelligence;
-            if (intelligenceGain > 0) gains.Add(string.Format(T("Intelligence +{0}"), intelligenceGain));
-
-            int spiritGain = after.BaseSpirit - before.BaseSpirit;
-            if (spiritGain > 0) gains.Add(string.Format(T("Spirit +{0}"), spiritGain));
+            AddGain(gains, T("HP +{0}"), () => before.ConfirmedMaxHp(), () => before.BaseMaxHp,
+                () => after.ConfirmedMaxHp(), () => after.BaseMaxHp);
+            AddGain(gains, T("Strength +{0}"), () => before.ConfirmedPower(), () => before.BasePower,
+                () => after.ConfirmedPower(), () => after.BasePower);
+            AddGain(gains, T("Vitality +{0}"), () => before.ConfirmedVitality(), () => before.BaseVitality,
+                () => after.ConfirmedVitality(), () => after.BaseVitality);
+            AddGain(gains, T("Agility +{0}"), () => before.ConfirmedAgility(), () => before.BaseAgility,
+                () => after.ConfirmedAgility(), () => after.BaseAgility);
+            AddGain(gains, T("Intelligence +{0}"), () => before.ConfirmedIntelligence(), () => before.BaseIntelligence,
+                () => after.ConfirmedIntelligence(), () => after.BaseIntelligence);
+            AddGain(gains, T("Spirit +{0}"), () => before.ConfirmedSpirit(), () => before.BaseSpirit,
+                () => after.ConfirmedSpirit(), () => after.BaseSpirit);
 
             return gains;
         }
 
         /// <summary>
-        /// Process all level ups and job level ups for all characters in the result data.
-        /// Shared helper used by multiple patch classes.
+        /// Adds "{label} +N" when the stat rose, reading each side via Confirmed*() with a Base* fallback.
         /// </summary>
-        public static void ProcessAllLevelUps(BattleResultData data)
+        private static void AddGain(List<string> gains, string format,
+            Func<int> beforeConfirmed, Func<int> beforeBase, Func<int> afterConfirmed, Func<int> afterBase)
+        {
+            int before = ReadStat(beforeConfirmed, beforeBase);
+            int after = ReadStat(afterConfirmed, afterBase);
+            if (after > before)
+                gains.Add(string.Format(format, after - before));
+        }
+
+        private static int ReadStat(Func<int> confirmed, Func<int> fallback)
+        {
+            try { return confirmed(); }
+            catch
+            {
+                try { return fallback(); }
+                catch { return 0; }
+            }
+        }
+
+        /// <summary>
+        /// Announce character level ups (with stat gains) for all characters in the result data.
+        /// </summary>
+        public static void AnnounceAllLevelUps(BattleResultData data)
         {
             if (data?.CharacterList == null) return;
 
             foreach (var charResult in data.CharacterList)
             {
-                if (charResult == null) continue;
-
-                if (charResult.IsLevelUp)
-                {
+                if (charResult != null && charResult.IsLevelUp)
                     AnnounceLevelUp(charResult);
-                }
+            }
+        }
 
-                if (charResult.IsJobLevelUp)
-                {
+        /// <summary>
+        /// Announce job level ups for all characters in the result data.
+        /// </summary>
+        public static void AnnounceAllJobLevelUps(BattleResultData data)
+        {
+            if (data?.CharacterList == null) return;
+
+            foreach (var charResult in data.CharacterList)
+            {
+                if (charResult != null)
                     AnnounceJobLevelUp(charResult);
-                }
             }
         }
 
@@ -490,6 +555,9 @@ namespace FFIII_ScreenReader.Patches
                 if (data != null)
                 {
                     BattleResultPatches.AnnouncePointsGained(data);
+                    // Job level-ups are shown on the points screen: ShowPointsInit inlines
+                    // ResultSkillController.ShowJobProficiencyLevelUp, which has no callers of its own.
+                    BattleResultPatches.AnnounceAllJobLevelUps(data);
                     BattleResultPatches.StartExpCounterIfEnabled(
                         __instance.Pointer, data, BattleResultPatches.CHARLIST_OFFSET_KEYINPUT);
                 }
@@ -516,6 +584,8 @@ namespace FFIII_ScreenReader.Patches
                 if (data != null)
                 {
                     BattleResultPatches.AnnouncePointsGained(data);
+                    // Same inlining as KeyInput: the Touch ShowJobProficiencyLevelUp has no callers either.
+                    BattleResultPatches.AnnounceAllJobLevelUps(data);
                     BattleResultPatches.StartExpCounterIfEnabled(
                         __instance.Pointer, data, BattleResultPatches.CHARLIST_OFFSET_TOUCH);
                 }
@@ -593,7 +663,7 @@ namespace FFIII_ScreenReader.Patches
             {
                 // EXP tally is over once we advance to the status-up phase.
                 BattleResultState.StopExpCounterIfPlaying();
-                BattleResultPatches.ProcessAllLevelUps(__instance.targetData);
+                BattleResultPatches.AnnounceAllLevelUps(__instance.targetData);
             }
             catch (Exception ex)
             {
@@ -612,7 +682,7 @@ namespace FFIII_ScreenReader.Patches
             {
                 // EXP tally is over once we advance to the status-up phase.
                 BattleResultState.StopExpCounterIfPlaying();
-                BattleResultPatches.ProcessAllLevelUps(__instance.targetData);
+                BattleResultPatches.AnnounceAllLevelUps(__instance.targetData);
             }
             catch (Exception ex)
             {
@@ -634,7 +704,7 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                BattleResultPatches.ProcessAllLevelUps(data);
+                BattleResultPatches.AnnounceAllLevelUps(data);
             }
             catch (Exception ex)
             {
@@ -651,7 +721,7 @@ namespace FFIII_ScreenReader.Patches
         {
             try
             {
-                BattleResultPatches.ProcessAllLevelUps(data);
+                BattleResultPatches.AnnounceAllLevelUps(data);
             }
             catch (Exception ex)
             {
@@ -659,6 +729,11 @@ namespace FFIII_ScreenReader.Patches
             }
         }
     }
+
+    // Job level ups: deliberately NOT hooked on ResultSkillController.ShowJobProficiencyLevelUp.
+    // Neither variant (KeyInput 0x61EF70, Touch 0x490140) has a caller: its body is inlined into
+    // ResultMenuController.ShowPointsInit, so a hook there never fires. The ShowPointsInit postfixes
+    // above announce job level-ups instead.
 
     // ========================================
     // Fallback: Patch Show method as backup
@@ -709,39 +784,13 @@ namespace FFIII_ScreenReader.Patches
     // EXP counter STOP safety nets: subsequent result phases
     // ========================================
 
-    // Touch's phase directly after points is the skill/job level list — stop there too.
-    [HarmonyPatch(typeof(ResultMenuController_Touch), "ShowSkillLevelsInit")]
-    internal static class ResultMenuController_Touch_ShowSkillLevelsInit_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix()
-        {
-            try { BattleResultState.StopExpCounterIfPlaying(); }
-            catch (Exception ex) { MelonLogger.Warning($"Error in ShowSkillLevelsInit patch (Touch): {ex.Message}"); }
-        }
-    }
-
-    // EndWaitInit fires when the results sequence closes — guaranteed final catch-all so the
-    // tone can never be left stuck even if completion detection and the other phases are missed.
-    [HarmonyPatch(typeof(ResultMenuController_KeyInput), "EndWaitInit")]
-    internal static class ResultMenuController_KeyInput_EndWaitInit_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix()
-        {
-            try { BattleResultState.StopExpCounterIfPlaying(); }
-            catch (Exception ex) { MelonLogger.Warning($"Error in EndWaitInit patch (KeyInput): {ex.Message}"); }
-        }
-    }
-
-    [HarmonyPatch(typeof(ResultMenuController_Touch), "EndWaitInit")]
-    internal static class ResultMenuController_Touch_EndWaitInit_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix()
-        {
-            try { BattleResultState.StopExpCounterIfPlaying(); }
-            catch (Exception ex) { MelonLogger.Warning($"Error in EndWaitInit patch (Touch): {ex.Message}"); }
-        }
-    }
+    // KeyInput's ability phases (ShowGetAbilitysInit / ShowLevelUpAbilitysInit), Touch's
+    // ShowSkillLevelsInit and the KeyInput results-screen Close (the final catch-all) are patched
+    // manually in BattleResultPatches.ApplyPatches.
+    //
+    // KeyInput EndWaitInit is no longer patched: its body (RVA 0x53E420, SafeActiveSet(field, false))
+    // is shared with Touch WarehousePopupController.Close, so a detour there runs for both.
+    // Touch EndWaitInit is deliberately NOT patched either: its body (RVA 0x26D8F0) is the shared empty stub
+    // behind ~2,500 methods (one is called inside BattleCommandSelectController.SetCommandData), so a
+    // detour there runs for all of them. PC uses the KeyInput controller above.
 }

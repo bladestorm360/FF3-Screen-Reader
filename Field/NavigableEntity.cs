@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 using FieldEntity = Il2CppLast.Entity.Field.FieldEntity;
 using FieldTresureBox = Il2CppLast.Entity.Field.FieldTresureBox;
 
@@ -154,6 +155,31 @@ namespace FFIII_ScreenReader.Field
         {
             return DirectionHelper.FormatSteps(distance);
         }
+
+        /// <summary>
+        /// The entity's name as spoken (fallback names localized).
+        /// </summary>
+        public virtual string SpokenName => LocalizeFallbackName(Name);
+
+        /// <summary>
+        /// Spoken form of an entity name. The scanner's English fallback names (used when the game gives
+        /// no name) stay the internal value, so selection matching and filters are unchanged; only the
+        /// announcement is localized. Any other name (the game's own, or a translated label) is returned
+        /// as is.
+        /// </summary>
+        protected static string LocalizeFallbackName(string name)
+        {
+            switch (name)
+            {
+                case "Treasure Chest": return T("Treasure Chest");
+                case "Save Point": return T("Save Point");
+                case "NPC": return T("NPC");
+                case "Exit": return T("Exit");
+                case "Interactive Object": return T("Interactive Object");
+                case "Vehicle": return T("Vehicle");
+                default: return name;
+            }
+        }
     }
 
     /// <summary>
@@ -193,13 +219,12 @@ namespace FFIII_ScreenReader.Field
 
         protected override string GetDisplayName()
         {
-            string status = IsOpened ? "Opened" : "Unopened";
-            return $"{status} {Name}";
+            return string.Format(IsOpened ? T("Opened {0}") : T("Unopened {0}"), LocalizeFallbackName(Name));
         }
 
         protected override string GetEntityTypeName()
         {
-            return "Treasure Chest";
+            return T("Treasure Chest");
         }
     }
 
@@ -245,16 +270,16 @@ namespace FFIII_ScreenReader.Field
 
             if (IsShop)
             {
-                details.Add("shop");
+                details.Add(T("shop"));
             }
 
             string detailStr = details.Count > 0 ? $" ({string.Join(", ", details)})" : "";
-            return $"{Name}{detailStr}";
+            return $"{LocalizeFallbackName(Name)}{detailStr}";
         }
 
         protected override string GetEntityTypeName()
         {
-            return "NPC";
+            return T("NPC");
         }
     }
 
@@ -296,14 +321,16 @@ namespace FFIII_ScreenReader.Field
 
         protected override string GetDisplayName()
         {
+            // Separator restored to "→" (it had been corrupted to U+FFFD + "?")
+            string name = LocalizeFallbackName(Name);
             return !string.IsNullOrEmpty(DestinationName)
-                ? $"{Name} �?{DestinationName}"
-                : Name;
+                ? $"{name} → {DestinationName}"
+                : name;
         }
 
         protected override string GetEntityTypeName()
         {
-            return "Map Exit";
+            return T("Map Exit");
         }
     }
 
@@ -331,12 +358,12 @@ namespace FFIII_ScreenReader.Field
 
         protected override string GetDisplayName()
         {
-            return Name;
+            return LocalizeFallbackName(Name);
         }
 
         protected override string GetEntityTypeName()
         {
-            return "Save Point";
+            return T("Save Point");
         }
     }
 
@@ -371,12 +398,19 @@ namespace FFIII_ScreenReader.Field
 
         protected override string GetDisplayName()
         {
-            return Name;
+            return LocalizeFallbackName(Name);
         }
 
         protected override string GetEntityTypeName()
         {
-            return eventTypeName;
+            // The raw English type stays the internal key (ToLayerFilter matches "ToLayer")
+            switch (eventTypeName)
+            {
+                case "Event": return T("Event");
+                case "Interactive": return T("Interactive");
+                case "Interactive Object": return T("Interactive Object");
+                default: return eventTypeName;
+            }
         }
     }
 
@@ -409,14 +443,34 @@ namespace FFIII_ScreenReader.Field
         public override int Priority => 10;
         public override bool BlocksPathing => false;
 
+        public override string SpokenName => GetLocalizedVehicleName(TransportationId);
+
         protected override string GetDisplayName()
         {
-            return GetVehicleName(TransportationId);
+            return GetLocalizedVehicleName(TransportationId);
         }
 
         protected override string GetEntityTypeName()
         {
-            return "Vehicle";
+            return T("Vehicle");
+        }
+
+        /// <summary>Spoken vehicle name for a TransportationType (GetVehicleName is the internal key).</summary>
+        public static string GetLocalizedVehicleName(int id)
+        {
+            switch (id)
+            {
+                case 1: return T("Player");
+                case 2: return T("Ship");
+                case 3:
+                case 7:
+                case 8: return T("Airship");
+                case 6: return T("Submarine");
+                case 0:
+                case 4:
+                case 5: return T("Vehicle");
+                default: return string.Format(T("Vehicle {0}"), id);
+            }
         }
 
         public static string GetVehicleName(int id)

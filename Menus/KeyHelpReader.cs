@@ -10,15 +10,85 @@ using static FFIII_ScreenReader.Utils.ModTextTranslator;
 namespace FFIII_ScreenReader.Menus
 {
     /// <summary>
-    /// Reads the visible key help tooltips displayed on screen (button icons + action labels).
-    /// Activated by Shift+I on any screen.
-    /// Uses GameObjectCache + transform navigation + GetComponentsInChildren&lt;Text&gt;()
-    /// to avoid IL2CPP Cast constraint errors from array-based access on game-specific types.
+    /// Reads the controls display. Two independent features:
+    ///   • Shift+I — reads the on-screen control-hint bar (the persistent KeyHelpController) at once.
+    ///     Uses GameObjectCache + transform navigation + GetComponentsInChildren&lt;Text&gt;()
+    ///     to avoid IL2CPP Cast constraint errors from array-based access on game-specific types.
+    ///   • Arrows/WASD/D-pad — step the config "Gamepad/Keyboard Controls" pop-up one entry at a time
+    ///     via a NavigationBuffer, gated to KeyContext.KeyHelp. The buffer is armed ONLY from that pop-up
+    ///     (ConfigKeysSettingController's Help state, fed by ConfigMenuPatches), never from the hint bar,
+    ///     so no other menu's arrows are hijacked.
     /// </summary>
     public static class KeyHelpReader
     {
         // KeyHelpController.view (KeyHelpView) — private field, no public accessor
         private const int OFFSET_VIEW = 0x18;
+
+        private static NavigationBuffer buffer = null;
+
+        // The controls pop-up owner validates the screen is still shown (cheap, no scene scan), so a
+        // missed close can't leave KeyContext.KeyHelp stuck.
+        private static bool helpActive = false;
+        private static ConfigKeysSettingController helpOwner = null;
+
+        /// <summary>
+        /// Called by ConfigMenuPatches when the Gamepad/Keyboard Controls pop-up opens, with the
+        /// rendered entry strings (action + binding). Builds the buffer and reads the first entry.
+        /// </summary>
+        public static void OpenControlsHelp(ConfigKeysSettingController owner, List<string> entries)
+        {
+            if (entries == null || entries.Count == 0)
+            {
+                CloseControlsHelp();
+                return;
+            }
+
+            var funcs = new List<Func<string>>(entries.Count);
+            foreach (var entry in entries) { var s = entry; funcs.Add(() => s); }
+            buffer = new NavigationBuffer(funcs);
+            helpOwner = owner;
+            helpActive = true;
+            SpeakEntry(buffer.Current());
+        }
+
+        /// <summary>Called when the pop-up returns to the controls list or the screen closes.</summary>
+        public static void CloseControlsHelp()
+        {
+            helpActive = false;
+            helpOwner = null;
+            buffer = null;
+        }
+
+        /// <summary>True while the controls pop-up is on screen — drives KeyContext.KeyHelp.</summary>
+        public static bool IsScreenActive
+        {
+            get
+            {
+                try
+                {
+                    if (!helpActive) return false;
+                    if (helpOwner == null || helpOwner.gameObject == null || !helpOwner.gameObject.activeInHierarchy)
+                    {
+                        CloseControlsHelp();
+                        return false;
+                    }
+                    return true;
+                }
+                catch { CloseControlsHelp(); return false; }
+            }
+        }
+
+        public static void NavigateNext() => SpeakEntry(buffer?.Next());
+        public static void NavigatePrevious() => SpeakEntry(buffer?.Previous());
+        public static void JumpToTop() => SpeakEntry(buffer?.JumpTop());
+        public static void JumpToBottom() => SpeakEntry(buffer?.JumpBottom());
+
+        private static void SpeakEntry(string s)
+        {
+            if (string.IsNullOrEmpty(s) || buffer == null) return;
+            var (index, count) = buffer.CurrentGroupPosition();
+            FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(s, index, count), interrupt: true);
+        }
 
         /// <summary>
         /// Public entry point — reads all visible key help controls and speaks them.

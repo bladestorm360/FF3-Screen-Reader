@@ -16,7 +16,7 @@ namespace FFIII_ScreenReader.Utils
         /// Gets the row position (Front/Back) for a character.
         /// </summary>
         /// <param name="characterData">The character to check</param>
-        /// <returns>"Front Row" or "Back Row", or null if unable to determine</returns>
+        /// <returns>Localized "Front Row" or "Back Row", or null if unable to determine</returns>
         public static string GetCharacterRow(OwnedCharacterData characterData)
         {
             if (characterData == null)
@@ -38,7 +38,7 @@ namespace FFIII_ScreenReader.Utils
                 {
                     if (corps != null && corps.CharacterId == characterId)
                     {
-                        return corps.Id == CorpsId.Front ? "Front Row" : "Back Row";
+                        return corps.Id == CorpsId.Front ? ModTextTranslator.T("Front Row") : ModTextTranslator.T("Back Row");
                     }
                 }
             }

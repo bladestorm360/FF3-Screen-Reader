@@ -46,7 +46,13 @@ var value = obj.TryCast<TargetType>().Property;
 | `MoveStateHelper` | Utils/ | Vehicle/movement state |
 | `GameObjectCache` | Utils/ | Component caching via `GetOrFind<T>()` (replaces `FindObjectOfType`) |
 | `CoroutineManager` | Utils/ | Frame-delayed operations |
-| `SoundPlayer` | Utils/ | Windows waveOut API, 4-channel concurrent playback |
+| `SoundPlayer` | Utils/ | Playback facade over `AudioEngine` (SDL3 audio streams) and `ToneGenerator` |
+| `ModTextTranslator` | Utils/ | `T(key)`: mod strings from embedded `mod_text.json` in the game's language, English fallback |
+| `MenuPosition` | Utils/ | `Format(text, index, count)` appends "(X of Y)" when position announcements are on |
+| `BattleStateHelper` | Patches/BattleStatePatches.cs | Single in-battle flag: `OnBattleStart`, `TryClearOnBattleEnd`, `IsInBattle` |
+| `NavigationBuffer` | Core/ | Virtual list with groups (status screen, bestiary entry, controls pop-up): next/prev, group jumps, top/bottom |
+| `UsableByAnnouncer` | Menus/ | U key: unlocked jobs that can equip the focused equipment in the current context |
+| `GameToggleAnnouncer` | Patches/ | Speaks walk/run and encounter state from the game's own setters (F1/F3/R3/L3, any input) |
 | `EntityTranslator` | Utils/ | Japanese→English entity names via JSON dictionary |
 | `MenuStateRegistry` | Utils/ | Centralized menu state tracking; `SetActiveExclusive()` |
 | `MenuStateHelper` | Utils/ | Boilerplate reduction for 15 state classes |
@@ -78,6 +84,22 @@ State<T>.Tag: 0x10
 ShopTradeWindowController.view: 0x30
 ShopTradeWindowController.selectedCount: 0x3C
 ShopTradeWindowView.totarlPriceText: 0x70
+ShopListMainContentController (KeyInput).selectCursor: 0x48, productContentList: 0x68
+```
+
+### Battle Target / Items
+```
+BattleTargetSelectController.playerDataList: 0x30, enemyDataList: 0x38
+BattleTargetSelectController.TargetPlayerList: 0x98, TargetEnamyList: 0xA0
+BattleTargetSelectController.selectCursor: 0xD0, stateMachine: 0xD8 (1=Players, 3=Enemys)
+BattleItemInfomationController.displayDataList: 0xE0
+```
+
+### Title / Config
+```
+TitleWindowController.view: 0x48, TitleWindowView.startText: 0x30
+TitleMenuCommandController.activeContents: 0x28
+KeyInput ConfigController.detailsController: 0x48 (read by pointer: cheatSettingsController has the same type)
 ```
 
 ### Magic
@@ -221,20 +243,29 @@ SelectAbilityTarget=4, SelectEquipment=5, ConfirmationBuyItem=6
 | Items | `ItemListController` | `SelectContent(...)` |
 | Equipment | `EquipContentListController` | `SelectContent(...)` |
 | Job | `JobChangeWindowController` | `UpdateJobInfo(...)` |
-| Shop Items | `ShopListItemContentController` | `SetFocus(bool)` |
-| Shop Quantity | `ShopTradeWindowController` | `UpdateCotroller(bool)` |
+| Field main menu | `MainMenuController` | `Show`, `InitNone`; `ItemWindowController.CommandSelectInit`, `EquipmentWindowController.CommandInit`, `AbilityWindowController.CommandInit` (read focused command on entry) |
+| Title menu | `TitleWindowController` | `InitSelect`, `InitializeOption`, `InitializeExtra` |
+| Save list | `SaveListController` | `SetActive(bool)` |
+| Shop | `ShopController` | `InitSelectCommand`, `Close`; `ShopCommandMenuController.SetCursor`; `ShopInfoController.SetDescription` (list focus) |
+| Shop Quantity | `ShopTradeWindowController` | `Show`, `AddCount`, `TakeCount` (each call is one key press) |
 | Magic | `AbilityContentListController` | `SetCursor`, state machine |
 | Magic Target | `AbilityUseContentListController` | `SetCursor(Cursor)` |
-| Item Target | `ItemUseController` | `SelectContent(...)` |
+| Item Target | `ItemUseController` | `SelectContent(...)`; `ItemWindowController.TargetSelectInit` |
+| Config row | `KeyInput.ConfigActualDetailsControllerBase` | `SelectCommand` (focused row + position); `OptionController.ShowConfig` / `InitSelectLanguage` (first row on open) |
+| Controls pop-up | `ConfigKeysSettingController` | `GamePadHelpInit` / `KeyboardHelpInit` (build buffer), `*SelectInit` / `Close` (clear) |
 
 ### Battle
 | Feature | Controller | Method |
 |---------|------------|--------|
-| Commands | `BattleCommandSelectController` | `SetCursor(int)` |
-| Targets | `BattleTargetSelectController` | `OnChangeTarget` |
+| Battle state | `BattleController` | `EndWinFadeOutCallback`, `EndLoseFadeOutCallback`, `EndEscapeFadeOut`, `EndFadeOutCallback` (postfix), `Exit(bool)` (prefix) |
+| Commands / turn | `BattleCommandSelectController` | `SetCursor(int)`; "{0}'s turn" once per turn window |
+| Targets | `BattleTargetSelectController` | `EnemysInit`, `PlayerInit` (bounded initial read), `SelectContent` |
+| Start messages | `BattleController.StartPreeMptiveMes`; KeyInput `SetMessage`, Touch `SetSystemMessage` / `SetCommandMessage` | action names filtered via `LastActionName` |
+| System messages | `BattleUtility.SetSystemMessageAtKey`, `SystemMessageView/Controller/Manager.SetMessage` | `GlobalBattleMessageTracker` |
 | Items | `BattleItemInfomationController` | `SelectContent(...)` |
 | Magic | `BattleFrequencyAbilityInfomationController` | `SelectContent(...)` |
-| Results | `BattleResultProvider` | `Genelate()` |
+| Results | `ResultMenuController` (KeyInput/Touch) | `ShowPointsInit` (points + job level-ups), `ShowGetItemsInit`, `ShowStatusUpInit`; KeyInput only: `ShowGetAbilitysInit`, `ShowLevelUpAbilitysInit`, `Close` (EXP-tone catch-all, replaces the shared `EndWaitInit`); Touch only: `ShowSkillLevelsInit` (all manual) |
+| Level-ups | `ResultSkillController` (KeyInput/Touch) | `ShowLevelUp`. `ShowJobProficiencyLevelUp` is not hooked: no callers, its body is inlined into `ShowPointsInit` |
 
 ### Character Data
 ```csharp
@@ -280,7 +311,19 @@ var controller = GameObjectCache.GetOrFind<SomeController>();
 Patch base `Popup.Open()`, use `TryCast<T>()` for type (GetType().Name returns "Popup" in IL2CPP).
 
 ### Battle State Clearing
-`BattleResultPatches.ClearAllBattleMenuFlags()` at victory. Submenus validate `BattleCommandSelectController` state machine.
+`BattleResultPatches.ClearAllBattleMenuFlags()` at victory. Submenus validate `BattleCommandSelectController` state machine. `BattleStateHelper` is the only in-battle flag: set by the battle-start hooks, cleared by the `BattleController` fade-out callbacks / `Exit(bool)`, the title menu, a non-battle scene load, and Tab (opening the main menu proves the battle ended) — Tab only when `FindObjectOfType<BattleController>()` finds no live battle, since Tab is also pressed mid-battle.
+
+### Language-Independent Battle Filtering
+Never match English text. Action messages are dropped by comparing against `ParameterActFunctionManagment_CreateActFunction_Patch.LastActionName` (the action already announced as "Actor: Action"), deferred one frame so the comparison sees the current action.
+
+### State-Entry Hooks + Bounded Waits (no per-frame patches)
+Screens are read from their `*Init` / `Show` / `SetActive(true)` entry methods. When the UI is not populated yet in the postfix, a managed coroutine retries a few times (`WaitForSeconds`, hard cap) and stops as soon as it reads something — e.g. battle target initial read, `MenuTextDiscovery.WaitAndReadCursor`. The title "Press any button" no longer waits: it is read one frame after the game's own `SystemIndicator.Hide` call that precedes the prompt (see "Open-issues pass (2026-09-23, session 2)").
+
+### Double-Read Prevention
+Reset the menu's dedup at its Init hook; popups with their own focus reader set `HasOwnFocusReader` so the generic cursor path stays quiet; generation counters (`reannounceGen`, `initialReadGen` in `BattleCommandPatches`) cancel a deferred read when a newer event arrives; target state entry resets the target dedup unless a target was already spoken that frame (`lastTargetSpokenFrame`); `BattlePausePatches.Begin/EndCommonPopupRead` holds the `CommonPopup.UpdateFocus` reader until the open-read has spoken the message and focused button, then resumes it without repeating that button.
+
+### RVA Sharing Check
+IL2CPP folds identical method bodies: patching one body fires for every method sharing its RVA. Every new hook's RVA was checked unique in `dump.cs`. Avoided: `CheatSettingsData.set_IsEnableEncount` (shared by 23 methods) — hook `CheatSettingsClient.SetIsEnableEncount` instead; `ShopTradeWindowController.Close` (shared by 12); Touch `ResultMenuController.EndWaitInit` (0x26D8F0, the empty stub shared by ~2,500 methods, one called inside `SetCommandData` — removed 2026-09-23); KeyInput `ResultMenuController.EndWaitInit` (0x53E420, shared with Touch `WarehousePopupController.Close` — replaced by `ResultMenuController.Close`, session 2). Kept but class-checked: `SystemMessageWindowView.SetMessage` (0x3C5AE0, shared by 47 string setters). The reverse trap: a method whose body the compiler inlined into its caller has no callers of its own, so a hook on it never fires — check for direct calls to the RVA in `GameAssembly.dll` (`ResultSkillController.ShowJobProficiencyLevelUp`: none).
 
 ---
 
@@ -315,9 +358,11 @@ Patch base `Popup.Open()`, use `TryCast<T>()` for type (GetType().Name returns "
 
 | Feature | Solution |
 |---------|----------|
-| Title Screen | `SplashController.InitializeTitle()` stores text, `SystemIndicator.Hide()` speaks |
+| Title Screen | `TitleWindowController.Initialize` keeps the window; one frame after `SystemIndicator.Hide()`, if the window is in the None state and `TitleWindowView.startText` went from hidden to shown, it is spoken (fallback: mod text "Press any button"). The old Hide trigger was ~1 s early because it spoke on the first Hide (from `SceneTitleScreen.CreateInstance`, before the fade-in); the visibility check skips that one |
 | Save/Load Popups | Patch `SetPopupActive(bool)` - enum params crash |
-| Config Menu | Validate via `activeInHierarchy`. `SetFocus` for nav, `SwitchArrowSelectTypeProcess` for values |
+| Config Menu | Validate via `activeInHierarchy`. `ConfigActualDetailsControllerBase.SelectCommand` for nav (replaced the `SetFocus` attribute patch), `SwitchArrowSelectTypeProcess` for values |
+| Scroll Messages | `ScrollMessageManager.Play` / `ScrollMessageClient.PlayMessageId/Value`: one line spoken at once, several lines paced by `scrollTime / (lines + 1)` with `WaitForSeconds`; never interrupts. Identical text within 2 s is the nested Client→Manager call and is skipped |
+| Mod Text | Every `T("...")` key must exist in `mod_text.json` (12 languages, CRLF, 2-space indent, UTF-8 without BOM). The embedded parser is hand-written: keep values plain strings |
 | Equipment Job Reqs | `UserDataManager.ReleasedJobs` → `Weapon/Armor.EquipJobGroupId` → `JobGroup.Job{N}Accept` → `Job.MesIdName` |
 | Vehicle Transitions | Patch `FieldPlayer.GetOn(int)` and `GetOff(int)` |
 | Map Transitions | Poll `UserDataManager.CurrentMapId`. `LocationMessageTracker` for dedup. En-dash matches `MSG_LOCATION_STICK` |
@@ -328,7 +373,7 @@ Patch base `Popup.Open()`, use `TryCast<T>()` for type (GetType().Name returns "
 
 | Issue | Solution |
 |-------|----------|
-| Battle System Messages | Hook `BattleUIManager.SetCommadnMessage(string)` |
+| Battle System Messages | Hook `BattleUtility.SetSystemMessageAtKey` and the `SystemMessageView/Controller/Manager.SetMessage` chain. (`BattleUIManager.SetCommadnMessage` was documented here but never patched) |
 | Vehicle Interior Maps | Skip mapTitle when equals areaName (`MapNameResolver.cs:148`) |
 | New Game Naming | `CharacterContentListController.SetTargetSelectContent(int)`, `NameContentListController.SetFocus(int)`. `NewGamePopup` extends MonoBehaviour - patch `InitStartPopup()` |
 | Battle Action Dedup | Use object-based dedup (`BattleActData` reference) not text-based |
@@ -345,12 +390,79 @@ Patch base `Popup.Open()`, use `TryCast<T>()` for type (GetType().Name returns "
 | Battle Popup Buttons | Hook `KeyInput.CommonPopup.UpdateFocus`, read cursor/commandList directly |
 | Duplicate Map Announcements | Use en-dash (U+2013) separator to match `MSG_LOCATION_STICK` format |
 | NPC Event Item Selection | Hook `SelectFieldContentController.SelectContent(int)`, read contentDataList at 0x28 |
-| Walk/Run (F1) | Patch `FieldKeyController.SetDashFlag` to cache flag. XOR with `ConfigSaveData.isAutoDash` to get effective run state |
-| Encounters (F3) | Read `CheatSettingsData.IsEnableEncount` property directly |
+| Walk/Run (F1) | `GameToggleAnnouncer`: `Config.set_IsAutoDash` / `MapUIManager.AutoDashOperationSwitch` speak the new state (effective run = dash flag XOR `isAutoDash`); replaces the old F1 coroutine |
+| Encounters (F3) | `GameToggleAnnouncer`: `CheatSettingsClient.SetIsEnableEncount` speaks the new state; seeded on the first field scan so the initial value is silent. Replaces the old F3 coroutine |
 | Enemy HP Display (F5) | `FFIII_ScreenReaderMod.EnemyHPDisplay` property (0=Numbers, 1=Percentage, 2=Hidden). Block toggle during battle via `MenuStateRegistry` |
 | Placeholder Entities | `IsPlaceholderEntity()` filters decorative/non-interactive overworld entities (stone statues, vehicle spawns, barrier markers, location markers tracked via map exits). 浮遊大陸 (Floating Continent) NOT filtered |
-| Item Quantity Display | `ItemMenuPatches.cs` and `BattleItemPatches.cs` format items as "Name quantity: Description" using `ItemListContentData.Count` |
+| Item Quantity Display | `ItemMenuPatches.cs` and `BattleItemPatches.cs` format items as "Name, quantity: Description" using `ItemListContentData.Count`; "(X of Y)" is appended last, as in FF1 |
 | Waypoint Name Default | New waypoint text field starts blank (not pre-filled with "Waypoint N"). Rename still shows current name |
+
+### Review fixes (2026-09-23)
+Adversarial review of the FF1 parity pass. Not yet verified in game.
+- **Job level-ups:** announced from the `ShowPointsInit` postfixes (KeyInput + Touch). `ResultSkillController.ShowJobProficiencyLevelUp` (KeyInput 0x61EF70, Touch 0x490140) has no callers — `ShowPointsInit` inlines it (both call `SetJobProficiencyLevelUpList` directly) — so its hooks were removed. The per-character `_joblevelup` key dedupes.
+- **Target re-entry:** `EnemysInit`/`PlayerInit` postfix clears the target index dedup, so Attack → cancel → Attack (or a lone survivor) is read again. `EnemysInit` calls `SelectContent(enemies)` itself (0x89DB09), which may already have spoken the target inside the Init body; `lastTargetSpokenFrame` skips the reset in that frame so it is not read twice. `PlayerInit` does not call `SelectContent`.
+- **Off-field scan:** `InputManager.IsOnValidMap` rescans for `FieldPlayerController` on a cache miss at most once per 30 frames (it runs every frame; off-field there is nothing to find).
+- **Tab:** clears the in-battle flag only when no `BattleController` exists (see Battle State Clearing).
+- **Touch `EndWaitInit`:** patch removed (shared-stub RVA, see RVA Sharing Check).
+- **Manual patches:** the attribute patches added by the parity pass were converted — `BattleResultPatches.ApplyPatches` (`ShowGetAbilitysInit`, `ShowLevelUpAbilitysInit`) and `BattleCommandManualPatches` (`SetCommandData` prefix). Older attribute classes are unchanged.
+- **Coroutine eviction:** `CoroutineManager` stops the oldest managed coroutine past 20 without running its `finally`. The title prompt latch is now free once older than its 60 s timeout + 1 s, with a generation so only the current wait polls and clears it; the config initial-focus latch is a frame stamp that expires after 10 frames.
+
+### Open-issues pass (2026-09-23, session 2)
+The FF3 items of `OPEN_ISSUES.md`. Not yet verified in game. Every new hook's RVA was checked in `dump.cs` (count 1 unless stated) and its callers with `tools\hitscan.py` / capstone.
+
+**Status screen position.** `StatusNavigationReader` now drives a `NavigationBuffer` built with the group starts {0, 6, 16, 21}, as FF1 does; "(X of Y)" comes from `CurrentGroupPosition()` (e.g. Strength "1 of 5"). Group jumps still speak no group name.
+
+**Title "Press any button" (event hooks, no wait).** Disassembly of KeyInput `TitleWindowController`:
+- `UpdateNone` (0x8CD650, the None/press-any-button state, per frame) shows the prompt in one place: once `FadeManager.IsFadeFinish` and `SceneTitle.PreloadIsFinished` are true and `view.startParent` (view 0x48, startParent 0x18) is inactive, it calls `SystemIndicator.Hide` (0x8CD798) and then `SafeActiveSet(startParent, true)` (0x8CD7AF), and checks `Input.anyKey` in that same frame. `SetEnableStartObject` (0x8CCD30) has no callers: it is inlined here.
+- `SystemIndicator.Hide` (0x60BBC0, unique) callers: both `UpdateNone`s, `SceneTitleScreen.CreateInstance` (0x3F55AB, right after it builds the window, before the fade-in: the "~1 s early" call the old trigger spoke on), `MainGame.FinishSetupSubScenes`, `FieldMap` loads, `ConfigActualDetailsControllerBase.<FastSwitchFont>`.
+- `TitleWindowController.Initialize(GameObject)` (0x8CBEB0, unique) has one caller, `SceneTitleScreen.CreateTitleWindow` (0x3F582A). It ends in `CreateState` then `stateMachine.Change(None)`, or `Change(ShortcutCommand)` when `SceneManager.arguments` (0x48) is set.
+- `InitShortcutCommand` (return from the Extras) shows `startParent` without a Hide; `ShortcutExtraCommand` hides it again and either opens the Extra menu or goes back to None (and so through `UpdateNone`'s Hide).
+- The mod keeps the window from the `Initialize` postfix. The `Hide` postfix records whether `startText` is visible, then one frame later speaks it only if it was hidden, is now visible, and `stateMachine` (0x18) is still None (0). Boot and return to title both build the window through `CreateInstance`, and both show the prompt only through `UpdateNone`, so both are covered. The Hide on the field finds no live title window and returns at once. `SplashController.InitializeTitle` and the "Title" scene-load triggers were removed; the old log confirms the scene is named "Title" but it is no longer used. Log line: `[TitleScreen] Press-any-button prompt shown`.
+
+**Magic-shop target path.** `ShopMagicTargetSelectController.Show` / `SetFocus` are called only from `ShopController.InitSelectAbilityTarget`. The product callback `<InitSelectProduct>b__40_0` sets the next state to 4 (SelectAbilityTarget) only when `ShopProductData.ContentType == Ability` and `IsShopToSelectAbilityTarget()`; otherwise 6 (ConfirmationBuyItem) or 9. FF3's `product` master data has 394 rows: content types 1 (item, 247, including every `MSG_MAGIC_NAME_*` spell), 2 (weapon) and 3 (armor) only. The path is unreachable in FF3; spells go through the list + `ShopTradeWindowController`. No code needed.
+
+**Value-0 battle views** (`BattleBasicFunction.CreateDamageView`, hit type from `ICalcResult.GetHitType()`, value from `GetValue(false)`, `CreateViewEntity` 0x94BB30):
+- `CalcResult..ctor` defaults the hit type to Non (-1). `SetStatus` (0x3EC3C0) stores it as given.
+- Scan of every `SetStatus` call (direct and interface slot 0) and every `GetFixedStatus` call: Zero (3) is passed only by `DamageAggregater.CheckUndead` and `MagicAbsorptionFunction.Calc`. RecoveryCondition (7) is passed nowhere.
+- Buff/debuff functions resolve to Hit (0) or Miss (2): `GetAddConditionStatus(int)` passes `CalcExecuteFF3.AddConditionExection`'s return (0 on success, 2 on failure); the `int[]` overload passes 0/2; `AddConditionMulti*`, `RandomAddCondition`, `Kill` and `UserAddCondition` use `GetFixedStatus(0/2)`.
+- Status cure: `RecoveryConditionFunction.Calc` asks `BattleUtility.IsUnitHaveRecoveryCondition(target, id)` (`CurrentConditionList` 0x88 has the id). If the target HAS it, the result is `GetFixedStatus(Hit)`, value 0, no conditions, the same as other non-damage effects. If not, it is `GetRecoveryCondition` (Miss, or Non with the condition in a special case). `RecoveryConditionMultiFunction` is `GetFixedStatus(Hit)`.
+- So: Zero is spoken with the damage key ("Goblin: 0 damage"). RecoveryCondition gets "{0}: cured" for parity with the other mods, but FF3 never produces it. A real cure stays silent: it can't be told apart here, and announcing it needs a condition-removal hook (user decision). Each value-0 view logs `[Battle] value-0 view: hitType=N isRecovery=B target=X`.
+
+**Bestiary.** `LibraryInfoContent` is read through the active controller: KeyInput `LibraryInfoController.view` 0x18 → `LibraryInfoView.windowController` 0x18 → `LibraryInfoWindowController.contentController` 0x20 → `LibraryInfoContentController.view` 0x18. `FindObjectOfType` is only the fallback. If neither finds it, the buffer holds the name only, which is still spoken. The name auto-read uses `interrupt: true`.
+
+**Performance.**
+- `TitleMenuPatches.TryGetActiveCommandCount` / `FieldMenuPatches.TryGetFieldCommandCount` use the command controller kept by the menu-entry hooks (`TitleWindowController.InitSelect/InitializeOption/InitializeExtra` → `commandController`; `MainMenuController.Show/InitNone` → `commandMenuController`). Before, a `GetOrFind` ran on every generic cursor move and scanned the scene whenever the controller didn't exist.
+- A popup closing over a config screen now calls `ReannounceAfterPopup`: one frame, through the details controller last read. The 10 s `GetOrFind<ConfigController>` wait is kept only for the config-bestiary return, where the in-game `ConfigController` exists.
+- `ConfigMenuState.ShouldSuppress` checks that same details controller before any lookup, so the title Options screen, which has no `ConfigController`, no longer scans on each cursor move.
+- `CycleNext` / `CyclePrevious` scan once and then speak without rescanning; K still rescans.
+
+**Rule fixes.**
+- `BattleSystemMessagePatches` postfixes take `__0` (or `__2` for the 3-parameter `SetSystemMessageAtKey`).
+- `SystemMessageWindowView.SetMessage` (0x3C5AE0) shares its body with 46 other string setters (`SetName` ×11, `SetNameText`, `SetShopNameText`, `SetDescriptionText`, `SetConditionText`, …). Its postfix now checks the native class (`il2cpp_class_is_assignable_from`), as FF2 does for `ShowWindow`. Before, any of those setters could be spoken as a battle message.
+- Touch `ShowSkillLevelsInit` (0x48D6B0) is now a manual patch. The KeyInput `EndWaitInit` (0x53E420 = `SafeActiveSet(field 0x38, false)`, shared with Touch `WarehousePopupController.Close`) is no longer hooked. The EXP-tone catch-all is now KeyInput `ResultMenuController.Close` (0x61AEC0, unique, called by `ResultUIManager.Close`): the results screen closing, a moment after the End state is entered.
+- Pre-existing attribute patches not listed in OPEN_ISSUES (`CreateDamageView`, `BattleConditionController.Add`, the other result phases, config arrow, …) are unchanged.
+
+**Localization.**
+- `NavigableEntity` speaks type names and the scanner's English fallback names through `T()`. The English strings stay the internal keys: `ToLayerFilter` matches "ToLayer", and selection is matched by `Name`. `SpokenName` is used where a raw name was spoken.
+- Vehicles use `GetLocalizedVehicleName`; `GetVehicleName` stays the internal lookup.
+- Also through `T()`: equipment-slot and magic-command fallbacks, the 0-key dump messages, and the controller word labels (the same set as FF1: face-button shapes, View/Menu, Minus/Plus, D-pad, Home, "Button {0}").
+- The map-exit separator was corrupted to U+FFFD + "?" and is restored to "→" (as in FF2/FF4).
+
+**Controller.** In `ControllerRouter.Update`:
+- With no gamepad, the state is reset from ModMode, or from ModMenu once the menu is closed, so `SuppressGameInput` can't lock the keyboard out.
+- A mod menu opened from the keyboard (F8) switches the state to ModMenu, so the D-pad, stick and LT drive the menu instead of field actions.
+- Verified only, already done: `IsOnValidMap` throttle (30 frames) and the Tab `BattleController` guard.
+
+**Official-name substring pass (`translation.json`).** The first alignment pass (`tools/official_fix.py`) only fixed entries whose Japanese key *exactly* matched a string in the game's own message tables. This pass also fixed keys that *contain* an official proper noun: characters, places, key items, vehicles, monsters and jobs. Only that noun was replaced with the game's form for that language, taken from `tools/extract_entities.py gamedict` (FF3's own tables only).
+- **Examples:**
+  - ko Invincible → 인빈서블 (in インビンシブル（山を越える用）);
+  - Sylx Key → Syrcus Key, ru Хрустальным ключом;
+  - zht 阿古斯王 → 阿加斯王;
+  - 赤/白/黒魔導士 spellings aligned to the official job names;
+  - ko 크리스탈 → 크리스털 throughout.
+- **Totals:** 64 entries / 219 values, applied with the Edit tool only.
+- **Left as is:** German case forms, ドワーフ族 zh 矮人 (the stem of the official 矮人族), and ノーチラス th (the name already matches).
+- The rules and the full old→new list are in `D:\Games\Dev\Unity\FFPR\tools\official_substring\`.
 
 ---
 
@@ -377,14 +489,14 @@ Multi-line support: `messageList` (0x88) = all lines, `newPageLineList` (0xA0) =
 ---
 
 ## External Sound Player
-Windows waveOut API with 4 channels. Pre-generates WAV tones at init.
+SDL3 audio (`Utils/AudioEngine.cs`): one playback device with several `SDL_AudioStream`s bound to it; SDL mixes them. PCM is S16LE stereo 22050 Hz, so no resampling. Per-stream gain (`SDL_SetAudioStreamGain`) applies user volume. Tones are pre-generated at init by `ToneGenerator`; all submission is on the main thread (no audio callback).
 
-| Channel | Purpose |
-|---------|---------|
+| Stream | Purpose |
+|--------|---------|
 | Movement | Footsteps |
 | WallBump | Collision thud |
-| WallTone | Looping directional tones (hardware loop, bitmask direction change) |
-| Beacon | Panning ping (unmanaged buffer writes) |
+| WallTone ×4 | One looping stream per direction, topped up from the ~100 ms audio coroutine; SDL sums them |
+| Beacon | Panning ping |
 
 **Wall Bump:** `FieldPlayerKeyController.OnTouchPadCallback` prefix captures position. Coroutine waits 0.08s, checks position delta (< 0.1 = wall). Requires 2 consecutive hits to confirm.
 
@@ -395,19 +507,21 @@ Windows waveOut API with 4 channels. Pre-generates WAV tones at init.
 ---
 
 ## Entity Translation System
-JSON dictionary (`FF3_translations.json`) in `UserData/FFIII_ScreenReader/`. Called in `EntityScanner.GetEntityNameFromProperty()`. Prefix stripping via regex (removes "6:" or "SC01:" prefixes).
+Embedded `translation.json` (`{ japaneseKey: { lang: value } }`, 11 languages; `ja` returns the raw name), loaded by `Utils/EntityTranslator.cs` and called from `EntityScanner.GetEntityNameFromProperty()`. 2-tier lookup: exact key, then the key with a leading `N:` / `SC N:` prefix stripped (the prefix is re-attached). There is no suffix stripping, so circled-number variants (`兵士①`) are keyed individually.
 
 **Dump:** Hotkey `0` writes `EntityNames.json` with `{ "MapName": { "JapaneseName": "" } }` structure.
 
-**Current Translations:**
-| Japanese | English | Location |
-|----------|---------|----------|
-| 風水師 | Geomancer | Duster |
-| 商人2 | Merchant 2 | Duster |
-| 商人4 | Merchant 4 | Duster |
-| 吟遊詩人2 | Bard 2 | Duster |
+**Offline extraction (2026-09-23).** `tools/extract_entities.py` (Python + UnityPy, generalised from the FF5 mod's tool) sweeps every `map_*_assets_all_*.bundle` under `StreamingAssets/aa/StandaloneWindows64`, walks the Tiled entity JSON (`entity_default` + base64 `inline` groups in each map's `package`), and runs each Japanese label through a Python mirror of the 2-tier lookup above, so `missing` lists only what the mod would really fail on. `gamedict` builds Japanese → {lang} from the game's message tables (`story_cha` speaker names + `system`), so proper nouns follow the game's own localisation per language. `tools/apply_translations.py` validates a batch (11 languages, per-language script checks, no kana) and appends it textually, leaving existing bytes untouched.
+- Result: 165 keys added (289 → 454); the sweep reports 670 of 670 unique labels covered. Labels with dev ids such as `sc_e_0010:トパパ` are keyed exactly — the prefix regex does not match the underscore form — and the id is left out of the spoken text.
+- Official-name pass: 46 existing entries that are themselves game strings were aligned with the game's text (201 values) — e.g. エリア → Aria (was "Area"), 幻術師/魔界幻士 → Evoker/Summoner (the PR job names), トーザスの抜け道 → Tozus Tunnel, ギガメス → Gigametz. Deliberately left alone: shop words (their official strings are menu headers), 闇の戦士, トード.
+- After a game update: `extract_entities.py missing <out>` → translate the keys → `apply_translations.py apply <batch>`.
+
+---
+
+## Multi-hit Damage (2026-09-23)
+"Target: NxTotal damage" on weapon attacks, FF1 parity. The game draws its ×N (`BattleBasicFunction.CreateHitCount` → `DamageViewUIManager.CreateHitCount`) only when `SystemConfigData.GetBattleType()` is Command (FF1–FF3 return 1; FF4/FF5 return 0 = ATB) and the acting ability's `TypeId` is 4 (weapon; the Fight command's ability 1). FF3 is turn-based, so the captured ×N path works as in FF1. Fallback when no ×N was paired with the damage view within a frame: the `CreateDamageView` postfix reads the attack's own count from `__instance.ICalcResultDic[target].GetHitCount()` (weapon abilities only; `battleActData` is protected, read at offset 0x28). Default is now "With hit count", stored as `MultiHitDamage` (the old `DamageDisplay` entry is ignored).
 
 ---
 
 ## Game Code Typos
-`SetSpeker`, `Deiscription`, `FieldTresureBox`, `totarlPriceText`, `UpdateCotroller`, `Genelate`, `Infomation`, `SetCommadnMessage`, `curosr_parent`
+`SetSpeker`, `Deiscription`, `FieldTresureBox`, `totarlPriceText`, `UpdateCotroller`, `Genelate`, `Infomation`, `SetCommadnMessage` (not hooked), `curosr_parent`, `StartPreeMptiveMes`, `EnemysInit`, `TargetEnamyList`, `ShowGetAbilitysInit`

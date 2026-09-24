@@ -62,16 +62,10 @@ namespace FFIII_ScreenReader.Core
         private static bool wasLeftStickActive = false;
 
         /// <summary>
-        /// True when any FF3 battle command/target/item/magic menu is active.
-        /// Centralizes the "in-battle" check FF1 had via BattleStateHelper.
+        /// True for the whole battle (encounter start to battle end), not just while a battle menu is
+        /// open, so mod mode never runs field actions during enemy turns.
         /// </summary>
-        private static bool IsInBattle()
-        {
-            return MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_COMMAND)
-                || MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_TARGET)
-                || MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_ITEM)
-                || MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_MAGIC);
-        }
+        private static bool IsInBattle() => BattleStateHelper.IsInBattle;
 
         // =====================================================================
         // Main update — called from InputManager.Update() every frame
@@ -88,7 +82,19 @@ namespace FFIII_ScreenReader.Core
                 && !IsInBattle();
 
             if (!GamepadManager.IsAvailable)
+            {
+                // Controller unplugged in mod mode (or in its mod menu, since closed from the keyboard):
+                // drop back to Normal so SuppressGameInput cannot stay on and lock the keyboard out of
+                // the game. A still-open mod menu keeps its state until the keyboard closes it.
+                if (State == ControllerState.ModMode || (State == ControllerState.ModMenu && !ModMenu.IsOpen))
+                    Reset();
                 return;
+            }
+
+            // Keep the state machine in sync with a mod menu opened from the keyboard (F8), so the
+            // D-pad, stick and triggers drive the menu instead of acting underneath it.
+            if (ModMenu.IsOpen && State != ControllerState.ModMenu)
+                State = ControllerState.ModMenu;
 
             // Track that controller is being used
             for (int i = 0; i < SDL3.SDL_GAMEPAD_BUTTON_COUNT; i++)
@@ -155,17 +161,22 @@ namespace FFIII_ScreenReader.Core
         private static void AnnounceModModeControls()
         {
             string back = ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_BACK);
+            string west = ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_WEST);
 
-            if (IsInBattle())
+            if (DialogueTracker.IsInDialogue)
             {
-                string west = ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_WEST);
                 FFIII_ScreenReaderMod.SpeakText(
-                    string.Format(T("{0} for party HP. {1} to cancel."), west, back),
+                    string.Format(T("{0} to repeat dialogue. {1} to cancel."), west, back),
+                    interrupt: true);
+            }
+            else if (IsInBattle())
+            {
+                FFIII_ScreenReaderMod.SpeakText(
+                    string.Format(T("{0} for active character HP. {1} to cancel."), west, back),
                     interrupt: true);
             }
             else
             {
-                string west = ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_WEST);
                 string north = ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_NORTH);
                 FFIII_ScreenReaderMod.SpeakText(
                     string.Format(T("{0} for Gil. {1} for location. Right stick to teleport. {2} to cancel."),
@@ -335,11 +346,11 @@ namespace FFIII_ScreenReader.Core
                 NavigationTargetTracker.MarkWaypoint();
             }
 
-            // Right stick → entity scanner (callees mark the tracker).
-            if (GamepadManager.RStickUpPressed) { mod.CyclePrevious(); NavigationTargetTracker.MarkEntity(); }
-            if (GamepadManager.RStickDownPressed) { mod.CycleNext(); NavigationTargetTracker.MarkEntity(); }
-            if (GamepadManager.RStickLeftPressed) { mod.CyclePreviousCategory(); NavigationTargetTracker.MarkEntity(); }
-            if (GamepadManager.RStickRightPressed) { mod.CycleNextCategory(); NavigationTargetTracker.MarkEntity(); }
+            // Right stick → entity scanner (callees mark the tracker when an entity is selected).
+            if (GamepadManager.RStickUpPressed) mod.CyclePrevious();
+            if (GamepadManager.RStickDownPressed) mod.CycleNext();
+            if (GamepadManager.RStickLeftPressed) mod.CyclePreviousCategory();
+            if (GamepadManager.RStickRightPressed) mod.CycleNextCategory();
 
             // Left trigger → pathfind to last selected target (or restart beacon in beacon nav mode)
             if (GamepadManager.LeftTrigger > 0.5f && !leftTriggerWasActive)
@@ -363,21 +374,39 @@ namespace FFIII_ScreenReader.Core
 
         private static void HandleNormalNonField(KeyContext context)
         {
-            // FF3 doesn't expose a unified item-details handler statically — keep the
-            // controller right-stick non-field branches minimal until/unless those
-            // helpers are factored out (see FF1's GlobalHotkeyHandler/UsableByAnnouncer).
+            // Right stick up → read description (I key equivalent)
+            if (GamepadManager.RStickUpPressed)
+                InputManager.HandleItemDetailsKey();
 
             // Right stick down → read controls
             if (GamepadManager.RStickDownPressed)
                 KeyHelpReader.AnnounceKeyHelp();
 
-            // D-pad and left stick → virtual buffer navigation in Status
+            // Right stick left → jobs that can equip (U key equivalent)
+            if (GamepadManager.RStickLeftPressed)
+                UsableByAnnouncer.AnnounceForCurrentContext();
+
+            // D-pad and left stick → virtual buffer navigation in Status / Bestiary / controls pop-up
             if (context == KeyContext.Status)
             {
                 if (GamepadManager.DpadUpPressed || GamepadManager.LeftStickUpPressed)
                 { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_UP); StatusNavigationReader.NavigatePrevious(); }
                 if (GamepadManager.DpadDownPressed || GamepadManager.LeftStickDownPressed)
                 { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_DOWN); StatusNavigationReader.NavigateNext(); }
+            }
+            else if (context == KeyContext.BestiaryDetail)
+            {
+                if (GamepadManager.DpadUpPressed || GamepadManager.LeftStickUpPressed)
+                { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_UP); BestiaryNavigationReader.NavigatePrevious(); }
+                if (GamepadManager.DpadDownPressed || GamepadManager.LeftStickDownPressed)
+                { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_DOWN); BestiaryNavigationReader.NavigateNext(); }
+            }
+            else if (context == KeyContext.KeyHelp)
+            {
+                if (GamepadManager.DpadUpPressed || GamepadManager.LeftStickUpPressed)
+                { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_UP); KeyHelpReader.NavigatePrevious(); }
+                if (GamepadManager.DpadDownPressed || GamepadManager.LeftStickDownPressed)
+                { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_DOWN); KeyHelpReader.NavigateNext(); }
             }
         }
 
@@ -394,7 +423,14 @@ namespace FFIII_ScreenReader.Core
             var mod = FFIII_ScreenReaderMod.Instance;
             if (mod == null) return;
 
-            if (IsInBattle())
+            // Dialogue takes precedence over battle/field — with a message window up, the player
+            // wants to repeat the message, not check HP or Gil.
+            if (DialogueTracker.IsInDialogue)
+            {
+                if (GamepadManager.IsButtonPressed(SDL3.SDL_GAMEPAD_BUTTON_WEST))
+                { DialogueTracker.RepeatLastPage(); State = ControllerState.Normal; return; }
+            }
+            else if (IsInBattle())
             {
                 // Battle mod mode: X = party HP check
                 if (GamepadManager.IsButtonPressed(SDL3.SDL_GAMEPAD_BUTTON_WEST))

@@ -55,6 +55,7 @@ namespace FFIII_ScreenReader.Patches
     {
         // SavePopup field offsets (from dump.cs line 458107)
         private const int SAVE_POPUP_MESSAGE_TEXT_OFFSET = 0x40;
+        private const int SAVE_POPUP_SELECT_CURSOR_OFFSET = 0x58;
         private const int SAVE_POPUP_COMMAND_LIST_OFFSET = 0x60;
 
         // Controller-specific savePopup field offsets
@@ -351,7 +352,12 @@ namespace FFIII_ScreenReader.Patches
                     {
                         // Strip Unity rich text tags (like <color=#ff4040>...</color>)
                         message = StripRichTextTags(message);
-                        FFIII_ScreenReaderMod.SpeakText(message);
+
+                        // Append the initially focused button (Yes/No): otherwise it is only spoken on
+                        // navigation. Save, load and quicksave all use this SavePopup layout.
+                        string button = PopupPatches.ReadFocusedButton(popupPtr, SAVE_POPUP_SELECT_CURSOR_OFFSET,
+                            SAVE_POPUP_COMMAND_LIST_OFFSET, out _);
+                        FFIII_ScreenReaderMod.SpeakText(string.IsNullOrWhiteSpace(button) ? message : $"{message} {button}");
                     }
                     else
                     {

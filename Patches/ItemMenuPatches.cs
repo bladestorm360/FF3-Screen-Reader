@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using HarmonyLib;
 using MelonLoader;
@@ -16,9 +17,6 @@ using GameCursor = Il2CppLast.UI.Cursor;
 using CustomScrollViewWithinRangeType = Il2CppLast.UI.CustomScrollView.WithinRangeType;
 using OwnedCharacterData = Il2CppLast.Data.User.OwnedCharacterData;
 using Condition = Il2CppLast.Data.Master.Condition;
-using CorpsId = Il2CppLast.Defaine.User.CorpsId;
-using Corps = Il2CppLast.Data.User.Corps;
-using UserDataManager = Il2CppLast.Management.UserDataManager;
 using BattleItemInfomationController = Il2CppLast.UI.KeyInput.BattleItemInfomationController;
 using KeyInputItemCommandController = Il2CppLast.UI.KeyInput.ItemCommandController;
 using KeyInputItemWindowController = Il2CppLast.UI.KeyInput.ItemWindowController;
@@ -31,7 +29,8 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     internal static class ItemMenuState
     {
-        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.ITEM_MENU, "ItemMenu.Select");
+        private const string DEDUP_CONTEXT = "ItemMenu.Select";
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.ITEM_MENU, DEDUP_CONTEXT);
 
         static ItemMenuState()
         {
@@ -111,45 +110,91 @@ namespace FFIII_ScreenReader.Patches
 
         public static bool ShouldAnnounce(string announcement) => _helper.ShouldAnnounce(announcement);
 
+        /// <summary>Clears the announce dedup so the next item/target read speaks (list re-entry).</summary>
+        public static void ResetAnnouncementDedup() => AnnouncementDeduplicator.Reset(DEDUP_CONTEXT);
+
         /// <summary>
-        /// Gets the row (Front/Back) for a character.
+        /// Announces an item-list row: "Name, quantity", plus ": Description" with Auto Detail, then the
+        /// "(X of Y)" position; with Auto Detail, queues the equip-job info (U key) after it. Shared by the
+        /// SelectContent navigation patch and the on-(re)entry read. Deduped on the announcement text.
+        /// </summary>
+        public static void AnnounceItemListData(ItemListContentData itemData, int index, int count)
+        {
+            // Store selected item for 'I' (description) and 'U' (equip requirements) lookup
+            LastSelectedItem = itemData;
+
+            string itemName = TextUtils.StripIconMarkup(itemData.Name);
+            if (string.IsNullOrEmpty(itemName))
+                return;
+
+            int quantity = itemData.Count;
+            string announcement = quantity > 0 ? $"{itemName}, {quantity}" : itemName;
+
+            if (PreferencesManager.AutoDetailEnabled)
+            {
+                string description = TextUtils.StripIconMarkup(itemData.Description);
+                if (!string.IsNullOrWhiteSpace(description))
+                    announcement += $": {description}";
+            }
+
+            // Skip duplicates
+            if (!ShouldAnnounce(announcement))
+                return;
+
+            // Set active state AFTER validation - menu is confirmed open and we have valid data
+            // Also clear other menu states to prevent conflicts
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
+
+            // Append cursor position (N of M) LAST, after the item name/quantity/description.
+            FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(announcement, index, count), interrupt: true);
+
+            // Auto Detail: queue the same equip-job info the 'U' key reads AFTER the name
+            // announce (interrupt:false). Placed past the ShouldAnnounce dedup above, so it
+            // only fires on a genuinely new item — cursoring to the same row won't restack it.
+            if (PreferencesManager.AutoDetailEnabled)
+            {
+                ItemDetailsAnnouncer.AnnounceEquipRequirements(interrupt: false, announceIfEmpty: false);
+            }
+        }
+
+        /// <summary>
+        /// Announces an item-use target character: "Name, HP current/max, status effects" plus position.
+        /// Level and row are intentionally omitted for item targeting. Deduped on the announcement text.
+        /// </summary>
+        public static void AnnounceItemUseTarget(ItemTargetSelectContentController content, int index, int count)
+        {
+            var characterData = content.CurrentData;
+            if (characterData == null)
+                return;
+
+            string charName = characterData.Name;
+            if (string.IsNullOrWhiteSpace(charName))
+                return;
+
+            string announcement = charName;
+
+            // Add HP and status conditions via helper
+            var parameter = characterData.Parameter;
+            if (parameter != null)
+                announcement += CharacterStatusHelper.GetFullStatus(parameter);
+
+            // Skip duplicates
+            if (!ShouldAnnounce(announcement))
+                return;
+
+            // Set active state AFTER validation - menu is confirmed open and we have valid data
+            // Also clear other menu states to prevent conflicts
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
+
+            // Append cursor position (N of M) among the target characters.
+            FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(announcement, index, count), interrupt: true);
+        }
+
+        /// <summary>
+        /// Gets the localized row (Front/Back) for a character.
         /// </summary>
         public static string GetCharacterRow(OwnedCharacterData characterData)
-        {
-            try
-            {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager == null)
-                {
-                    return null;
-                }
-
-                var corpsList = userDataManager.GetCorpsListClone();
-                if (corpsList == null)
-                {
-                    return null;
-                }
-
-                int characterId = characterData.Id;
-
-                foreach (var corps in corpsList)
-                {
-                    if (corps != null)
-                    {
-                        if (corps.CharacterId == characterId)
-                        {
-                            string row = corps.Id == CorpsId.Front ? "Front Row" : "Back Row";
-                            return row;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[ItemMenu] Error getting character row: {ex.Message}");
-            }
-            return null;
-        }
+            => CharacterDataHelper.GetCharacterRow(characterData);
 
         /// <summary>
         /// Gets the localized name for an ItemCommandId.
@@ -226,46 +271,7 @@ namespace FFIII_ScreenReader.Patches
                 if (itemData == null)
                     return;
 
-                // Store selected item for 'I' key lookup
-                ItemMenuState.LastSelectedItem = itemData;
-
-                // Build announcement: "Item Name quantity: Description"
-                string itemName = TextUtils.StripIconMarkup(itemData.Name);
-                int quantity = itemData.Count;
-                string announcement = quantity > 0 ? $"{itemName} {quantity}" : itemName;
-
-                // Add description if available
-                string description = itemData.Description;
-                if (!string.IsNullOrWhiteSpace(description))
-                {
-                    description = TextUtils.StripIconMarkup(description);
-                    if (!string.IsNullOrWhiteSpace(description))
-                    {
-                        announcement += $": {description}";
-                    }
-                }
-                if (string.IsNullOrEmpty(announcement))
-                    return;
-
-                // Skip duplicates
-                if (!ItemMenuState.ShouldAnnounce(announcement))
-                    return;
-
-                // Set active state AFTER validation - menu is confirmed open and we have valid data
-                // Also clear other menu states to prevent conflicts
-                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
-
-                // Append cursor position (N of M) LAST, after the item name/quantity/description.
-                announcement = MenuPosition.Format(announcement, index, targetList.Count);
-                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
-
-                // Auto Detail: queue the same equip-job info the 'I' key reads AFTER the name
-                // announce (interrupt:false). Placed past the ShouldAnnounce dedup above, so it
-                // only fires on a genuinely new item — cursoring to the same row won't restack it.
-                if (PreferencesManager.AutoDetailEnabled)
-                {
-                    ItemDetailsAnnouncer.AnnounceEquipRequirements(interrupt: false, announceIfEmpty: false);
-                }
+                ItemMenuState.AnnounceItemListData(itemData, index, targetList.Count);
             }
             catch (Exception ex)
             {
@@ -313,48 +319,121 @@ namespace FFIII_ScreenReader.Patches
                 if (content == null)
                     return;
 
-                // Get character data from the content controller
-                var characterData = content.CurrentData;
-                if (characterData == null)
-                    return;
-
-                // Build announcement: "Character Name, HP current/max, Status effects"
-                // Note: Level is NOT included for target selection - only for pre-menus
-                // Note: Row is intentionally NOT included for item targeting - only for status/equip menus
-                string charName = characterData.Name;
-                if (string.IsNullOrWhiteSpace(charName))
-                    return;
-
-                string announcement = charName;
-
-                // Add HP and status information (no level for target selection)
-                var parameter = characterData.Parameter;
-                if (parameter != null)
-                {
-                    // Add HP and status conditions via helper
-                    string statusInfo = CharacterStatusHelper.GetFullStatus(parameter);
-                    if (!string.IsNullOrEmpty(statusInfo))
-                    {
-                        announcement += statusInfo;
-                    }
-                }
-
-                // Skip duplicates
-                if (!ItemMenuState.ShouldAnnounce(announcement))
-                    return;
-
-                // Set active state AFTER validation - menu is confirmed open and we have valid data
-                // Also clear other menu states to prevent conflicts
-                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
-
-                // Append cursor position (N of M) among the target characters.
-                announcement = MenuPosition.Format(announcement, index, contentList.Count);
-                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                ItemMenuState.AnnounceItemUseTarget(content, index, contentList.Count);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error in ItemUseController.SelectContent patch: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// Re-announces the focused row when the item LIST or the item-use TARGET (re)gains focus — on entry
+    /// and on back-out from a deeper screen. The SelectContent patches only fire on cursor movement, so
+    /// they're silent on (re)entry. ItemWindowController's state-entry Init methods fire in both cases:
+    /// they clear the announce dedup (so whichever of this read and a SelectContent fires first speaks,
+    /// and the other is deduped) and schedule a bounded read once the list and cursor are built.
+    /// </summary>
+    internal static class FieldItemReannouncePatches
+    {
+        private const string LOG = "[ItemMenu]";
+
+        // ItemListController (KeyInput)
+        private const int ITEM_LIST_SELECT_CURSOR = 0x60;
+        private const int ITEM_LIST_DATA_LIST = 0x78;     // IEnumerable<ItemListContentData>
+        // ItemUseController (KeyInput)
+        private const int ITEM_USE_CONTENT_LIST = 0x40;   // List<ItemTargetSelectContentController>
+        private const int ITEM_USE_SELECT_CURSOR = 0x50;
+
+        // Frames to retry until the list/cursor is built after the state entry
+        private const int MAX_READ_FRAMES = 30;
+
+        private static int readGen;
+
+        public static void ApplyPatches(HarmonyLib.Harmony harmony)
+        {
+            foreach (var method in new[] { "UseSelectInit", "ImportantSelectInit", "OrganizeSelectInit" })
+                HarmonyPatchHelper.PatchPostfix(harmony, typeof(KeyInputItemWindowController), method,
+                    typeof(FieldItemReannouncePatches), nameof(ItemList_Init_Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(KeyInputItemWindowController), "TargetSelectInit",
+                typeof(FieldItemReannouncePatches), nameof(ItemTarget_Init_Postfix), LOG);
+        }
+
+        public static void ItemList_Init_Postfix(KeyInputItemWindowController __instance)
+        {
+            if (__instance == null) return;
+            ItemMenuState.ResetAnnouncementDedup();
+            CoroutineManager.StartManaged(ReadWhenReady(++readGen, () => TryAnnounceItemList(__instance.itemListController)));
+        }
+
+        public static void ItemTarget_Init_Postfix(KeyInputItemWindowController __instance)
+        {
+            if (__instance == null) return;
+            ItemMenuState.ResetAnnouncementDedup();
+            CoroutineManager.StartManaged(ReadWhenReady(++readGen, () => TryAnnounceItemTarget(__instance.itemUseController)));
+        }
+
+        private static IEnumerator ReadWhenReady(int gen, Func<bool> tryRead)
+        {
+            for (int frame = 0; frame < MAX_READ_FRAMES; frame++)
+            {
+                yield return null;
+                if (gen != readGen) yield break; // a newer state entry superseded this read
+                if (!FieldMenuPatches.IsMenuOpen()) continue;
+                if (tryRead()) yield break;
+            }
+        }
+
+        private static bool TryAnnounceItemList(KeyInputItemListController controller)
+        {
+            try
+            {
+                if (controller == null || !controller.gameObject.activeInHierarchy) return false;
+                IntPtr ptr = controller.Pointer;
+
+                IntPtr dataListPtr = StateReaderHelper.ReadPointerField(ptr, ITEM_LIST_DATA_LIST);
+                if (dataListPtr == IntPtr.Zero) return false;
+                var enumerable = new Il2CppSystem.Object(dataListPtr)
+                    .TryCast<Il2CppSystem.Collections.Generic.IEnumerable<ItemListContentData>>();
+                if (enumerable == null) return false;
+                var list = new Il2CppSystem.Collections.Generic.List<ItemListContentData>(enumerable);
+
+                IntPtr cursorPtr = StateReaderHelper.ReadPointerField(ptr, ITEM_LIST_SELECT_CURSOR);
+                if (cursorPtr == IntPtr.Zero) return false;
+                int index = new GameCursor(cursorPtr).Index;
+
+                var itemData = SelectContentHelper.TryGetItem(list, index);
+                if (itemData == null) return false;
+
+                ItemMenuState.AnnounceItemListData(itemData, index, list.Count);
+                return true; // spoken, or deduped because SelectContent already read it
+            }
+            catch { return false; }
+        }
+
+        private static bool TryAnnounceItemTarget(KeyInputItemUseController controller)
+        {
+            try
+            {
+                if (controller == null || !controller.gameObject.activeInHierarchy) return false;
+                IntPtr ptr = controller.Pointer;
+
+                IntPtr listPtr = StateReaderHelper.ReadPointerField(ptr, ITEM_USE_CONTENT_LIST);
+                if (listPtr == IntPtr.Zero) return false;
+                var list = new Il2CppSystem.Collections.Generic.List<ItemTargetSelectContentController>(listPtr);
+
+                IntPtr cursorPtr = StateReaderHelper.ReadPointerField(ptr, ITEM_USE_SELECT_CURSOR);
+                if (cursorPtr == IntPtr.Zero) return false;
+                int index = new GameCursor(cursorPtr).Index;
+
+                var content = SelectContentHelper.TryGetItem(list, index);
+                if (content?.CurrentData == null) return false;
+
+                ItemMenuState.AnnounceItemUseTarget(content, index, list.Count);
+                return true;
+            }
+            catch { return false; }
         }
     }
 

@@ -20,10 +20,12 @@ namespace FFIII_ScreenReader.Core
     /// </summary>
     public enum KeyContext
     {
-        Global,     // Always active (any screen)
-        Field,      // Only on field map (not in battle/dialogue)
-        Battle,     // Only in battle
-        Status      // Only on status screen
+        Global,         // Always active (any screen)
+        Field,          // Only on field map (not in battle/dialogue)
+        Battle,         // Only in battle
+        Status,         // Only on status screen
+        BestiaryDetail, // Only on bestiary detail view
+        KeyHelp         // Only on the key-help / controls-display screen
     }
 
     /// <summary>

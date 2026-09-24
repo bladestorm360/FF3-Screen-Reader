@@ -1,7 +1,9 @@
 using System;
+using System.Collections;
 using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
+using UnityEngine;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
 using FadeMessageManager = Il2CppLast.Message.FadeMessageManager;
@@ -16,10 +18,19 @@ namespace FFIII_ScreenReader.Patches
     /// Patches for scrolling intro/outro messages.
     /// The intro uses ScrollMessageWindowController which displays scrolling text.
     /// LineFadeMessageWindowController provides per-line announcements for story text.
+    /// All of these are game events, so they never interrupt speech. Multi-line scroll messages are
+    /// spoken line by line, paced by the game's own scrollTime so speech follows the visual scroll.
     /// </summary>
     internal static class ScrollMessagePatches
     {
+        // The same text arriving again within this window is the same message (ScrollMessageClient
+        // calls into ScrollMessageManager.Play, so both postfixes see it). Outside the window a repeat
+        // is a new event (e.g. "Back Attack!" in a later battle) and is spoken again.
+        private const float DUPLICATE_WINDOW_SECONDS = 2f;
+
         private static string lastScrollMessage = "";
+        private static float lastScrollMessageTime = -100f;
+        private static IEnumerator activeScrollCoroutine = null;
 
         /// <summary>
         /// Applies scroll message patches using manual Harmony patching.
@@ -134,21 +145,12 @@ namespace FFIII_ScreenReader.Patches
                     return;
                 }
 
-                // Avoid duplicate announcements
-                if (message == lastScrollMessage)
+                if (IsDuplicate(message))
                 {
                     return;
                 }
 
-                lastScrollMessage = message;
-
-                // Clean up the message
-                string cleanMessage = message.Replace("\n", " ").Replace("\r", " ");
-                while (cleanMessage.Contains("  "))
-                {
-                    cleanMessage = cleanMessage.Replace("  ", " ");
-                }
-                cleanMessage = cleanMessage.Trim();
+                string cleanMessage = CollapseWhitespace(message);
 
                 // Check for duplicate location announcement
                 // E.g., skip "Altar Cave" if "Entering Altar Cave" was just announced
@@ -157,7 +159,7 @@ namespace FFIII_ScreenReader.Patches
                     return;
                 }
 
-                FFIII_ScreenReaderMod.SpeakText(cleanMessage);
+                FFIII_ScreenReaderMod.SpeakText(cleanMessage, interrupt: false);
             }
             catch (Exception ex)
             {
@@ -168,35 +170,20 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// Postfix for ScrollMessageManager.Play - captures the message parameter.
         /// ScrollMessageManager.Play(ScrollMessageClient.ScrollType type, string message, float scrollTime, int fontSize, Color32 color, TextAnchor anchor, Rect margin)
+        /// __1 = message, __2 = scrollTime.
         /// </summary>
-        public static void ScrollManagerPlay_Postfix(object __1)
+        public static void ScrollManagerPlay_Postfix(object __1, float __2)
         {
             try
             {
                 // __1 is the second parameter (message string, first is ScrollType)
                 string message = __1?.ToString();
-                if (string.IsNullOrEmpty(message))
+                if (string.IsNullOrEmpty(message) || IsDuplicate(message))
                 {
                     return;
                 }
 
-                // Avoid duplicate announcements
-                if (message == lastScrollMessage)
-                {
-                    return;
-                }
-
-                lastScrollMessage = message;
-
-                // Clean up the message
-                string cleanMessage = message.Replace("\n", " ").Replace("\r", " ");
-                while (cleanMessage.Contains("  "))
-                {
-                    cleanMessage = cleanMessage.Replace("  ", " ");
-                }
-                cleanMessage = cleanMessage.Trim();
-
-                FFIII_ScreenReaderMod.SpeakText(cleanMessage);
+                SpeakScrollMessage(message, __2);
             }
             catch (Exception ex)
             {
@@ -205,11 +192,80 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
+        /// True if this text was just announced (see DUPLICATE_WINDOW_SECONDS). Records it either way,
+        /// so a message re-sent continuously stays suppressed.
+        /// </summary>
+        private static bool IsDuplicate(string message)
+        {
+            float now = Time.realtimeSinceStartup;
+            bool duplicate = message == lastScrollMessage && now - lastScrollMessageTime < DUPLICATE_WINDOW_SECONDS;
+            lastScrollMessage = message;
+            lastScrollMessageTime = now;
+            return duplicate;
+        }
+
+        private static string CollapseWhitespace(string message)
+        {
+            string clean = message.Replace("\n", " ").Replace("\r", " ");
+            while (clean.Contains("  "))
+            {
+                clean = clean.Replace("  ", " ");
+            }
+            return clean.Trim();
+        }
+
+        /// <summary>
+        /// Speaks a scroll message without interrupting. A single line is spoken at once; several lines
+        /// are spoken one at a time, spread across the game's scrollTime (the visual scroll is linear).
+        /// A new scroll message replaces one still being read.
+        /// </summary>
+        private static void SpeakScrollMessage(string message, float scrollTime)
+        {
+            if (activeScrollCoroutine != null)
+            {
+                CoroutineManager.StopManaged(activeScrollCoroutine);
+                activeScrollCoroutine = null;
+            }
+
+            string[] lines = message.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            if (lines.Length <= 1)
+            {
+                string single = CollapseWhitespace(message);
+                if (single.Length > 0)
+                    FFIII_ScreenReaderMod.SpeakText(single, interrupt: false);
+                return;
+            }
+
+            activeScrollCoroutine = SpeakScrollLinesWithTiming(lines, scrollTime);
+            CoroutineManager.StartManaged(activeScrollCoroutine);
+        }
+
+        private static IEnumerator SpeakScrollLinesWithTiming(string[] lines, float totalScrollTime)
+        {
+            float delayPerLine = totalScrollTime > 0f ? totalScrollTime / (lines.Length + 1) : 0f;
+            bool first = true;
+
+            foreach (string line in lines)
+            {
+                string cleanLine = line.Trim();
+                if (cleanLine.Length == 0) continue;
+
+                if (!first && delayPerLine > 0f)
+                    yield return new WaitForSeconds(delayPerLine);
+                first = false;
+
+                FFIII_ScreenReaderMod.SpeakText(cleanLine, interrupt: false);
+            }
+
+            activeScrollCoroutine = null;
+        }
+
+        /// <summary>
         /// Postfix for ScrollMessageClient.PlayMessageId - catches battle messages by ID.
         /// This catches messages like "Back Attack!", "Preemptive Strike!", "The party escaped!" etc.
         /// ScrollMessageClient.PlayMessageId(ScrollType type, string messageId, ...)
         /// </summary>
-        public static void ScrollClientPlayMessageId_Postfix(object __1)
+        public static void ScrollClientPlayMessageId_Postfix(object __1, float __2)
         {
             try
             {
@@ -220,30 +276,21 @@ namespace FFIII_ScreenReader.Patches
                     return;
                 }
 
+                // Clear flee flag if this is an escape result message. Done before the duplicate check:
+                // the nested ScrollMessageManager.Play postfix has usually spoken the text already.
+                if (messageId.IndexOf("ESCAPE", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    GlobalBattleMessageTracker.ClearFleeInProgress();
+                }
+
                 // Look up the localized message
                 var messageManager = MessageManager.Instance;
                 if (messageManager != null)
                 {
                     string message = messageManager.GetMessage(messageId);
-                    if (!string.IsNullOrWhiteSpace(message))
+                    if (!string.IsNullOrWhiteSpace(message) && !IsDuplicate(message))
                     {
-                        // Avoid duplicate announcements
-                        if (message == lastScrollMessage)
-                        {
-                            return;
-                        }
-
-                        lastScrollMessage = message;
-
-                        string cleanMessage = message.Trim();
-
-                        // Clear flee flag if this is an escape result message
-                        if (messageId.IndexOf("ESCAPE", StringComparison.OrdinalIgnoreCase) >= 0)
-                        {
-                            GlobalBattleMessageTracker.ClearFleeInProgress();
-                        }
-
-                        FFIII_ScreenReaderMod.SpeakText(cleanMessage);
+                        SpeakScrollMessage(message, __2);
                     }
                 }
             }
@@ -257,27 +304,18 @@ namespace FFIII_ScreenReader.Patches
         /// Postfix for ScrollMessageClient.PlayMessageValue - catches direct message display.
         /// ScrollMessageClient.PlayMessageValue(ScrollType type, string messageValue, ...)
         /// </summary>
-        public static void ScrollClientPlayMessageValue_Postfix(object __1)
+        public static void ScrollClientPlayMessageValue_Postfix(object __1, float __2)
         {
             try
             {
                 // __1 is the second parameter (messageValue string, first is ScrollType)
                 string messageValue = __1?.ToString();
-                if (string.IsNullOrEmpty(messageValue))
+                if (string.IsNullOrEmpty(messageValue) || IsDuplicate(messageValue))
                 {
                     return;
                 }
 
-                // Avoid duplicate announcements
-                if (messageValue == lastScrollMessage)
-                {
-                    return;
-                }
-
-                lastScrollMessage = messageValue;
-
-                string cleanMessage = messageValue.Trim();
-                FFIII_ScreenReaderMod.SpeakText(cleanMessage);
+                SpeakScrollMessage(messageValue, __2);
             }
             catch (Exception ex)
             {

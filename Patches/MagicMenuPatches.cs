@@ -45,8 +45,15 @@ namespace FFIII_ScreenReader.Patches
             {
                 lastSpellId = -1;
                 _currentCharacter = null;
+                LastFocusedDescription = null;
             });
         }
+
+        /// <summary>
+        /// Stripped description of the focused spell / spell tome, refreshed on every announce regardless
+        /// of Auto Detail. Read on demand by the I key / right stick up.
+        /// </summary>
+        public static string LastFocusedDescription { get; set; }
 
         public static bool IsSpellListActive
         {
@@ -685,7 +692,9 @@ namespace FFIII_ScreenReader.Patches
                 }
                 catch { }
 
-                string announcement = AnnouncementBuilder.FormatWithDescription(itemData.Name, description);
+                // Description is spoken with Auto Detail on; always kept for the I key
+                string announcement = AnnouncementBuilder.FormatWithDescription(itemData.Name,
+                    PreferencesManager.AutoDetailEnabled ? description : null);
                 if (string.IsNullOrEmpty(announcement))
                 {
                     AnnounceEmpty(index, itemList.Count);
@@ -694,6 +703,8 @@ namespace FFIII_ScreenReader.Patches
 
                 if (!MagicMenuState.ShouldAnnounceSpell(announcement.GetHashCode()))
                     return true; // Valid but deduplicated
+
+                MagicMenuState.LastFocusedDescription = TextUtils.StripIconMarkup(description);
 
                 // Append cursor position (N of M) among the spell tomes.
                 announcement = MenuPosition.Format(announcement, index, itemList.Count);
@@ -819,6 +830,7 @@ namespace FFIII_ScreenReader.Patches
         {
             if (MagicMenuState.ShouldAnnounceSpell(-1)) // -1 as ID for empty
             {
+                MagicMenuState.LastFocusedDescription = null;
                 FFIII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, count), interrupt: true);
             }
         }
@@ -870,9 +882,10 @@ namespace FFIII_ScreenReader.Patches
                     }
                 }
 
-                // Add description
+                // Add description (Auto Detail); always kept for the I key
                 string description = MagicMenuState.GetSpellDescription(ability);
-                if (!string.IsNullOrEmpty(description))
+                MagicMenuState.LastFocusedDescription = description;
+                if (PreferencesManager.AutoDetailEnabled && !string.IsNullOrEmpty(description))
                 {
                     announcement += $". {description}";
                 }

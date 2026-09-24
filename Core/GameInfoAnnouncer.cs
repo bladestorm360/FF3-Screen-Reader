@@ -1,5 +1,7 @@
 using System;
 using MelonLoader;
+using FFIII_ScreenReader.Patches;
+using FFIII_ScreenReader.Utils;
 using static FFIII_ScreenReader.Utils.ModTextTranslator;
 using UserDataManager = Il2CppLast.Management.UserDataManager;
 
@@ -48,52 +50,41 @@ namespace FFIII_ScreenReader.Core
             FFIII_ScreenReaderMod.SpeakText(T("Map name not available"));
         }
 
+        /// <summary>
+        /// H key / battle mod-mode X: HP and status effects of the character whose command turn is
+        /// active. Battle only. (FF3 magic uses per-level spell charges, which the magic menus read.)
+        /// </summary>
         public static void AnnounceCharacterStatus()
         {
             try
             {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager == null)
+                if (!BattleStateHelper.IsInBattle)
                 {
-                    FFIII_ScreenReaderMod.SpeakText(T("Character data not available"));
+                    FFIII_ScreenReaderMod.SpeakText(T("Party status only available in battle"));
                     return;
                 }
 
-                var partyList = userDataManager.GetOwnedCharactersClone(false);
-                if (partyList == null || partyList.Count == 0)
+                var charData = BattleCommandState.CurrentActor;
+                if (charData == null)
                 {
-                    FFIII_ScreenReaderMod.SpeakText(T("No party members"));
+                    FFIII_ScreenReaderMod.SpeakText(T("No active character"));
                     return;
                 }
 
-                var sb = new System.Text.StringBuilder();
-                foreach (var charData in partyList)
+                var param = charData.Parameter;
+                if (param == null)
                 {
-                    try
-                    {
-                        if (charData != null)
-                        {
-                            string name = charData.Name;
-                            var param = charData.Parameter;
-                            if (param != null)
-                            {
-                                int currentHp = param.CurrentHP;
-                                int maxHp = param.ConfirmedMaxHp();
-                                int currentMp = param.CurrentMP;
-                                int maxMp = param.ConfirmedMaxMp();
-
-                                sb.AppendLine(string.Format(T("{0}: HP {1}/{2}, MP {3}/{4}"), name, currentHp, maxHp, currentMp, maxMp));
-                            }
-                        }
-                    }
-                    catch { }
+                    FFIII_ScreenReaderMod.SpeakText(T("Character status not available"));
+                    return;
                 }
 
-                string status = sb.ToString().Trim();
-                if (!string.IsNullOrEmpty(status))
-                    FFIII_ScreenReaderMod.SpeakText(status);
-                else
-                    FFIII_ScreenReaderMod.SpeakText(T("No character status available"));
+                string line = string.Format(T("{0}: HP {1}/{2}"), charData.Name, param.CurrentHP, param.ConfirmedMaxHp());
+
+                string conditions = CharacterStatusHelper.GetStatusConditions(param);
+                if (!string.IsNullOrEmpty(conditions))
+                    line += ", " + conditions;
+
+                FFIII_ScreenReaderMod.SpeakText(line);
             }
             catch (Exception ex)
             {

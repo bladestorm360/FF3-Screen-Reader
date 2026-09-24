@@ -5,6 +5,7 @@ using UnityEngine;
 using FFIII_ScreenReader.Core;
 using FFIII_ScreenReader.Utils;
 using Il2CppLast.Management;
+using static FFIII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for IL2CPP types
 using KeyInputEquipmentInfoWindowController = Il2CppLast.UI.KeyInput.EquipmentInfoWindowController;
@@ -27,7 +28,7 @@ namespace FFIII_ScreenReader.Patches
 
         static EquipMenuState()
         {
-            _helper.RegisterResetHandler();
+            _helper.RegisterResetHandler(() => { LastFocusedDescription = null; });
         }
 
         public static bool IsActive
@@ -35,6 +36,12 @@ namespace FFIII_ScreenReader.Patches
             get => _helper.IsActive;
             set => _helper.IsActive = value;
         }
+
+        /// <summary>
+        /// Stripped description of the focused slot's equipped item or list item, refreshed on every
+        /// announce regardless of Auto Detail. Read on demand by the I key / right stick up.
+        /// </summary>
+        public static string LastFocusedDescription { get; set; }
 
         /// <summary>
         /// Returns true if generic cursor reading should be suppressed.
@@ -71,16 +78,16 @@ namespace FFIII_ScreenReader.Patches
                 // Fall through to defaults
             }
 
-            // Fallback to English slot names
+            // Fallback slot names (mod text) when the game's slot message is unavailable
             return slot switch
             {
-                EquipSlotType.Slot1 => "Right Hand",
-                EquipSlotType.Slot2 => "Left Hand",
-                EquipSlotType.Slot3 => "Head",
-                EquipSlotType.Slot4 => "Body",
-                EquipSlotType.Slot5 => "Accessory",
-                EquipSlotType.Slot6 => "Accessory 2",
-                _ => $"Slot {(int)slot}"
+                EquipSlotType.Slot1 => T("Right Hand"),
+                EquipSlotType.Slot2 => T("Left Hand"),
+                EquipSlotType.Slot3 => T("Head"),
+                EquipSlotType.Slot4 => T("Body"),
+                EquipSlotType.Slot5 => T("Accessory"),
+                EquipSlotType.Slot6 => T("Accessory 2"),
+                _ => string.Format(T("Slot {0}"), (int)slot)
             };
         }
 
@@ -183,6 +190,7 @@ namespace FFIII_ScreenReader.Patches
 
                 // Get equipped item from Data property
                 string equippedItem = null;
+                string description = null;
                 var itemData = contentView.Data;
                 if (itemData != null)
                 {
@@ -196,6 +204,8 @@ namespace FFIII_ScreenReader.Patches
                         {
                             equippedItem += ", " + paramMsg;
                         }
+
+                        description = itemData.Deiscription; // game typo
                     }
                     catch { }
                 }
@@ -220,7 +230,7 @@ namespace FFIII_ScreenReader.Patches
                 }
                 else
                 {
-                    announcement += ": Empty";
+                    announcement += ": " + T("Empty");
                 }
 
                 if (string.IsNullOrWhiteSpace(announcement))
@@ -234,6 +244,8 @@ namespace FFIII_ScreenReader.Patches
                 // Skip duplicates
                 if (!EquipMenuState.ShouldAnnounce(announcement))
                     return;
+
+                EquipMenuState.LastFocusedDescription = TextUtils.StripIconMarkup(description);
 
                 // Set active state - clearing is handled by SetNextState_Postfix
                 // COMMENTED OUT: State validation was unreliable
@@ -296,7 +308,7 @@ namespace FFIII_ScreenReader.Patches
                 if (string.IsNullOrWhiteSpace(itemName))
                 {
                     // This might be a "Remove" or empty entry
-                    itemName = "Remove";
+                    itemName = T("Remove");
                 }
 
                 // Strip icon markup from name
@@ -317,16 +329,21 @@ namespace FFIII_ScreenReader.Patches
                 }
                 catch { }
 
-                // Add description
+                // Add description (Auto Detail); always kept for the I key
+                string description = null;
                 try
                 {
-                    announcement = AnnouncementBuilder.AppendDescription(announcement, itemData.Description, ", ");
+                    description = TextUtils.StripIconMarkup(itemData.Description);
+                    if (PreferencesManager.AutoDetailEnabled)
+                        announcement = AnnouncementBuilder.AppendDescription(announcement, description, ", ");
                 }
                 catch { }
 
                 // Skip duplicates
                 if (!EquipMenuState.ShouldAnnounce(announcement))
                     return;
+
+                EquipMenuState.LastFocusedDescription = description;
 
                 // Set active state - clearing is handled by SetNextState_Postfix
                 // COMMENTED OUT: State validation was unreliable

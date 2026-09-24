@@ -187,7 +187,7 @@ namespace FFIII_ScreenReader.Patches
                 lastTargetIndex = -1;
 
                 // Only announce mode entry - slot will be announced on first navigation
-                string announcement = "Character selection";
+                string announcement = ModTextTranslator.T("Character selection");
                 FFIII_ScreenReaderMod.SpeakText(announcement);
             }
             catch (Exception ex)
@@ -277,7 +277,7 @@ namespace FFIII_ScreenReader.Patches
 
 
         /// <summary>
-        /// Gets character slot info in format "Onion Knight {n}: {name or unnamed}".
+        /// Gets character slot info in format "Onion Knight {n}: {name or unnamed}" (localized).
         /// </summary>
         private static string GetCharacterSlotInfo(object controller, int index)
         {
@@ -290,40 +290,40 @@ namespace FFIII_ScreenReader.Patches
                 var listProp = AccessTools.Property(controller.GetType(), "SelectedDataList");
                 if (listProp == null)
                 {
-                    return $"Onion Knight {displayIndex}: unnamed";
+                    return FormatSlot(displayIndex, null);
                 }
 
                 var list = listProp.GetValue(controller);
                 if (list == null)
                 {
-                    return $"Onion Knight {displayIndex}: unnamed";
+                    return FormatSlot(displayIndex, null);
                 }
 
                 // Get count and item at index
                 var countProp = list.GetType().GetProperty("Count");
                 if (countProp == null)
                 {
-                    return $"Onion Knight {displayIndex}: unnamed";
+                    return FormatSlot(displayIndex, null);
                 }
 
                 int count = (int)countProp.GetValue(list);
                 if (index < 0 || index >= count)
                 {
                     // Index beyond character list is the Done button
-                    return index >= count ? "Done" : null;
+                    return index >= count ? ModTextTranslator.T("Done") : null;
                 }
 
                 // Get item at index using indexer
                 var indexer = list.GetType().GetProperty("Item");
                 if (indexer == null)
                 {
-                    return $"Onion Knight {displayIndex}: unnamed";
+                    return FormatSlot(displayIndex, null);
                 }
 
                 var item = indexer.GetValue(list, new object[] { index });
                 if (item == null)
                 {
-                    return $"Onion Knight {displayIndex}: unnamed";
+                    return FormatSlot(displayIndex, null);
                 }
 
                 // Get CharacterName from NewGameSelectData
@@ -333,19 +333,24 @@ namespace FFIII_ScreenReader.Patches
                     string name = nameProp.GetValue(item) as string;
                     if (string.IsNullOrEmpty(name))
                     {
-                        return $"Onion Knight {displayIndex}: unnamed";
+                        return FormatSlot(displayIndex, null);
                     }
-                    return $"Onion Knight {displayIndex}: {name}";
+                    return FormatSlot(displayIndex, name);
                 }
 
-                return $"Onion Knight {displayIndex}: unnamed";
+                return FormatSlot(displayIndex, null);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error getting character slot info: {ex.Message}");
-                return $"Onion Knight {displayIndex}: unnamed";
+                return FormatSlot(displayIndex, null);
             }
         }
+
+        private static string FormatSlot(int displayIndex, string name)
+            => string.IsNullOrEmpty(name)
+                ? string.Format(ModTextTranslator.T("Onion Knight {0}: unnamed"), displayIndex)
+                : string.Format(ModTextTranslator.T("Onion Knight {0}: {1}"), displayIndex, name);
 
         /// <summary>
         /// Postfix for InitNameSelect - announces entering name selection mode.
@@ -371,16 +376,16 @@ namespace FFIII_ScreenReader.Patches
                 string announcement;
                 if (!string.IsNullOrEmpty(characterName))
                 {
-                    announcement = $"Select name for {characterName}";
+                    announcement = string.Format(ModTextTranslator.T("Select name for {0}"), characterName);
                 }
                 else
                 {
-                    announcement = "Select name";
+                    announcement = ModTextTranslator.T("Select name");
                 }
 
                 if (!string.IsNullOrEmpty(suggestedName))
                 {
-                    announcement += $". Current: {suggestedName}";
+                    announcement += ". " + string.Format(ModTextTranslator.T("Current: {0}"), suggestedName);
                     AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_NAME, suggestedName);
                 }
 
@@ -529,11 +534,11 @@ namespace FFIII_ScreenReader.Patches
                 string announcement;
                 if (!string.IsNullOrEmpty(characterName))
                 {
-                    announcement = $"Enter name for {characterName}. Type using keyboard.";
+                    announcement = string.Format(ModTextTranslator.T("Enter name for {0}. Type using keyboard."), characterName);
                 }
                 else
                 {
-                    announcement = "Enter name using keyboard";
+                    announcement = ModTextTranslator.T("Enter name using keyboard");
                 }
 
                 FFIII_ScreenReaderMod.SpeakText(announcement);

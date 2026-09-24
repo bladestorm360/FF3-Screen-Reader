@@ -187,15 +187,7 @@ namespace FFIII_ScreenReader.Menus
         {
             try
             {
-                var commandId = content.CommandId;
-                return commandId switch
-                {
-                    Il2CppLast.Defaine.ShopCommandId.Buy => "Buy",
-                    Il2CppLast.Defaine.ShopCommandId.Sell => "Sell",
-                    Il2CppLast.Defaine.ShopCommandId.Equipment => "Equipment",
-                    Il2CppLast.Defaine.ShopCommandId.Back => "Back",
-                    _ => null
-                };
+                return FFIII_ScreenReader.Patches.ShopPatches.GetCommandName(content.CommandId);
             }
             catch
             {

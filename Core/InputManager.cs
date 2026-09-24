@@ -45,6 +45,20 @@ namespace FFIII_ScreenReader.Core
             registry.Register(KeyCode.DownArrow, KeyModifier.None, KeyContext.Status, StatusNavigationReader.NavigateNext, "Next stat");
             registry.Register(KeyCode.R, KeyContext.Status, StatusNavigationReader.ReadCurrentStat, "Repeat current stat");
 
+            // --- Bestiary detail: navigation ---
+            registry.Register(KeyCode.UpArrow, KeyModifier.Ctrl, KeyContext.BestiaryDetail, BestiaryNavigationReader.JumpToTop, "Jump to first stat (bestiary)");
+            registry.Register(KeyCode.UpArrow, KeyModifier.Shift, KeyContext.BestiaryDetail, BestiaryNavigationReader.JumpToPreviousGroup, "Jump to previous group (bestiary)");
+            registry.Register(KeyCode.UpArrow, KeyModifier.None, KeyContext.BestiaryDetail, BestiaryNavigationReader.NavigatePrevious, "Previous stat (bestiary)");
+            registry.Register(KeyCode.DownArrow, KeyModifier.Ctrl, KeyContext.BestiaryDetail, BestiaryNavigationReader.JumpToBottom, "Jump to last stat (bestiary)");
+            registry.Register(KeyCode.DownArrow, KeyModifier.Shift, KeyContext.BestiaryDetail, BestiaryNavigationReader.JumpToNextGroup, "Jump to next group (bestiary)");
+            registry.Register(KeyCode.DownArrow, KeyModifier.None, KeyContext.BestiaryDetail, BestiaryNavigationReader.NavigateNext, "Next stat (bestiary)");
+
+            // --- Controls pop-up (config Gamepad/Keyboard Controls): flat list navigation ---
+            registry.Register(KeyCode.UpArrow, KeyModifier.Ctrl, KeyContext.KeyHelp, KeyHelpReader.JumpToTop, "Jump to first control");
+            registry.Register(KeyCode.UpArrow, KeyModifier.None, KeyContext.KeyHelp, KeyHelpReader.NavigatePrevious, "Previous control");
+            registry.Register(KeyCode.DownArrow, KeyModifier.Ctrl, KeyContext.KeyHelp, KeyHelpReader.JumpToBottom, "Jump to last control");
+            registry.Register(KeyCode.DownArrow, KeyModifier.None, KeyContext.KeyHelp, KeyHelpReader.NavigateNext, "Next control");
+
             // --- Field: entity navigation (brackets + backslash) -- with battle feedback ---
             RegisterFieldOnly(KeyCode.LeftBracket, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category");
             RegisterFieldOnly(KeyCode.LeftBracket, KeyModifier.None, mod.CyclePrevious, "Previous entity");
@@ -52,7 +66,10 @@ namespace FFIII_ScreenReader.Core
             RegisterFieldOnly(KeyCode.RightBracket, KeyModifier.None, mod.CycleNext, "Next entity");
             RegisterFieldOnly(KeyCode.Backslash, KeyModifier.Ctrl, mod.ToggleToLayerFilter, "Toggle layer filter");
             RegisterFieldOnly(KeyCode.Backslash, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter");
-            RegisterFieldOnly(KeyCode.Backslash, KeyModifier.None, mod.AnnounceCurrentEntity, "Announce current entity");
+            RegisterFieldOnly(KeyCode.Backslash, KeyModifier.None, AnnounceOrRestartEntityBeacon, "Announce current entity / restart beacon");
+
+            // --- Field: manual entity rescan (backtick) ---
+            RegisterFieldOnly(KeyCode.BackQuote, KeyModifier.None, mod.ManualEntityRescan, "Force entity rescan");
 
             // --- Field: alternate keys (J/K/L/P) -- with battle feedback ---
             RegisterFieldOnly(KeyCode.J, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category (alt)");
@@ -60,8 +77,9 @@ namespace FFIII_ScreenReader.Core
             RegisterFieldOnly(KeyCode.K, KeyModifier.None, mod.AnnounceEntityOnly, "Announce entity name (alt)");
             RegisterFieldOnly(KeyCode.L, KeyModifier.Shift, mod.CycleNextCategory, "Next entity category (alt)");
             RegisterFieldOnly(KeyCode.L, KeyModifier.None, mod.CycleNext, "Next entity (alt)");
+            RegisterFieldOnly(KeyCode.P, KeyModifier.Ctrl, mod.ToggleToLayerFilter, "Toggle layer filter (alt)");
             RegisterFieldOnly(KeyCode.P, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter (alt)");
-            RegisterFieldOnly(KeyCode.P, KeyModifier.None, mod.AnnounceCurrentEntity, "Announce current entity (alt)");
+            RegisterFieldOnly(KeyCode.P, KeyModifier.None, AnnounceOrRestartEntityBeacon, "Announce current entity / restart beacon (alt)");
 
             // --- Field: waypoint keys ---
             registry.Register(KeyCode.Comma, KeyModifier.Shift, KeyContext.Field, mod.CyclePreviousWaypointCategory, "Previous waypoint category");
@@ -85,15 +103,25 @@ namespace FFIII_ScreenReader.Core
             registry.Register(KeyCode.H, KeyContext.Global, GameInfoAnnouncer.AnnounceCharacterStatus, "Announce character status");
             registry.Register(KeyCode.M, KeyModifier.Shift, KeyContext.Global, mod.ToggleMapExitFilter, "Toggle map exit filter");
             registry.Register(KeyCode.M, KeyModifier.None, KeyContext.Global, GameInfoAnnouncer.AnnounceCurrentMap, "Announce current map");
+            registry.Register(KeyCode.Tab, KeyContext.Global, HandleTabKey, "Clear battle state fallback");
             registry.Register(KeyCode.V, KeyContext.Global, AnnounceVehicleState, "Announce vehicle state");
+
+            // --- Global: R repeats the current dialogue page (the Status binding above takes precedence) ---
+            registry.Register(KeyCode.R, KeyContext.Global, () =>
+            {
+                if (DialogueTracker.IsInDialogue)
+                    DialogueTracker.RepeatLastPage();
+            }, "Repeat dialogue");
             registry.Register(KeyCode.I, KeyModifier.Shift, KeyContext.Global, KeyHelpReader.AnnounceKeyHelp, "Announce key help controls");
             registry.Register(KeyCode.I, KeyModifier.None, KeyContext.Global, HandleItemDetailsKey, "Item details");
+            registry.Register(KeyCode.U, KeyContext.Global, UsableByAnnouncer.AnnounceForCurrentContext, "Usable by jobs");
             registry.Register(KeyCode.Alpha0, KeyContext.Global, DumpUntranslatedEntityNames, "Dump untranslated entity names");
 
             // --- Field-only toggles (blocked in battle with feedback) ---
             RegisterFieldOnly(KeyCode.Quote, KeyModifier.None, mod.ToggleFootsteps, "Toggle footsteps");
             RegisterFieldOnly(KeyCode.Semicolon, KeyModifier.None, mod.ToggleWallTones, "Toggle wall tones");
-            RegisterFieldOnly(KeyCode.Alpha9, KeyModifier.None, mod.ToggleAudioBeacons, "Toggle audio beacons");
+            RegisterFieldOnly(KeyCode.F6, KeyModifier.None, mod.ToggleAudioBeacons, "Toggle audio beacons");
+            RegisterFieldOnly(KeyCode.Alpha9, KeyModifier.None, mod.ToggleAudioBeacons, "Toggle audio beacons (alt)");
 
             // --- Field-only category shortcuts (blocked in battle with feedback) ---
             RegisterFieldOnly(KeyCode.K, KeyModifier.Shift, mod.ResetToAllCategory, "Reset to All category");
@@ -124,6 +152,10 @@ namespace FFIII_ScreenReader.Core
             // Route controller inputs to the appropriate state-machine bucket. Runs every frame
             // so the router can interrupt speech / drive nav even without a gamepad.
             ControllerRouter.Update(activeContext);
+
+            // Per-tile footstep check (field-active gated, silent in vehicles). Runs after
+            // ControllerRouter.Update so IsFieldActive is fresh for this frame.
+            MovementSoundPatches.PollFootsteps();
 
             if (GamepadManager.AnyKeyboardKeyDown())
                 ControllerRouter.NotifyKeyboardInput();
@@ -164,7 +196,7 @@ namespace FFIII_ScreenReader.Core
                 return;
             }
 
-            // Handle function keys (F1/F3/F5 -- special coroutine/battle logic) — bare keypress only
+            // Handle function keys (F5 enemy HP display, F7 Auto Detail) — bare keypress only
             if (!anyModifierHeld)
                 HandleFunctionKeyInput();
 
@@ -198,11 +230,19 @@ namespace FFIII_ScreenReader.Core
 
         private KeyContext DetermineContext()
         {
+            // The config controls pop-up takes priority while shown.
+            if (KeyHelpReader.IsScreenActive)
+                return KeyContext.KeyHelp;
+
             var tracker = StatusNavigationTracker.Instance;
             if (tracker.IsNavigationActive && tracker.ValidateState())
                 return KeyContext.Status;
 
-            if (IsInBattle())
+            var bestiaryTracker = BestiaryNavigationTracker.Instance;
+            if (bestiaryTracker.IsNavigationActive && bestiaryTracker.ValidateState())
+                return KeyContext.BestiaryDetail;
+
+            if (BattleStateHelper.IsInBattle)
                 return KeyContext.Battle;
 
             // Field keys only fire while actively on a field map with no menu open.
@@ -214,17 +254,28 @@ namespace FFIII_ScreenReader.Core
             return KeyContext.Global;
         }
 
+        // Frame of the last cache-miss rescan in IsOnValidMap (see there).
+        private static int lastRefreshFrame = -1000;
+        private const int REFRESH_ON_MISS_INTERVAL_FRAMES = 30;
+
         private static bool IsOnValidMap()
         {
-            return GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>()?.fieldPlayer != null;
-        }
-
-        private static bool IsInBattle()
-        {
-            return MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_COMMAND) ||
-                   MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_TARGET) ||
-                   MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_ITEM) ||
-                   MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_MAGIC);
+            // Self-heal the cache so a cleared or stale entry can't wedge the field context into
+            // Global and silently disable field hotkeys. DetermineContext runs every frame, and
+            // off-field (title, intro, credits, Extras) there is no FieldPlayerController to find,
+            // so the rescan on a miss is throttled: at most one scene scan every 30 frames.
+            try
+            {
+                var pc = GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>();
+                if (pc == null && Time.frameCount - lastRefreshFrame >= REFRESH_ON_MISS_INTERVAL_FRAMES)
+                {
+                    lastRefreshFrame = Time.frameCount;
+                    pc = GameObjectCache.Refresh<Il2CppLast.Map.FieldPlayerController>();
+                }
+                return pc?.fieldPlayer != null;
+            }
+            catch { }
+            return false;
         }
 
         private static KeyModifier GetCurrentModifiers()
@@ -247,28 +298,71 @@ namespace FFIII_ScreenReader.Core
                 if (GamepadManager.IsKeyCodePressed(key))
                     registry.TryExecute(key, currentModifiers, activeContext);
             }
+
+            // WASD as alternative arrow keys — ONLY in navigation-buffer contexts, so game WASD
+            // movement and letter hotkeys elsewhere are untouched. Reuses the arrow bindings, so
+            // modifiers carry (Shift+W = Shift+Up = previous group).
+            if (IsBufferContext(activeContext))
+            {
+                if (GamepadManager.IsKeyCodePressed(KeyCode.W)) registry.TryExecute(KeyCode.UpArrow, currentModifiers, activeContext);
+                if (GamepadManager.IsKeyCodePressed(KeyCode.S)) registry.TryExecute(KeyCode.DownArrow, currentModifiers, activeContext);
+            }
+        }
+
+        private static bool IsBufferContext(KeyContext ctx)
+            => ctx == KeyContext.Status || ctx == KeyContext.BestiaryDetail || ctx == KeyContext.KeyHelp;
+
+        /// <summary>
+        /// \ and P: with beacon navigation on, re-target and re-ping the beacon; otherwise speak the
+        /// path to the selected entity.
+        /// </summary>
+        private void AnnounceOrRestartEntityBeacon()
+        {
+            NavigationTargetTracker.MarkEntity();
+            if (PreferencesManager.AudioBeaconsEnabled)
+                mod.RestartEntityBeacon();
+            else
+                mod.AnnounceCurrentEntity();
+        }
+
+        /// <summary>
+        /// Tab opens the main menu, which only happens on the field: a battle state still set at that
+        /// point is stale, so clear it. Tab is also pressed mid-battle, so only clear when no live
+        /// BattleController exists (one scene scan per keypress, only while the flag is set).
+        /// </summary>
+        private static void HandleTabKey()
+        {
+            if (!BattleStateHelper.IsInBattle) return;
+
+            try
+            {
+                if (UnityEngine.Object.FindObjectOfType<Il2CppLast.Battle.BattleController>() != null)
+                    return;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Battle State] Tab: BattleController check failed: {ex.Message}");
+                return;
+            }
+
+            BattleStateHelper.TryClearOnBattleEnd();
         }
 
         private void HandleFunctionKeyInput()
         {
-            // F1 toggles walk/run - announce after game processes it
-            if (GamepadManager.IsKeyCodePressed(KeyCode.F1))
-            {
-                CoroutineManager.StartManaged(AnnounceWalkRunState());
-                return;
-            }
+            // F1 (walk/run) and F3 (encounters) are the game's own toggles; GameToggleAnnouncer speaks
+            // the new state from the game's setters, whichever input flipped it.
 
-            // F3 toggles encounters - announce after game processes it
-            if (GamepadManager.IsKeyCodePressed(KeyCode.F3))
-            {
-                CoroutineManager.StartManaged(AnnounceEncounterState());
-                return;
-            }
-
-            // F5 to toggle enemy HP display (only when not in battle)
+            // F5 to toggle enemy HP display (battle only)
             if (GamepadManager.IsKeyCodePressed(KeyCode.F5))
             {
                 ToggleEnemyHPDisplay();
+            }
+
+            // F7 toggles Auto Detail (descriptions spoken on focus)
+            if (GamepadManager.IsKeyCodePressed(KeyCode.F7))
+            {
+                mod.ToggleAutoDetail();
             }
         }
 
@@ -289,23 +383,42 @@ namespace FFIII_ScreenReader.Core
             }
         }
 
-        private void HandleItemDetailsKey()
+        /// <summary>
+        /// I key / right stick up: reads the focused entry's description or details on demand, so
+        /// descriptions stay reachable with Auto Detail off. Most specific screens are checked first.
+        /// Equipment job requirements are on U (UsableByAnnouncer).
+        /// </summary>
+        internal static void HandleItemDetailsKey()
         {
-            // Check if in config menu
-            if (IsConfigMenuActive())
+            try
             {
-                AnnounceConfigTooltip();
+                if (IsConfigMenuActive())
+                    AnnounceConfigTooltip();
+                else if (JobMenuState.IsActive)
+                    SpeakDescription(JobMenuState.GetFocusedJobDescription());
+                else if (ShopMenuTracker.ValidateState())
+                    ShopDetailsAnnouncer.AnnounceCurrentItemDetails();
+                else if (EquipMenuState.IsActive)
+                    SpeakDescription(EquipMenuState.LastFocusedDescription);
+                else if (MagicMenuState.IsSpellListActive)
+                    SpeakDescription(MagicMenuState.LastFocusedDescription);
+                else if (ItemMenuState.IsItemMenuActive)
+                    SpeakDescription(ItemMenuState.LastSelectedItem?.Description);
+                else if (BattleMagicMenuState.IsActive)
+                    SpeakDescription(BattleMagicMenuState.LastFocusedDescription);
+                else if (BattleItemMenuState.IsActive)
+                    SpeakDescription(BattleItemMenuState.LastFocusedDescription);
             }
-            // Check if in shop menu
-            else if (ShopMenuTracker.ValidateState())
+            catch (Exception ex)
             {
-                ShopDetailsAnnouncer.AnnounceCurrentItemDetails();
+                MelonLogger.Warning($"Error handling I key: {ex.Message}");
             }
-            // Check if in item menu - announces equipment job requirements
-            else if (ItemMenuState.IsItemMenuActive)
-            {
-                ItemDetailsAnnouncer.AnnounceEquipRequirements();
-            }
+        }
+
+        private static void SpeakDescription(string description)
+        {
+            description = TextUtils.StripIconMarkup(description);
+            FFIII_ScreenReaderMod.SpeakText(string.IsNullOrWhiteSpace(description) ? T("No description") : description, interrupt: true);
         }
 
         private static bool IsConfigMenuActive()
@@ -364,7 +477,7 @@ namespace FFIII_ScreenReader.Core
         {
             // Enemy HP Display is a battle feature, so gate on in-battle (not IsFieldActive,
             // which is false during battle). Restores the pre-refactor behavior.
-            if (!IsInBattle())
+            if (!BattleStateHelper.IsInBattle)
             {
                 ControllerRouter.SpeakModMenuUnavailable();
                 return;
@@ -409,44 +522,6 @@ namespace FFIII_ScreenReader.Core
             {
                 MelonLogger.Warning($"Error checking input field state: {ex.Message}");
                 return false;
-            }
-        }
-
-        private static IEnumerator AnnounceWalkRunState()
-        {
-            yield return null;
-            yield return null;
-            yield return null; // Wait 3 frames
-
-            try
-            {
-                bool isDashing = MoveStateHelper.GetDashFlag();
-                string state = isDashing ? T("Run") : T("Walk");
-                FFIII_ScreenReaderMod.SpeakText(state, interrupt: true);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[F1] Error reading walk/run state: {ex.Message}");
-            }
-        }
-
-        private static IEnumerator AnnounceEncounterState()
-        {
-            yield return null; // Wait 1 frame
-
-            try
-            {
-                var userData = Il2CppLast.Management.UserDataManager.Instance();
-                if (userData?.CheatSettingsData != null)
-                {
-                    bool enabled = userData.CheatSettingsData.IsEnableEncount;
-                    string state = enabled ? T("Encounters on") : T("Encounters off");
-                    FFIII_ScreenReaderMod.SpeakText(state, interrupt: true);
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[F3] Error reading encounter state: {ex.Message}");
             }
         }
     }

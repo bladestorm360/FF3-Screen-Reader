@@ -40,7 +40,7 @@ namespace FFIII_ScreenReader.Core
         public static int EnemyHPDisplay => prefEnemyHPDisplay?.Value ?? 0;
 
         // Multi-hit damage display (0=Total only, 1=With hit count "14x1552 damage")
-        public static int DamageDisplay => prefDamageDisplay?.Value ?? 0;
+        public static int DamageDisplay => prefDamageDisplay?.Value ?? 1;
 
         // Toggle states
         public static bool WallTonesEnabled => prefWallTones?.Value ?? false;
@@ -58,9 +58,10 @@ namespace FFIII_ScreenReader.Core
         // Menu position announcements: append "(3 of 12)" to list-item announcements. Default ON.
         public static bool MenuPositionAnnouncementsEnabled => prefMenuPositionAnnouncements?.Value ?? true;
 
-        // Auto Detail: on item/shop focus, also read the on-demand detail (the "I" key info).
-        // Opt-in — default OFF so behavior is unchanged unless the player enables it.
-        public static bool AutoDetailEnabled => prefAutoDetail?.Value ?? false;
+        // Auto Detail: on focus, also read descriptions/stats (items, magic, equipment, shops, battle
+        // item/magic lists). Off = names only, with descriptions on demand via the I key. Default ON
+        // (FF1 parity); an existing saved value is kept.
+        public static bool AutoDetailEnabled => prefAutoDetail?.Value ?? true;
 
         public static void Initialize()
         {
@@ -78,11 +79,18 @@ namespace FFIII_ScreenReader.Core
             prefBeaconVolume = prefsCategory.CreateEntry<int>("BeaconVolume", 50, "Beacon Volume", "Volume for audio beacon pings (0-100)");
             prefExpCounterVolume = prefsCategory.CreateEntry<int>("ExpCounterVolume", 50, "EXP Counter Volume", "Volume for EXP counter beep (0-100)");
             prefEnemyHPDisplay = prefsCategory.CreateEntry<int>("EnemyHPDisplay", 0, "Enemy HP Display", "0=Numbers, 1=Percentage, 2=Hidden");
-            prefDamageDisplay = prefsCategory.CreateEntry<int>("DamageDisplay", 0, "Multi-hit Damage", "0=Total only, 1=With hit count (e.g. 14x1552 damage)");
+            // Stored as "MultiHitDamage" (default: with hit count) rather than the old off-by-default
+            // "DamageDisplay", which MelonPreferences had already written into every install, so the
+            // hit count is announced once after updating; choosing "Total only" afterwards sticks.
+            prefDamageDisplay = prefsCategory.CreateEntry<int>("MultiHitDamage", 1, "Multi-hit Damage", "0=Total only, 1=With hit count (e.g. 14x1552 damage)");
             prefStickClickNormalization = prefsCategory.CreateEntry<bool>("StickClickNormalization", false, "Stick Click Normalization", "Pass R3/L3 stick clicks to the game (encounter toggle / auto-dash) instead of consuming them for mod functions");
             prefAnnounceOnBeaconRestart = prefsCategory.CreateEntry<bool>("AnnounceOnBeaconRestart", false, "Beacon Destination Announcement", "Re-speak the current destination when the beacon is restarted");
             prefMenuPositionAnnouncements = prefsCategory.CreateEntry<bool>("MenuPositionAnnouncements", true, "Menu Position Announcements", "Append the cursor's position in a list when navigating menus, e.g. (3 of 12)");
-            prefAutoDetail = prefsCategory.CreateEntry<bool>("AutoDetail", false, "Auto Detail", "Automatically read item/equipment/shop detail (the 'I' key info) on focus, instead of requiring the key");
+            // Stored as "AutoDetailOnFocus", not "AutoDetail": Auto Detail now gates the item, magic and
+            // battle descriptions that used to be spoken unconditionally, and MelonPreferences had
+            // already written the old off-by-default "AutoDetail" into every install. A new entry
+            // gives everyone FF1's default (on) once; turning it off afterwards sticks as usual.
+            prefAutoDetail = prefsCategory.CreateEntry<bool>("AutoDetailOnFocus", true, "Auto Detail", "Announce descriptions/stats on focus for items, magic, equipment, and shops (the 'I' key info)");
         }
 
         private static void SetIntPreference(MelonPreferences_Entry<int> pref, int value, int min, int max)
