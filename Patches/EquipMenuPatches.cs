@@ -112,6 +112,16 @@ namespace FFIII_ScreenReader.Patches
                     logPrefix: "[Equipment Menu]");
                 HarmonyPatchHelper.PatchSetNextState(harmony, controllerType, typeof(EquipMenuState),
                     logPrefix: "[Equipment Menu]");
+
+                // Slot list and item list navigation (manual: attribute patches crash on IL2CPP).
+                // KeyInput EquipmentInfoWindowController.SelectContent(Cursor) 0x56F260 and
+                // EquipmentSelectWindowController.SelectContent(Cursor, WithinRangeType) 0x573C80, unique.
+                HarmonyPatchHelper.PatchPostfix(harmony, typeof(KeyInputEquipmentInfoWindowController), "SelectContent",
+                    typeof(EquipmentInfoWindowController_SelectContent_Patch), nameof(EquipmentInfoWindowController_SelectContent_Patch.Postfix),
+                    "[Equipment Menu]", new[] { typeof(GameCursor) });
+                HarmonyPatchHelper.PatchPostfix(harmony, typeof(KeyInputEquipmentSelectWindowController), "SelectContent",
+                    typeof(EquipmentSelectWindowController_SelectContent_Patch), nameof(EquipmentSelectWindowController_SelectContent_Patch.Postfix),
+                    "[Equipment Menu]", new[] { typeof(GameCursor), typeof(CustomScrollViewWithinRangeType) });
                 transitionPatchApplied = true;
             }
             catch (Exception ex)
@@ -126,9 +136,14 @@ namespace FFIII_ScreenReader.Patches
                 IsActive = false;
         }
 
-        public static void SetNextState_Postfix(int state)
+        /// <summary>
+        /// SetNextState(State state), positional. Its body (0x40BA70) is shared with 12 other int setters,
+        /// so the native class is checked first.
+        /// </summary>
+        public static void SetNextState_Postfix(KeyInputEquipmentWindowController __instance, int __0)
         {
-            if ((state == IL2CppOffsets.Equipment.STATE_NONE || state == IL2CppOffsets.Equipment.STATE_COMMAND) && IsActive)
+            if (!HarmonyPatchHelper.IsNativeInstanceOf<KeyInputEquipmentWindowController>(__instance)) return;
+            if ((__0 == IL2CppOffsets.Equipment.STATE_NONE || __0 == IL2CppOffsets.Equipment.STATE_COMMAND) && IsActive)
                 IsActive = false;
         }
     }
@@ -136,16 +151,16 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Patch for equipment slot selection (Menu 2).
     /// EquipmentInfoWindowController.SelectContent is called when navigating between equipment slots.
-    /// Uses same approach as FF5 - direct contentList access.
+    /// Uses same approach as FF5 - direct contentList access. Registered in ApplyTransitionPatches.
     /// </summary>
-    [HarmonyPatch(typeof(KeyInputEquipmentInfoWindowController), "SelectContent", new Type[] { typeof(GameCursor) })]
     internal static class EquipmentInfoWindowController_SelectContent_Patch
     {
-        [HarmonyPostfix]
-        public static void Postfix(KeyInputEquipmentInfoWindowController __instance, GameCursor targetCursor)
+        /// <summary>SelectContent(Cursor targetCursor), positional.</summary>
+        public static void Postfix(KeyInputEquipmentInfoWindowController __instance, GameCursor __0)
         {
             try
             {
+                GameCursor targetCursor = __0;
                 // NOTE: Don't set IsActive here - wait until after validation
                 // Setting it early causes suppression during menu transitions
 
@@ -268,16 +283,16 @@ namespace FFIII_ScreenReader.Patches
     /// <summary>
     /// Patch for equipment item selection (Menu 3).
     /// EquipmentSelectWindowController.SelectContent is called when navigating the item list.
+    /// Registered in EquipMenuState.ApplyTransitionPatches.
     /// </summary>
-    [HarmonyPatch(typeof(KeyInputEquipmentSelectWindowController), "SelectContent",
-        new Type[] { typeof(GameCursor), typeof(CustomScrollViewWithinRangeType) })]
     internal static class EquipmentSelectWindowController_SelectContent_Patch
     {
-        [HarmonyPostfix]
-        public static void Postfix(KeyInputEquipmentSelectWindowController __instance, GameCursor targetCursor)
+        /// <summary>SelectContent(Cursor targetCursor, WithinRangeType type), positional.</summary>
+        public static void Postfix(KeyInputEquipmentSelectWindowController __instance, GameCursor __0)
         {
             try
             {
+                GameCursor targetCursor = __0;
                 // NOTE: Don't set IsActive here - wait until after validation
                 // Setting it early causes suppression during menu transitions
 

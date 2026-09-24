@@ -38,25 +38,51 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Manual SetCommandData prefix (attribute patches crash on IL2CPP). Closes the command-announce
-    /// window before the body runs, so the cursor resets fired during the actor handoff are suppressed
-    /// by the SetCursor postfix.
+    /// Manual registration (attribute patches crash on IL2CPP) of the battle command and target hooks.
+    /// KeyInput BattleCommandSelectController: SetCommandData 0x3C2B20 (prefix closes the command-announce
+    /// window before the body runs, so the cursor resets fired during the actor handoff are suppressed by
+    /// the SetCursor postfix; postfix announces the turn), SetCursor(int) 0x3C3930. KeyInput
+    /// BattleTargetSelectController.SelectContent(IEnumerable&lt;BattlePlayerData&gt;, int) 0x8A16B0 and
+    /// (IEnumerable&lt;BattleEnemyData&gt;, int) 0x8A15A0. All RVAs unique in dump.cs.
     /// </summary>
     internal static class BattleCommandManualPatches
     {
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
+            Patch(harmony, typeof(BattleCommandSelectController), "SetCommandData", null,
+                AccessTools.Method(typeof(BattleCommandManualPatches), nameof(SetCommandData_Prefix)),
+                AccessTools.Method(typeof(BattleCommandSelectController_SetCommandData_Patch), nameof(BattleCommandSelectController_SetCommandData_Patch.Postfix)));
+            Patch(harmony, typeof(BattleCommandSelectController), "SetCursor", new[] { typeof(int) },
+                null,
+                AccessTools.Method(typeof(BattleCommandSelectController_SetCursor_Patch), nameof(BattleCommandSelectController_SetCursor_Patch.Postfix)));
+            Patch(harmony, typeof(BattleTargetSelectController), "SelectContent",
+                new[] { typeof(Il2CppSystem.Collections.Generic.IEnumerable<BattlePlayerData>), typeof(int) },
+                AccessTools.Method(typeof(BattleTargetSelectController_SelectContent_Player_Patch), nameof(BattleTargetSelectController_SelectContent_Player_Patch.Prefix)),
+                AccessTools.Method(typeof(BattleTargetSelectController_SelectContent_Player_Patch), nameof(BattleTargetSelectController_SelectContent_Player_Patch.Postfix)));
+            Patch(harmony, typeof(BattleTargetSelectController), "SelectContent",
+                new[] { typeof(Il2CppSystem.Collections.Generic.IEnumerable<BattleEnemyData>), typeof(int) },
+                AccessTools.Method(typeof(BattleTargetSelectController_SelectContent_Enemy_Patch), nameof(BattleTargetSelectController_SelectContent_Enemy_Patch.Prefix)),
+                AccessTools.Method(typeof(BattleTargetSelectController_SelectContent_Enemy_Patch), nameof(BattleTargetSelectController_SelectContent_Enemy_Patch.Postfix)));
+        }
+
+        private static void Patch(HarmonyLib.Harmony harmony, Type type, string name, Type[] args,
+            System.Reflection.MethodInfo prefix, System.Reflection.MethodInfo postfix)
+        {
             try
             {
-                var method = AccessTools.Method(typeof(BattleCommandSelectController), nameof(BattleCommandSelectController.SetCommandData));
-                if (method != null)
-                    harmony.Patch(method, prefix: new HarmonyMethod(AccessTools.Method(typeof(BattleCommandManualPatches), nameof(SetCommandData_Prefix))));
-                else
-                    MelonLogger.Warning("[Battle Command] BattleCommandSelectController.SetCommandData not found");
+                var method = args != null ? AccessTools.Method(type, name, args) : AccessTools.Method(type, name);
+                if (method == null)
+                {
+                    MelonLogger.Warning($"[Battle Command] {type.Name}.{name} not found");
+                    return;
+                }
+                harmony.Patch(method,
+                    prefix: prefix != null ? new HarmonyMethod(prefix) : null,
+                    postfix: postfix != null ? new HarmonyMethod(postfix) : null);
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Command] Error patching SetCommandData prefix: {ex.Message}");
+                MelonLogger.Warning($"[Battle Command] Error patching {type.Name}.{name}: {ex.Message}");
             }
         }
 
@@ -68,19 +94,19 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patch for SetCommandData - announces when a character's turn becomes active.
-    /// (Its prefix is registered manually in BattleCommandManualPatches.)
+    /// SetCommandData postfix - announces when a character's turn becomes active.
+    /// (Registered, with its prefix, in BattleCommandManualPatches.)
     /// </summary>
-    [HarmonyPatch(typeof(BattleCommandSelectController), nameof(BattleCommandSelectController.SetCommandData))]
     internal static class BattleCommandSelectController_SetCommandData_Patch
     {
         private static int lastCharacterId = -1;
 
-        [HarmonyPostfix]
-        public static void Postfix(BattleCommandSelectController __instance, OwnedCharacterData data)
+        /// <summary>SetCommandData(OwnedCharacterData data, ...), positional.</summary>
+        public static void Postfix(BattleCommandSelectController __instance, OwnedCharacterData __0)
         {
             try
             {
+                OwnedCharacterData data = __0;
                 if (data == null) return;
 
                 // Open the window before any early-return below: a same-character re-entry (e.g. after
@@ -119,10 +145,9 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patches for battle command selection (Attack, Magic, Item, Defend, etc.)
-    /// Uses string method name since SetCursor is private.
+    /// Battle command selection (Attack, Magic, Item, Defend, etc.): postfix on the private
+    /// SetCursor(int), registered in BattleCommandManualPatches.
     /// </summary>
-    [HarmonyPatch(typeof(BattleCommandSelectController), "SetCursor", new Type[] { typeof(int) })]
     internal static class BattleCommandSelectController_SetCursor_Patch
     {
         // Command-announce window. Opened by the SetCommandData postfix ("X's turn"); closed by the
@@ -184,11 +209,12 @@ namespace FFIII_ScreenReader.Patches
             commandReannouncePending = true;
         }
 
-        [HarmonyPostfix]
-        public static void Postfix(BattleCommandSelectController __instance, int index)
+        /// <summary>SetCursor(int index), positional.</summary>
+        public static void Postfix(BattleCommandSelectController __instance, int __0)
         {
             try
             {
+                int index = __0;
                 if (__instance == null) return;
 
                 int myGen = ++reannounceGen;
@@ -374,14 +400,24 @@ namespace FFIII_ScreenReader.Patches
                 var controller = instance as BattleTargetSelectController;
                 if (controller == null) return;
 
+                int gen = ++initialReadGen;
+
+                // EnemysInit calls SelectContent(enemies) itself (0x89DB09): if its postfix already spoke
+                // the focused target inside this Init, there is nothing left to read.
+                if (lastTargetSpokenFrame == UnityEngine.Time.frameCount)
+                    return;
+
                 // A state entry is a fresh targeting pass: clear the index dedup so a focused index
                 // equal to the last one (Attack, cancel, Attack; a lone survivor) is still spoken.
                 // Plain Attack never calls ShowWindow, and SetCommandData skips its reset on a
                 // same-character re-entry, so nothing else clears it here.
-                if (lastTargetSpokenFrame != UnityEngine.Time.frameCount)
-                    AnnouncementDeduplicator.Reset(CONTEXT_PLAYER, CONTEXT_ENEMY);
+                AnnouncementDeduplicator.Reset(CONTEXT_PLAYER, CONTEXT_ENEMY);
 
-                int gen = ++initialReadGen;
+                // The Init itself is the event: PlayerInit sets the cursor (BattleCursorUtility.
+                // SetTargetPlayer) and EnemysInit selects the content before returning, and
+                // StateMachine.Change runs the Init synchronously, so the state, cursor and list are
+                // normally readable here. The bounded frame retry is kept only as a fallback.
+                if (TryReadInitialTarget(controller, isEnemy)) return;
                 CoroutineManager.StartManaged(ReadInitialTargetWhenReady(controller, isEnemy, gen));
             }
             catch (Exception ex)
@@ -751,27 +787,24 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patch for when player target selection changes.
+    /// Player target selection changes (registered in BattleCommandManualPatches).
     /// Also sets IsTargetSelectionActive since SelectContent is called when target selection is open.
     /// </summary>
-    [HarmonyPatch(typeof(BattleTargetSelectController), "SelectContent",
-        new Type[] { typeof(Il2CppSystem.Collections.Generic.IEnumerable<BattlePlayerData>), typeof(int) })]
     internal static class BattleTargetSelectController_SelectContent_Player_Patch
     {
-        [HarmonyPrefix]
         public static void Prefix()
         {
             BattleTargetPatches.SetTargetSelectionActive(true);
         }
 
-        [HarmonyPostfix]
+        /// <summary>SelectContent(IEnumerable&lt;BattlePlayerData&gt; list, int index), positional.</summary>
         public static void Postfix(BattleTargetSelectController __instance,
-            Il2CppSystem.Collections.Generic.IEnumerable<BattlePlayerData> list, int index)
+            Il2CppSystem.Collections.Generic.IEnumerable<BattlePlayerData> __0, int __1)
         {
             try
             {
                 BattleTargetPatches.AnnouncePlayerTarget(
-                    list.TryCast<Il2CppSystem.Collections.Generic.List<BattlePlayerData>>(), index);
+                    __0.TryCast<Il2CppSystem.Collections.Generic.List<BattlePlayerData>>(), __1);
             }
             catch (Exception ex)
             {
@@ -781,27 +814,24 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patch for when enemy target selection changes.
+    /// Enemy target selection changes (registered in BattleCommandManualPatches).
     /// Also sets IsTargetSelectionActive since SelectContent is called when target selection is open.
     /// </summary>
-    [HarmonyPatch(typeof(BattleTargetSelectController), "SelectContent",
-        new Type[] { typeof(Il2CppSystem.Collections.Generic.IEnumerable<BattleEnemyData>), typeof(int) })]
     internal static class BattleTargetSelectController_SelectContent_Enemy_Patch
     {
-        [HarmonyPrefix]
         public static void Prefix()
         {
             BattleTargetPatches.SetTargetSelectionActive(true);
         }
 
-        [HarmonyPostfix]
+        /// <summary>SelectContent(IEnumerable&lt;BattleEnemyData&gt; list, int index), positional.</summary>
         public static void Postfix(BattleTargetSelectController __instance,
-            Il2CppSystem.Collections.Generic.IEnumerable<BattleEnemyData> list, int index)
+            Il2CppSystem.Collections.Generic.IEnumerable<BattleEnemyData> __0, int __1)
         {
             try
             {
                 BattleTargetPatches.AnnounceEnemyTarget(
-                    list.TryCast<Il2CppSystem.Collections.Generic.List<BattleEnemyData>>(), index);
+                    __0.TryCast<Il2CppSystem.Collections.Generic.List<BattleEnemyData>>(), __1);
             }
             catch (Exception ex)
             {
@@ -811,23 +841,21 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// DEPRECATED: Attribute-based ShowWindow patch doesn't work reliably in FF3.
-    /// Use BattleTargetShowWindowManualPatch instead (applied via TryPatchBattleTargetShowWindow).
-    /// </summary>
-    // [HarmonyPatch(typeof(BattleTargetSelectController), nameof(BattleTargetSelectController.ShowWindow))]
-    // internal static class BattleTargetSelectController_ShowWindow_Patch { ... }
-
-    /// <summary>
     /// Manual patch for ShowWindow to track when target selection window is shown/hidden.
     /// Applied via FFIII_ScreenReaderMod.TryPatchBattleTargetShowWindow().
+    /// KeyInput BattleTargetSelectController.ShowWindow (0x2F2990) shares its body with 9 other bool
+    /// setters (CharacterContentController.SetEnableCharacterContent, NameContentView.SetEnableNameText,
+    /// ResultSkillView.SetEnableSkillView, ShopCharaStatusContentController.SetActive, ...), so the
+    /// prefix checks the native class before acting.
     /// </summary>
     internal static class BattleTargetShowWindowManualPatch
     {
-        public static void Prefix(object __instance, bool isShow)
+        public static void Prefix(BattleTargetSelectController __instance, bool __0)
         {
             try
             {
-                BattleTargetPatches.OnShowWindow(isShow);
+                if (!HarmonyPatchHelper.IsNativeInstanceOf<BattleTargetSelectController>(__instance)) return;
+                BattleTargetPatches.OnShowWindow(__0);
             }
             catch (Exception ex)
             {

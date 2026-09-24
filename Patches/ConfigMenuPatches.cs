@@ -155,8 +155,18 @@ namespace FFIII_ScreenReader.Patches
             announcement = MenuPosition.Format(announcement, index, count);
             FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             lastDetailsController = instance;
+            lastRowSpokenFrame = Time.frameCount;
             return announcement;
         }
+
+        // Frame of the last row read. The deferred reads below (title Options open, popup close, bestiary
+        // return) are fallbacks for when SelectCommand does not fire: each is armed with the current frame
+        // and gives up if a row was read in or after that frame, because the game's own SelectCommand
+        // (e.g. ShowConfig → InitConfig → ResetCursor, or a popup's "No" callback re-entering the Config
+        // state) already spoke it.
+        private static int lastRowSpokenFrame = -1;
+
+        private static bool RowSpokenSince(int armedFrame) => lastRowSpokenFrame >= armedFrame;
 
         // The details controller of the config screen being navigated (title Options or in-game Config),
         // from the latest row read: lets the popup-close re-read find it without a scene search.
@@ -181,13 +191,14 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         internal static void ReannounceAfterPopup()
         {
-            CoroutineManager.StartManaged(ReannounceNextFrame(++reannounceGen));
+            CoroutineManager.StartManaged(ReannounceNextFrame(++reannounceGen, Time.frameCount));
         }
 
-        private static System.Collections.IEnumerator ReannounceNextFrame(int gen)
+        private static System.Collections.IEnumerator ReannounceNextFrame(int gen, int armedFrame)
         {
             yield return null;
             if (gen != reannounceGen) yield break;
+            if (RowSpokenSince(armedFrame)) yield break; // the popup's callback re-read the row
             try
             {
                 var details = lastDetailsController;
@@ -213,13 +224,14 @@ namespace FFIII_ScreenReader.Patches
             if (inst == null) return;
             if (initialFocusPendingFrame >= 0 && Time.frameCount - initialFocusPendingFrame < INITIAL_FOCUS_STALE_FRAMES) return;
             initialFocusPendingFrame = Time.frameCount;
-            CoroutineManager.StartManaged(InitialFocusCoroutine(inst));
+            CoroutineManager.StartManaged(InitialFocusCoroutine(inst, Time.frameCount));
         }
 
-        private static System.Collections.IEnumerator InitialFocusCoroutine(Il2CppLast.UI.KeyInput.OptionController inst)
+        private static System.Collections.IEnumerator InitialFocusCoroutine(Il2CppLast.UI.KeyInput.OptionController inst, int armedFrame)
         {
             yield return null;
             initialFocusPendingFrame = -1;
+            if (RowSpokenSince(armedFrame)) yield break; // InitConfig's own SelectCommand spoke the row
             try
             {
                 if (inst != null && ConfigMenuState.IsActive)
@@ -242,13 +254,17 @@ namespace FFIII_ScreenReader.Patches
         /// <summary>
         /// Re-reads the focused config row once the config menu is back after the config-menu bestiary
         /// (which resumes the menu without firing SelectCommand). Waits out the loading screen, bounded.
+        /// Kept as a timed wait: the return is a sub-scene re-activation (SubSceneManagerMainGame back to
+        /// Menu after MenuLibraryUi / MenuLibraryInfo), and no hooked game method is known to run when the
+        /// config screen is shown again. It stops early if SelectCommand reads the row, and checks the
+        /// details controller last read before any scene search.
         /// </summary>
         internal static void ReannounceFocusedConfigOption()
         {
-            CoroutineManager.StartManaged(ReannounceWhenConfigReady(++reannounceGen));
+            CoroutineManager.StartManaged(ReannounceWhenConfigReady(++reannounceGen, Time.frameCount));
         }
 
-        private static System.Collections.IEnumerator ReannounceWhenConfigReady(int gen)
+        private static System.Collections.IEnumerator ReannounceWhenConfigReady(int gen, int armedFrame)
         {
             var wait = new WaitForSeconds(0.1f);
             float elapsed = 0f;
@@ -257,6 +273,21 @@ namespace FFIII_ScreenReader.Patches
                 yield return wait;
                 elapsed += 0.1f;
                 if (gen != reannounceGen) yield break;
+                if (RowSpokenSince(armedFrame)) yield break; // the menu's own SelectCommand read the row
+
+                // The details controller read before entering the bestiary, if its screen is shown again
+                if (IsLastDetailsControllerShown())
+                {
+                    try
+                    {
+                        if (AnnounceSelectedConfigCommand(lastDetailsController) != null)
+                        {
+                            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.CONFIG_MENU);
+                            yield break;
+                        }
+                    }
+                    catch { }
+                }
 
                 try
                 {
@@ -281,22 +312,21 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patch for SwitchArrowSelectTypeProcess - called when left/right arrows change toggle options.
-    /// Only announces when the value actually changes.
+    /// Postfix on KeyInput SwitchArrowSelectTypeProcess (0x309430) - called when left/right arrows change
+    /// toggle options: only from the input lambda of UpdateController (&lt;UpdateController&gt;b__0, 0x633F80),
+    /// with the pressed Key. Only announces when the value actually changes. Registered manually in
+    /// ConfigMenuPatches.ApplyPatches.
     /// </summary>
-    [HarmonyPatch(typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchArrowSelectTypeProcess")]
     internal static class ConfigActualDetails_SwitchArrowSelectType_Patch
     {
         private const string CONTEXT_ARROW = AnnouncementContexts.CONFIG_ARROW;
 
-        [HarmonyPostfix]
-        public static void Postfix(
-            Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase __instance,
-            ConfigCommandController controller,
-            Key key)
+        /// <summary>SwitchArrowSelectTypeProcess(ConfigCommandController controller, Key key), positional.</summary>
+        public static void Postfix(ConfigCommandController __0)
         {
             try
             {
+                ConfigCommandController controller = __0;
                 if (controller == null || controller.view == null) return;
 
                 var view = controller.view;
@@ -358,46 +388,43 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patch for SwitchSliderTypeProcess - called when left/right arrows change slider values.
-    /// Only announces when the value actually changes for the SAME option.
+    /// KeyInput SwitchSliderTypeProcess (0x30A740): left/right on a slider row. The game calls it from two
+    /// places: the input lambda of UpdateController with the pressed Key (the value changes), and the tail
+    /// of UpdateController every frame with a null Key while a slider row is focused (re-asserts the
+    /// value; SetSliderValue and Slider.set_value are re-called there too, so no method runs only on a
+    /// change). Both patches return at once on the per-frame call; the value is compared before/after the
+    /// key-driven call and spoken only when it changed. Registered manually in ConfigMenuPatches.
     /// </summary>
-    [HarmonyPatch(typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess")]
     internal static class ConfigActualDetails_SwitchSliderType_Patch
     {
-        private const string CONTEXT_SLIDER = AnnouncementContexts.CONFIG_SLIDER;
-        private const string CONTEXT_SLIDER_CONTROLLER = AnnouncementContexts.CONFIG_SLIDER_CONTROLLER;
+        // Slider percentage before the key-driven call (null: not captured)
+        private static string valueBefore;
 
-        [HarmonyPostfix]
-        public static void Postfix(
-            Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase __instance,
-            ConfigCommandController controller,
-            Key key)
+        /// <summary>SwitchSliderTypeProcess(ConfigCommandController controller, Key key), positional.</summary>
+        public static void Prefix(ConfigCommandController __0, Key __1)
         {
+            valueBefore = null;
+            if (__1 == null) return; // per-frame re-assert, no key
             try
             {
-                if (controller == null || controller.view == null) return;
+                var slider = __0?.view?.Slider;
+                if (slider != null)
+                    valueBefore = ConfigMenuReader.GetSliderPercentage(slider);
+            }
+            catch { }
+        }
 
-                var view = controller.view;
-                if (view.Slider == null) return;
+        public static void Postfix(ConfigCommandController __0, Key __1)
+        {
+            if (__1 == null) return; // per-frame re-assert, no key
+            try
+            {
+                var slider = __0?.view?.Slider;
+                if (slider == null) return;
 
                 // Calculate percentage using proper min/max range
-                string percentage = ConfigMenuReader.GetSliderPercentage(view.Slider);
-                if (string.IsNullOrEmpty(percentage)) return;
-
-                // Check if we moved to a different controller (different option)
-                // If so, don't announce - SelectCommand handles the full "Name: Value" announcement
-                if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SLIDER_CONTROLLER, controller))
-                {
-                    // Update the percentage tracker for the new controller
-                    AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SLIDER, percentage);
-                    return;
-                }
-
-                // Same controller - only announce if value changed
-                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SLIDER, percentage))
-                {
-                    return;
-                }
+                string percentage = ConfigMenuReader.GetSliderPercentage(slider);
+                if (string.IsNullOrEmpty(percentage) || percentage == valueBefore) return;
 
                 MelonLogger.Msg($"[ConfigMenu] Slider value changed: {percentage}");
                 FFIII_ScreenReaderMod.SpeakText(percentage, interrupt: true);
@@ -410,22 +437,19 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patch for Touch mode arrow button handling.
-    /// Only announces when the value actually changes.
+    /// Touch mode arrow button handling (Touch SwitchArrowTypeProcess 0x8908D0, a UI button callback).
+    /// Only announces when the value actually changes. Registered manually in ConfigMenuPatches.
     /// </summary>
-    [HarmonyPatch(typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchArrowTypeProcess")]
     internal static class ConfigActualDetailsTouch_SwitchArrowType_Patch
     {
         private const string CONTEXT_TOUCH_ARROW = AnnouncementContexts.CONFIG_TOUCH_ARROW;
 
-        [HarmonyPostfix]
-        public static void Postfix(
-            Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase __instance,
-            Il2CppLast.UI.Touch.ConfigCommandController controller,
-            int value)
+        /// <summary>SwitchArrowTypeProcess(ConfigCommandController controller, int value), positional.</summary>
+        public static void Postfix(Il2CppLast.UI.Touch.ConfigCommandController __0)
         {
             try
             {
+                var controller = __0;
                 if (controller == null || controller.view == null) return;
 
                 var view = controller.view;
@@ -486,23 +510,21 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patch for Touch mode slider handling.
-    /// Only announces when the value actually changes for the SAME option.
+    /// Touch mode slider handling (Touch SwitchSliderTypeProcess 0x890F20, the slider's OnSlideType
+    /// callback). Only announces when the value actually changes for the SAME option. Registered manually
+    /// in ConfigMenuPatches.
     /// </summary>
-    [HarmonyPatch(typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess")]
     internal static class ConfigActualDetailsTouch_SwitchSliderType_Patch
     {
         private const string CONTEXT_TOUCH_SLIDER = AnnouncementContexts.CONFIG_TOUCH_SLIDER;
         private const string CONTEXT_TOUCH_SLIDER_CONTROLLER = AnnouncementContexts.CONFIG_TOUCH_SLIDER_CONTROLLER;
 
-        [HarmonyPostfix]
-        public static void Postfix(
-            Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase __instance,
-            Il2CppLast.UI.Touch.ConfigCommandController controller,
-            float value)
+        /// <summary>SwitchSliderTypeProcess(ConfigCommandController controller, float value), positional.</summary>
+        public static void Postfix(Il2CppLast.UI.Touch.ConfigCommandController __0)
         {
             try
             {
+                var controller = __0;
                 if (controller == null || controller.view == null) return;
 
                 var view = controller.view;
@@ -580,6 +602,18 @@ namespace FFIII_ScreenReader.Patches
             PatchOption(harmony, "ShowConfig", nameof(OptionController_InitialFocus_Postfix));
             PatchOption(harmony, "InitSelectLanguage", nameof(OptionController_InitialFocus_Postfix));
 
+            // Value changes on arrow / slider rows (manual: attribute patches crash on IL2CPP).
+            // KeyInput SwitchArrowSelectTypeProcess 0x309430, SwitchSliderTypeProcess 0x30A740; Touch
+            // SwitchArrowTypeProcess 0x8908D0, SwitchSliderTypeProcess 0x890F20. All unique in dump.cs.
+            PatchValueChange(harmony, typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchArrowSelectTypeProcess",
+                null, typeof(ConfigActualDetails_SwitchArrowSelectType_Patch));
+            PatchValueChange(harmony, typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess",
+                typeof(ConfigActualDetails_SwitchSliderType_Patch), typeof(ConfigActualDetails_SwitchSliderType_Patch));
+            PatchValueChange(harmony, typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchArrowTypeProcess",
+                null, typeof(ConfigActualDetailsTouch_SwitchArrowType_Patch));
+            PatchValueChange(harmony, typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess",
+                null, typeof(ConfigActualDetailsTouch_SwitchSliderType_Patch));
+
             // Patch controls/keys settings navigation
             try
             {
@@ -654,6 +688,30 @@ namespace FFIII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Error($"[Config Menu] Error patching ChangeKeySetting: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Registers a value-change hook: the patch class's "Prefix" (when prefixType is given) and
+        /// "Postfix". Each target name has a single overload in its class.
+        /// </summary>
+        private static void PatchValueChange(HarmonyLib.Harmony harmony, Type target, string method, Type prefixType, Type postfixType)
+        {
+            try
+            {
+                var m = AccessTools.Method(target, method);
+                if (m == null)
+                {
+                    MelonLogger.Warning($"[Config Menu] {target.FullName}.{method} not found");
+                    return;
+                }
+                harmony.Patch(m,
+                    prefix: prefixType != null ? new HarmonyMethod(AccessTools.Method(prefixType, "Prefix")) : null,
+                    postfix: new HarmonyMethod(AccessTools.Method(postfixType, "Postfix")));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Config Menu] Error patching {target.Name}.{method}: {ex.Message}");
             }
         }
 

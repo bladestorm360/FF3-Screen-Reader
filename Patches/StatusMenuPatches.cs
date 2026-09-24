@@ -498,12 +498,16 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Postfix for ExitDisplay - clears stat navigation.
+        /// Postfix for ExitDisplay - clears stat navigation. Its body (0x2BCA70) is shared with 9 other
+        /// methods (CommandExit, ForgetExit, ExitNameSelect, RemoveInput, ...), so the native class is
+        /// checked first.
         /// </summary>
-        public static void ExitDisplay_Postfix()
+        public static void ExitDisplay_Postfix(KeyInputStatusDetailsController __instance)
         {
             try
             {
+                if (!HarmonyPatchHelper.IsNativeInstanceOf<KeyInputStatusDetailsController>(__instance)) return;
+
                 // Clear character data
                 StatusDetailsReader.ClearCurrentCharacterData();
 

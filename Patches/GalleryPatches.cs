@@ -94,6 +94,8 @@ namespace FFIII_ScreenReader.Patches
                         {
                             GalleryStateTracker.IsInGallery = true;
                             GalleryStateTracker.SuppressContentChange = true;
+                            GalleryStateTracker.CachedFocusedPtr = IntPtr.Zero;
+                            entryHeaderSpoken = false;
                             MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.GALLERY);
                             CoroutineManager.StartManaged(AnnounceGalleryEntry());
                         }
@@ -120,38 +122,50 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
+        // "Gallery" has been spoken and the entry item is still to be read (SuppressContentChange on).
+        private static bool entryHeaderSpoken;
+
+        /// <summary>
+        /// Gallery entry: "Gallery" one frame after the View state, then the focused item as soon as
+        /// SetFocusContent has cached it (already, or when it next fires). Replaces a per-frame poll of
+        /// the cached pointer for up to 2 s: the SetFocusContent postfix is the event that provides it.
+        /// </summary>
         private static IEnumerator AnnounceGalleryEntry()
         {
             yield return null;
+            if (!GalleryStateTracker.IsInGallery) yield break;
             FFIII_ScreenReaderMod.SpeakText(T("Gallery"), true);
+            entryHeaderSpoken = true;
+            TryAnnounceEntryItem();
+        }
 
-            float elapsed = 0f;
-            while (elapsed < 2f)
+        /// <summary>
+        /// Speaks the item cached during the entry and ends the entry suppression; does nothing until
+        /// "Gallery" has been spoken and an item is cached.
+        /// </summary>
+        private static void TryAnnounceEntryItem()
+        {
+            if (!entryHeaderSpoken || !GalleryStateTracker.SuppressContentChange) return;
+            try
             {
-                yield return null;
-                elapsed += Time.deltaTime;
+                IntPtr focusedPtr = GalleryStateTracker.CachedFocusedPtr;
+                if (focusedPtr == IntPtr.Zero) return;
 
-                try
+                entryHeaderSpoken = false;
+                GalleryStateTracker.SuppressContentChange = false;
+                if (GalleryReader.ReadContentFromPointer(focusedPtr, out int number, out string name))
                 {
-                    IntPtr focusedPtr = GalleryStateTracker.CachedFocusedPtr;
-                    if (focusedPtr != IntPtr.Zero &&
-                        GalleryReader.ReadContentFromPointer(focusedPtr, out int number, out string name))
-                    {
-                        string entry = GalleryReader.ReadListEntry(number, name);
-                        if (!string.IsNullOrEmpty(entry))
-                            FFIII_ScreenReaderMod.SpeakText(entry, false);
-                        GalleryStateTracker.SuppressContentChange = false;
-                        yield break;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[Gallery] Error announcing entry item: {ex.Message}");
-                    break;
+                    string entry = GalleryReader.ReadListEntry(number, name);
+                    if (!string.IsNullOrEmpty(entry))
+                        FFIII_ScreenReaderMod.SpeakText(entry, false);
                 }
             }
-
-            GalleryStateTracker.SuppressContentChange = false;
+            catch (Exception ex)
+            {
+                entryHeaderSpoken = false;
+                GalleryStateTracker.SuppressContentChange = false;
+                MelonLogger.Warning($"[Gallery] Error announcing entry item: {ex.Message}");
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────────
@@ -176,7 +190,9 @@ namespace FFIII_ScreenReader.Patches
 
                 if (GalleryStateTracker.SuppressContentChange)
                 {
+                    // Entry: the item is read after "Gallery"
                     GalleryStateTracker.CachedFocusedPtr = ptr;
+                    TryAnnounceEntryItem();
                     return;
                 }
 

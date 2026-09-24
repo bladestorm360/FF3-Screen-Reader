@@ -16,8 +16,11 @@ namespace FFIII_ScreenReader.Patches
     ///
     /// Hook Layers (most reliable first):
     /// 1. FieldController.ChangeTransportation - Primary, fires on all transportation changes
-    /// 2. FieldPlayer.ChangeMoveState - Backup, catches state machine transitions
-    /// 3. FieldPlayer.GetOn/GetOff - Secondary, specific boarding/disembarking events
+    /// 2. FieldPlayer.GetOn/GetOff - Secondary, specific boarding/disembarking events
+    /// FieldPlayer.ChangeMoveState is not hooked: FieldPlayerKeyController.OnTouchPadCallback calls it
+    /// every frame a direction is held (walk/dash), so a hook there ran per frame; the vehicle
+    /// transitions it was a backup for are the GetOn/GetOff/ChangeTransportation events above, which
+    /// already speak them (it could also say "On ship" a second time).
     /// </summary>
     internal static class MovementSpeechPatches
     {
@@ -56,15 +59,14 @@ namespace FFIII_ScreenReader.Patches
                 // Primary hook - most reliable for all transportation changes
                 TryPatchChangeTransportation(harmony);
 
-                // Backup hook - catches state machine transitions
-                TryPatchChangeMoveState(harmony);
-
                 // Secondary hooks - specific boarding/disembarking events
                 TryPatchGetOn(harmony);
                 TryPatchGetOff(harmony);
 
-                // Patch SetDashFlag to track walk/run toggle
-                TryPatchSetDashFlag(harmony);
+                // The walk/run dash key is read directly when needed (MoveStateHelper.GetDashFlag):
+                // Last.OutGame.Library.FieldKeyController.SetDashFlag is no longer hooked. Its body
+                // (0x2BD2A0) is shared with 16 other bool setters (set_ProfileEvents, set_IsLeftActionIcon,
+                // ...), so the hook ran for all of them and cached their values as the dash flag.
 
                 isPatched = true;
             }
@@ -176,88 +178,6 @@ namespace FFIII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Error($"[MoveState] Error in ChangeTransportation patch: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Patch FieldPlayer.ChangeMoveState - backup hook for state machine transitions.
-        /// Signature: public void ChangeMoveState(MoveState moveState, bool ignoreStatusSwitchConfirm = False)
-        /// Note: MoveState is enum but marshals as int in IL2CPP.
-        /// </summary>
-        private static void TryPatchChangeMoveState(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                Type fieldPlayerType = typeof(FieldPlayer);
-                MethodInfo targetMethod = null;
-
-                foreach (var method in fieldPlayerType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                {
-                    if (method.Name == "ChangeMoveState")
-                    {
-                        var parameters = method.GetParameters();
-                        // ChangeMoveState(MoveState, bool) - MoveState is enum (int)
-                        if (parameters.Length >= 1)
-                        {
-                            targetMethod = method;
-                            break;
-                        }
-                    }
-                }
-
-                if (targetMethod != null)
-                {
-                    var postfix = typeof(MovementSpeechPatches).GetMethod(nameof(ChangeMoveState_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-
-                    harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Warning("[MoveState] Could not find ChangeMoveState method");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MoveState] Error patching ChangeMoveState: {ex.Message}");
-            }
-        }
-
-        // Track last move state for ChangeMoveState backup hook
-        private static int lastMoveState = -1;
-
-        /// <summary>
-        /// Postfix for FieldPlayer.ChangeMoveState - backup hook for state transitions.
-        /// Catches transitions that might bypass ChangeTransportation.
-        /// </summary>
-        public static void ChangeMoveState_Postfix(FieldPlayer __instance)
-        {
-            try
-            {
-                if (__instance == null)
-                    return;
-
-                // Read moveState field (offset 0x1D0 from dump.cs)
-                int currentMoveState = (int)__instance.moveState;
-
-                // Only process if state actually changed
-                if (currentMoveState != lastMoveState)
-                {
-                    int previousState = lastMoveState;
-                    lastMoveState = currentMoveState;
-
-                    // Skip first call (initialization)
-                    if (previousState == -1)
-                        return;
-
-                    // Announce state change (handles both boarding and disembarking)
-                    // MoveStateHelper.AnnounceStateChange already uses deduplication
-                    MoveStateHelper.AnnounceStateChange(previousState, currentMoveState);
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[MoveState] Error in ChangeMoveState patch: {ex.Message}");
             }
         }
 
@@ -451,49 +371,12 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Patch FieldKeyController.SetDashFlag to track walk/run toggle.
-        /// Signature: public void SetDashFlag(bool dashFlag)
-        /// </summary>
-        private static void TryPatchSetDashFlag(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                var targetMethod = AccessTools.Method(
-                    typeof(Il2CppLast.OutGame.Library.FieldKeyController),
-                    "SetDashFlag");
-                if (targetMethod != null)
-                {
-                    var postfix = typeof(MovementSpeechPatches).GetMethod(nameof(SetDashFlag_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Warning("[MoveState] Could not find SetDashFlag method");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MoveState] Error patching SetDashFlag: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Postfix for SetDashFlag - tracks dash toggle state.
-        /// </summary>
-        public static void SetDashFlag_Postfix(bool dashFlag)
-        {
-            MoveStateHelper.SetCachedDashFlag(dashFlag);
-        }
-
-        /// <summary>
         /// Reset state tracking (call on map transitions).
         /// </summary>
         public static void ResetState()
         {
             lastTransportationId = TRANSPORT_PLAYER;
             lastAnnouncedTransportId = -1;
-            lastMoveState = -1;
             MoveStateHelper.ResetState();
         }
 

@@ -132,6 +132,22 @@ Fixes for the FF3 items in `OPEN_ISSUES.md`. **None of this is verified in game 
 
 ---
 
+## Round 2 (2026-09-24)
+
+Technical detail: `debug.md`, section "Round 2 (2026-09-24)". **None of this is verified in game yet.**
+
+| Area | Change | Status |
+|------|--------|--------|
+| Status removal | "Unit: Status removed" when a status is cured, wears off, is cancelled by a conflicting status, or KO is revived. Silent at battle end, for statuses cleared by KO/Stone, and for hidden statuses. Hooked on the game's condition-function removal (`BattleConditionController.RemoveFunction`) | not yet verified in game |
+| Value-0 views | The unreachable "Target: cured" wording and the value-0 diagnostic log are removed; "0 damage" unchanged | not yet verified in game |
+| Rule fixes | Every `[HarmonyPatch]` attribute patch is a manual patch with positional arguments (damage view, hit count, status add, action announce, battle command/target, result phases, config arrow/slider, equipment and item lists, wall bump); the dead `ShowLevelUp` hooks are removed | not yet verified in game |
+| Per-frame hooks | Confirmation popup buttons (in and out of battle) and the game-over load popup buttons are read from the popup's cursor moves instead of per-frame `UpdateFocus`; the magic spell list is enabled from its state entries instead of per-frame `UpdateController`; the bestiary minimap open/close from the minimap cursor switch; the per-frame `ChangeMoveState` vehicle backup is removed | not yet verified in game |
+| Polling | Battle target initial read happens in the targeting Init (retry only as a fallback); Gallery / Music Player entry item and bestiary formation are read from the game's focus/activation events instead of 2–3 s polls; config slider hook ignores the game's per-frame re-assert | not yet verified in game |
+| Shared-body hooks | Class checks on hooks whose method body is shared with other methods (battle target `ShowWindow`, equipment/item/magic `SetNextState`, status `ExitDisplay`); the walk/run dash flag is read from the game instead of a shared-body setter hook | not yet verified in game |
+| Double speech | Title Options open, a confirm popup closed with No over the title Options, and the config-bestiary return no longer read the focused row twice; the game-over load popup's buttons and ship boarding are spoken once | not yet verified in game |
+
+---
+
 ## Architecture
 
 Post-refactoring file organization (~70 C# files):
@@ -153,7 +169,7 @@ Post-refactoring file organization (~70 C# files):
 |-------|-------------|
 | Secret passages | Opened passages are not reflected by the pathfinder |
 | Auto Detail default | New installs default ON; an existing saved `AutoDetail=false` is kept (F7 / mod menu to change) |
-| Status cures in battle | A status cure (Antidote etc.) is silent: FF3 gives it the same hit type and value (Hit, 0) as other non-damage effects, so the damage view can't tell it apart. Needs a condition-removal hook (user decision) |
+| Status cures in battle | Announced as "Unit: Status removed" since round 2 (condition-removal hook); the same wording is used when a status wears off. Not yet verified in game |
 | Config language names | Shown in their own language / English by design |
 
 ---

@@ -1441,48 +1441,6 @@
     "th": "กลไก",
     "pt": "Mecanismo"
   },
-  "On ship": {
-    "en": "On ship",
-    "ja": "船に乗っている",
-    "fr": "Sur le navire",
-    "it": "Sulla nave",
-    "de": "Auf dem Schiff",
-    "es": "En el barco",
-    "ko": "배에 탑승 중",
-    "zht": "在船上",
-    "zhc": "在船上",
-    "ru": "На корабле",
-    "th": "บนเรือ",
-    "pt": "No navio"
-  },
-  "On chocobo": {
-    "en": "On chocobo",
-    "ja": "チョコボに乗っている",
-    "fr": "Sur le chocobo",
-    "it": "Sul chocobo",
-    "de": "Auf dem Chocobo",
-    "es": "En el chocobo",
-    "ko": "초코보에 탑승 중",
-    "zht": "騎乘陸行鳥",
-    "zhc": "骑乘陆行鸟",
-    "ru": "На чокобо",
-    "th": "บนโชโกโบ",
-    "pt": "No chocobo"
-  },
-  "On airship": {
-    "en": "On airship",
-    "ja": "飛空艇に乗っている",
-    "fr": "Sur l'aéronef",
-    "it": "Sull'aeronave",
-    "de": "Auf dem Luftschiff",
-    "es": "En la aeronave",
-    "ko": "비공정에 탑승 중",
-    "zht": "在飛空艇上",
-    "zhc": "在飞空艇上",
-    "ru": "На воздушном корабле",
-    "th": "บนเรือบิน",
-    "pt": "Na aeronave"
-  },
   "On foot": {
     "en": "On foot",
     "ja": "徒歩",
@@ -4983,19 +4941,19 @@
     "th": "{0}: ความเสียหาย {1}x{2}",
     "pt": "{0}: {1}x{2} de dano"
   },
-  "{0}: cured": {
-    "en": "{0}: cured",
-    "ja": "{0}: 状態回復",
-    "fr": "{0} : soigné",
-    "it": "{0}: curato",
-    "de": "{0}: geheilt",
-    "es": "{0}: curado",
-    "ko": "{0}: 상태 회복",
-    "zht": "{0}：狀態恢復",
-    "zhc": "{0}：状态恢复",
-    "ru": "{0}: исцелён",
-    "th": "{0}: หายจากสถานะผิดปกติ",
-    "pt": "{0}: curado"
+  "{0}: {1} removed": {
+    "en": "{0}: {1} removed",
+    "ja": "{0}: {1}が解除",
+    "fr": "{0} : fin de {1}",
+    "it": "{0}: fine di {1}",
+    "de": "{0}: {1} aufgehoben",
+    "es": "{0}: fin de {1}",
+    "ko": "{0}: {1} 해제",
+    "zht": "{0}：{1}解除",
+    "zhc": "{0}：{1}解除",
+    "ru": "{0}: эффект {1} снят",
+    "th": "{0}: สถานะ {1} หายไป",
+    "pt": "{0}: fim de {1}"
   },
   "Cross": {
     "en": "Cross",

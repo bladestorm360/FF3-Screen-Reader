@@ -63,9 +63,12 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patches for battle pause menu (spacebar during battle).
-    /// State is tracked via direct memory read, not patches.
-    /// Also handles popup button reading during battle.
+    /// CommonPopup (KeyInput) button reading, used in and out of battle. State of the battle pause menu
+    /// itself is read from memory (BattlePauseState).
+    /// Event-driven: the popup's buttons are read from the game's own cursor moves (Cursor.NextIndex /
+    /// PrevIndex, whose postfix calls TryReadCommonPopupCursor). CommonPopup.UpdateFocus (0x2FCC20) is
+    /// not hooked: UpdateSelect calls it unconditionally every frame while the popup is open, and the
+    /// popup moves its cursor only through Cursor.NextIndex / PrevIndex (&lt;UpdateSelect&gt;b__1).
     /// </summary>
     internal static class BattlePausePatches
     {
@@ -74,83 +77,59 @@ namespace FFIII_ScreenReader.Patches
         private static int lastAnnouncedButtonIndex = -1;
 
         // True from a CommonPopup's open until its message + focused button have been read together,
-        // so UpdateFocus doesn't speak the button before the message.
+        // so a cursor move doesn't speak the button before the message.
         private static bool commonPopupReadPending = false;
 
-        /// <summary>
-        /// Apply battle pause menu patches.
-        /// Note: State clearing for Return to Title is handled by TitleMenuCommandController.SetEnableMainMenu
-        /// in PopupPatches.cs, which fires when title menu becomes active.
-        /// </summary>
-        public static void ApplyPatches(HarmonyLib.Harmony harmony)
+        // The open KeyInput CommonPopup (set by PopupPatches on Popup.Open, cleared on Popup.Close)
+        private static IntPtr activeCommonPopupPtr = IntPtr.Zero;
+
+        /// <summary>A KeyInput CommonPopup opened: its cursor moves are read by TryReadCommonPopupCursor.</summary>
+        public static void OnCommonPopupOpened(IntPtr popupPtr)
         {
-            try
-            {
-                // Patch CommonPopup.UpdateFocus for popup button reading during battle
-                TryPatchCommonPopupUpdateFocus(harmony);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Pause] Error applying patches: {ex.Message}");
-            }
+            activeCommonPopupPtr = popupPtr;
+            lastAnnouncedButtonIndex = -1;
         }
 
         /// <summary>
-        /// Patch CommonPopup.UpdateFocus to read popup buttons during battle.
+        /// Cursor.NextIndex / PrevIndex postfix hook: if the moved cursor is the open CommonPopup's
+        /// selectCursor, reads the focused button and returns true (the generic cursor reader must not
+        /// run). Returns false for any other cursor.
         /// </summary>
-        private static void TryPatchCommonPopupUpdateFocus(HarmonyLib.Harmony harmony)
+        public static bool TryReadCommonPopupCursor(GameCursor cursor)
         {
             try
             {
-                Type popupType = typeof(KeyInputCommonPopup);
-                var updateFocusMethod = AccessTools.Method(popupType, "UpdateFocus");
-
-                if (updateFocusMethod != null)
-                {
-                    var postfix = typeof(BattlePausePatches).GetMethod(nameof(CommonPopup_UpdateFocus_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(updateFocusMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Pause] Patches applied");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Battle Pause] CommonPopup.UpdateFocus method not found");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Pause] Error patching CommonPopup.UpdateFocus: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Postfix for CommonPopup.UpdateFocus - reads and announces current button.
-        /// </summary>
-        public static void CommonPopup_UpdateFocus_Postfix(object __instance)
-        {
-            try
-            {
-                if (__instance == null || commonPopupReadPending) return;
-
-                var popup = __instance as KeyInputCommonPopup;
-                if (popup == null) return;
-
-                IntPtr popupPtr = popup.Pointer;
-                if (popupPtr == IntPtr.Zero) return;
+                IntPtr popupPtr = activeCommonPopupPtr;
+                if (popupPtr == IntPtr.Zero || cursor == null) return false;
 
                 // Read selectCursor at offset 0x68
                 IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.BattlePause.OFFSET_SELECT_CURSOR);
-                if (cursorPtr == IntPtr.Zero) return;
+                if (cursorPtr == IntPtr.Zero || cursorPtr != cursor.Pointer) return false;
 
-                var cursor = new GameCursor(cursorPtr);
+                // The open-read speaks the message and the focused button together
+                if (commonPopupReadPending) return true;
+
                 int cursorIndex = cursor.Index;
 
                 // Skip if same button as last announced
                 if (cursorIndex == lastAnnouncedButtonIndex)
-                    return;
+                    return true;
 
                 lastAnnouncedButtonIndex = cursorIndex;
+                SpeakButton(popupPtr, cursorIndex);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Battle Pause] Error reading CommonPopup cursor: {ex.Message}");
+                return false;
+            }
+        }
 
+        private static void SpeakButton(IntPtr popupPtr, int cursorIndex)
+        {
+            try
+            {
                 // Read commandList at offset 0x70
                 IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.BattlePause.OFFSET_COMMAND_LIST);
                 if (listPtr == IntPtr.Zero) return;
@@ -181,7 +160,7 @@ namespace FFIII_ScreenReader.Patches
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Pause] Error in UpdateFocus postfix: {ex.Message}");
+                MelonLogger.Warning($"[Battle Pause] Error reading CommonPopup button: {ex.Message}");
             }
         }
 
@@ -213,6 +192,7 @@ namespace FFIII_ScreenReader.Patches
             BattlePauseState.Reset();
             lastAnnouncedButtonIndex = -1;
             commonPopupReadPending = false;
+            activeCommonPopupPtr = IntPtr.Zero;
         }
     }
 }

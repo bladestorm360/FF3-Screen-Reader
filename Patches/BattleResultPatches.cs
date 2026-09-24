@@ -67,12 +67,35 @@ namespace FFIII_ScreenReader.Patches
         private static HashSet<string> announcedLevelUps = new HashSet<string>();
 
         /// <summary>
-        /// Manual registrations (attribute patches crash on IL2CPP) of the EXP-tone stop safety nets:
-        /// the result phases that follow the points tally, and the results screen closing.
-        /// Every target's RVA is unique in dump.cs.
+        /// Manual registrations (attribute patches crash on IL2CPP) of the result-phase announcers and the
+        /// EXP-tone stop safety nets: the result phases that follow the points tally, and the results
+        /// screen closing. Every target's RVA is unique in dump.cs (KeyInput / Touch): Show 0x61C7C0 /
+        /// 0x48D940, ShowPointsInit 0x61C260 / 0x48D1C0, ShowGetItemsInit 0x61BDE0 / 0x48CED0,
+        /// ShowStatusUpInit 0x61C6B0 / 0x48D850.
+        /// ResultSkillController.ShowLevelUp (KeyInput 0x61F010, Touch 0x490190) is not hooked: it has no
+        /// direct callers (inlined), so its old attribute hooks never fired; ShowStatusUpInit announces
+        /// level-ups.
         /// </summary>
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
+            const string LOG = "[BattleResult]";
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_KeyInput), "Show",
+                typeof(ResultMenuController_Show_Patch), nameof(ResultMenuController_Show_Patch.Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_Touch), "Show",
+                typeof(ResultMenuController_Show_Patch), nameof(ResultMenuController_Show_Patch.Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_KeyInput), "ShowPointsInit",
+                typeof(ResultMenuController_KeyInput_ShowPointsInit_Patch), nameof(ResultMenuController_KeyInput_ShowPointsInit_Patch.Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_Touch), "ShowPointsInit",
+                typeof(ResultMenuController_Touch_ShowPointsInit_Patch), nameof(ResultMenuController_Touch_ShowPointsInit_Patch.Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_KeyInput), "ShowGetItemsInit",
+                typeof(ResultMenuController_KeyInput_ShowGetItemsInit_Patch), nameof(ResultMenuController_KeyInput_ShowGetItemsInit_Patch.Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_Touch), "ShowGetItemsInit",
+                typeof(ResultMenuController_Touch_ShowGetItemsInit_Patch), nameof(ResultMenuController_Touch_ShowGetItemsInit_Patch.Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_KeyInput), "ShowStatusUpInit",
+                typeof(ResultMenuController_KeyInput_ShowStatusUpInit_Patch), nameof(ResultMenuController_KeyInput_ShowStatusUpInit_Patch.Postfix), LOG);
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_Touch), "ShowStatusUpInit",
+                typeof(ResultMenuController_Touch_ShowStatusUpInit_Patch), nameof(ResultMenuController_Touch_ShowStatusUpInit_Patch.Postfix), LOG);
+
             HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_KeyInput), "ShowGetAbilitysInit",
                 typeof(BattleResultPatches), nameof(StopExpCounter_Postfix), "[BattleResult]");
             HarmonyPatchHelper.PatchPostfix(harmony, typeof(ResultMenuController_KeyInput), "ShowLevelUpAbilitysInit",
@@ -538,12 +561,11 @@ namespace FFIII_ScreenReader.Patches
 
     // ========================================
     // Phase 1: Experience & Gil (ShowPointsInit)
+    // All result-phase postfixes are registered in BattleResultPatches.ApplyPatches.
     // ========================================
 
-    [HarmonyPatch(typeof(ResultMenuController_KeyInput), "ShowPointsInit")]
     internal static class ResultMenuController_KeyInput_ShowPointsInit_Patch
     {
-        [HarmonyPostfix]
         public static void Postfix(ResultMenuController_KeyInput __instance)
         {
             try
@@ -569,10 +591,8 @@ namespace FFIII_ScreenReader.Patches
         }
     }
 
-    [HarmonyPatch(typeof(ResultMenuController_Touch), "ShowPointsInit")]
     internal static class ResultMenuController_Touch_ShowPointsInit_Patch
     {
-        [HarmonyPostfix]
         public static void Postfix(ResultMenuController_Touch __instance)
         {
             try
@@ -601,10 +621,8 @@ namespace FFIII_ScreenReader.Patches
     // Phase 2: Item Drops (ShowGetItemsInit)
     // ========================================
 
-    [HarmonyPatch(typeof(ResultMenuController_KeyInput), "ShowGetItemsInit")]
     internal static class ResultMenuController_KeyInput_ShowGetItemsInit_Patch
     {
-        [HarmonyPostfix]
         public static void Postfix(ResultMenuController_KeyInput __instance)
         {
             try
@@ -625,10 +643,8 @@ namespace FFIII_ScreenReader.Patches
         }
     }
 
-    [HarmonyPatch(typeof(ResultMenuController_Touch), "ShowGetItemsInit")]
     internal static class ResultMenuController_Touch_ShowGetItemsInit_Patch
     {
-        [HarmonyPostfix]
         public static void Postfix(ResultMenuController_Touch __instance)
         {
             try
@@ -653,10 +669,8 @@ namespace FFIII_ScreenReader.Patches
     // Phase 3: Level Ups (ShowStatusUpInit)
     // ========================================
 
-    [HarmonyPatch(typeof(ResultMenuController_KeyInput), "ShowStatusUpInit")]
     internal static class ResultMenuController_KeyInput_ShowStatusUpInit_Patch
     {
-        [HarmonyPostfix]
         public static void Postfix(ResultMenuController_KeyInput __instance)
         {
             try
@@ -672,10 +686,8 @@ namespace FFIII_ScreenReader.Patches
         }
     }
 
-    [HarmonyPatch(typeof(ResultMenuController_Touch), "ShowStatusUpInit")]
     internal static class ResultMenuController_Touch_ShowStatusUpInit_Patch
     {
-        [HarmonyPostfix]
         public static void Postfix(ResultMenuController_Touch __instance)
         {
             try
@@ -691,44 +703,9 @@ namespace FFIII_ScreenReader.Patches
         }
     }
 
-    // ========================================
-    // Alternative: Patch ResultSkillController for level ups
-    // In case ShowStatusUpInit doesn't fire for level ups
-    // ========================================
-
-    [HarmonyPatch(typeof(ResultSkillController_KeyInput), "ShowLevelUp")]
-    internal static class ResultSkillController_KeyInput_ShowLevelUp_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(BattleResultData data, bool isNext)
-        {
-            try
-            {
-                BattleResultPatches.AnnounceAllLevelUps(data);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ResultSkillController.ShowLevelUp patch (KeyInput): {ex.Message}");
-            }
-        }
-    }
-
-    [HarmonyPatch(typeof(ResultSkillController_Touch), "ShowLevelUp")]
-    internal static class ResultSkillController_Touch_ShowLevelUp_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(BattleResultData data, bool isNext)
-        {
-            try
-            {
-                BattleResultPatches.AnnounceAllLevelUps(data);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ResultSkillController.ShowLevelUp patch (Touch): {ex.Message}");
-            }
-        }
-    }
+    // Level ups: ResultSkillController.ShowLevelUp is deliberately NOT hooked. Neither variant (KeyInput
+    // 0x61F010, Touch 0x490190) has a direct caller, so a hook there never fires (the old attribute
+    // hooks were dead); ShowStatusUpInit above announces level-ups.
 
     // Job level ups: deliberately NOT hooked on ResultSkillController.ShowJobProficiencyLevelUp.
     // Neither variant (KeyInput 0x61EF70, Touch 0x490140) has a caller: its body is inlined into
@@ -736,46 +713,24 @@ namespace FFIII_ScreenReader.Patches
     // above announce job level-ups instead.
 
     // ========================================
-    // Fallback: Patch Show method as backup
-    // In case the Init methods are private/inaccessible
+    // Results screen opened: ResultMenuController.Show (KeyInput and Touch share this postfix)
     // ========================================
 
-    [HarmonyPatch(typeof(ResultMenuController_KeyInput), nameof(ResultMenuController_KeyInput.Show))]
-    internal static class ResultMenuController_KeyInput_Show_Patch
+    internal static class ResultMenuController_Show_Patch
     {
-        [HarmonyPostfix]
-        public static void Postfix(BattleResultData data, bool isReverse)
+        /// <summary>Show(BattleResultData data, bool isReverse), positional.</summary>
+        public static void Postfix(BattleResultData __0, bool __1)
         {
             try
             {
-                if (data == null || isReverse) return;
+                if (__0 == null || __1) return;
 
                 // Reset tracking for new battle result
-                BattleResultPatches.ResetTracking(data);
+                BattleResultPatches.ResetTracking(__0);
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error in ResultMenuController.Show patch (KeyInput): {ex.Message}");
-            }
-        }
-    }
-
-    [HarmonyPatch(typeof(ResultMenuController_Touch), nameof(ResultMenuController_Touch.Show))]
-    internal static class ResultMenuController_Touch_Show_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(BattleResultData data, bool isReverse)
-        {
-            try
-            {
-                if (data == null || isReverse) return;
-
-                // Reset tracking for new battle result
-                BattleResultPatches.ResetTracking(data);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ResultMenuController.Show patch (Touch): {ex.Message}");
+                MelonLogger.Warning($"Error in ResultMenuController.Show patch: {ex.Message}");
             }
         }
     }

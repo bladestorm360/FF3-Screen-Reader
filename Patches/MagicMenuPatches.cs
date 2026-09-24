@@ -226,8 +226,8 @@ namespace FFIII_ScreenReader.Patches
 
             try
             {
-                // Patch UpdateController to track when spell list is actively handling input
-                TryPatchUpdateController(harmony);
+                // Patch the spell-list state entries to track when the spell list is handling input
+                TryPatchSpellListStateInits(harmony);
 
                 // Patch SetCursor for navigation detection (only announces when focused)
                 TryPatchSetCursor(harmony);
@@ -250,34 +250,18 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Patches AbilityContentListController.UpdateController to track when spell list is active.
-        /// Called when spell list starts handling input.
-        /// Signature: UpdateController(bool isCheckAbility, bool isBrowseOnly, bool canPageSkip)
+        /// Patches the KeyInput AbilityWindowController state entries whose Update drives the spell list
+        /// (each RVA unique; reached through the state machine's delegates): UseListInit 0x693F60,
+        /// MemorizeListSelectInit 0x68EC50, RemoveListInit 0x690060, ForgetInit 0x68DB10,
+        /// ExchangeInit 0x68CFB0. Replaces the per-frame AbilityContentListController.UpdateController
+        /// (0x685FB0) hook.
         /// </summary>
-        private static void TryPatchUpdateController(HarmonyLib.Harmony harmony)
+        private static void TryPatchSpellListStateInits(HarmonyLib.Harmony harmony)
         {
-            try
+            foreach (var method in new[] { "UseListInit", "MemorizeListSelectInit", "RemoveListInit", "ForgetInit", "ExchangeInit" })
             {
-                Type controllerType = typeof(AbilityContentListController);
-
-                // Use AccessTools for consistent IL2CPP method access
-                MethodInfo updateControllerMethod = AccessTools.Method(controllerType, "UpdateController",
-                    new[] { typeof(bool), typeof(bool), typeof(bool) });
-
-                if (updateControllerMethod != null)
-                {
-                    var postfix = typeof(MagicMenuPatches).GetMethod(nameof(UpdateController_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(updateControllerMethod, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Warning("[Magic Menu] UpdateController method not found on AbilityContentListController");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Magic Menu] Failed to patch UpdateController: {ex.Message}");
+                HarmonyPatchHelper.PatchPostfix(harmony, typeof(AbilityWindowController), method,
+                    typeof(MagicMenuPatches), nameof(SpellListStateInit_Postfix), "[Magic Menu]");
             }
         }
 
@@ -469,17 +453,20 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Postfix for AbilityWindowController.SetNextState - detects state transitions.
-        /// Clears spell list flag when:
+        /// Postfix for AbilityWindowController.SetNextState(State), positional - detects state transitions.
+        /// Its body (0x2A0B70) is shared with 8 other int setters (set_NumberOfButtles, set_pivot_type, ...),
+        /// so the native class is checked first. Clears spell list flag when:
         /// - Transitioning to Command state (7) = back to command bar
         /// - Transitioning to None state (0) = menu closing
         /// </summary>
-        public static void SetNextState_Postfix(object __instance, int state)
+        public static void SetNextState_Postfix(AbilityWindowController __instance, int __0)
         {
             try
             {
+                if (!HarmonyPatchHelper.IsNativeInstanceOf<AbilityWindowController>(__instance)) return;
+
                 // Clear state when returning to command bar (7) or menu closing (0)
-                if ((state == IL2CppOffsets.Magic.STATE_COMMAND || state == 0) && MagicMenuState.IsSpellListActive)
+                if ((__0 == IL2CppOffsets.Magic.STATE_COMMAND || __0 == 0) && MagicMenuState.IsSpellListActive)
                 {
                     MagicMenuState.OnSpellListUnfocused();
                 }
@@ -488,44 +475,32 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Postfix for UpdateController - called when spell list is actively handling input.
-        /// This fires every frame while the spell list is active, so we use it to set the active flag.
-        /// State clearing is now handled by SetNextState_Postfix instead of state machine validation.
+        /// Postfix for the AbilityWindowController states whose per-frame update drives the spell list
+        /// (UseListInit, MemorizeListSelectInit, RemoveListInit, ForgetInit, ExchangeInit): the spell
+        /// list takes input from here on, so enable spell reading and cache the character for charge
+        /// lookups. Replaces the per-frame AbilityContentListController.UpdateController postfix: those
+        /// states' Update methods are the ones calling UpdateController every frame, and the Init runs
+        /// once on entry (StateMachine.Change calls it synchronously). The flag is cleared by
+        /// SetNextState(Command / None) as before.
         /// </summary>
-        public static void UpdateController_Postfix(object __instance)
+        public static void SpellListStateInit_Postfix(AbilityWindowController __instance)
         {
             try
             {
                 if (__instance == null)
                     return;
 
-                var controller = __instance as AbilityContentListController;
-                if (controller == null || !controller.gameObject.activeInHierarchy)
-                    return;
-
-                // COMMENTED OUT: State machine validation - clearing now handled by SetNextState_Postfix
-                // The raw pointer state machine reading was unreliable.
-                // int currentState = GetWindowControllerState();
-                // if (currentState == IL2CppOffsets.Magic.STATE_COMMAND || currentState == 0)
-                // {
-                //     // At command bar or menu closing - ensure flag is cleared
-                //     if (MagicMenuState.IsSpellListActive)
-                //     {
-                //         MagicMenuState.OnSpellListUnfocused();
-                //     }
-                //     return;
-                // }
-
-                // Spell list is actively handling input - enable spell reading
+                // Spell list is handling input - enable spell reading
                 if (!MagicMenuState.IsSpellListActive)
                 {
                     MagicMenuState.OnSpellListFocused();
                 }
 
-                // Cache character data for charge lookups
+                // Cache character data for charge lookups (the list controller's target character)
                 try
                 {
-                    IntPtr controllerPtr = controller.Pointer;
+                    var controller = __instance.listController;
+                    IntPtr controllerPtr = controller != null ? controller.Pointer : IntPtr.Zero;
                     if (controllerPtr != IntPtr.Zero)
                     {
                         unsafe

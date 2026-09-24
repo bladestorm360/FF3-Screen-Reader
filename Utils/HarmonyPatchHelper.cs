@@ -16,6 +16,22 @@ namespace FFIII_ScreenReader.Utils
         private const BindingFlags PublicStatic = BindingFlags.Public | BindingFlags.Static;
 
         /// <summary>
+        /// True when the native object's IL2CPP class is (or derives from) T. Needed in a patch on a folded
+        /// method body (an RVA shared with other methods): the managed wrapper type of __instance is the
+        /// declaring type whatever object the shared body actually ran on.
+        /// </summary>
+        public static bool IsNativeInstanceOf<T>(Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase instance)
+            where T : Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase
+        {
+            if ((object)instance == null || instance.Pointer == IntPtr.Zero)
+                return false;
+            IntPtr cls = Il2CppInterop.Runtime.Il2CppClassPointerStore<T>.NativeClassPtr;
+            return cls != IntPtr.Zero
+                && Il2CppInterop.Runtime.IL2CPP.il2cpp_class_is_assignable_from(
+                    cls, Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(instance.Pointer));
+        }
+
+        /// <summary>
         /// Patches SetActive(bool) method with a postfix.
         /// Used to detect menu open/close events.
         /// </summary>

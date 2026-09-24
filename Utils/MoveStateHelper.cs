@@ -25,19 +25,11 @@ namespace FFIII_ScreenReader.Utils
         // Cached state tracking
         private static int cachedMoveState = MOVE_STATE_WALK;
         private static int cachedTransportationType = 0;
-        private static bool cachedDashFlag = false;
-        private static int lastAnnouncedState = -1;
 
         /// <summary>
-        /// Set cached dash flag state (called from SetDashFlag patch).
-        /// </summary>
-        public static void SetCachedDashFlag(bool value)
-        {
-            cachedDashFlag = value;
-        }
-
-        /// <summary>
-        /// Get the effective running state based on autoDash setting and dashFlag.
+        /// Get the effective running state: Config.IsAutoDash XOR the dash key held, the same test
+        /// FieldPlayerKeyController.OnTouchPadCallback uses to pick walk or dash. The dash key is read
+        /// from the field player controller (pressDashKey, 0x58) at call time.
         /// Returns true if player is running, false if walking.
         /// </summary>
         public static bool GetDashFlag()
@@ -46,7 +38,17 @@ namespace FFIII_ScreenReader.Utils
             {
                 var userData = Il2CppLast.Management.UserDataManager.Instance();
                 bool autoDash = (userData?.Config?.IsAutoDash ?? 0) != 0;
-                return autoDash != cachedDashFlag;
+
+                bool pressDashKey = false;
+                try
+                {
+                    var keyController = GameObjectCache.Get<FieldPlayerController>()?.TryCast<FieldPlayerKeyController>();
+                    if (keyController != null)
+                        pressDashKey = keyController.pressDashKey;
+                }
+                catch { }
+
+                return autoDash != pressDashKey;
             }
             catch (Exception ex)
             {
@@ -100,40 +102,6 @@ namespace FFIII_ScreenReader.Utils
         {
             return state == MOVE_STATE_SHIP || state == MOVE_STATE_CHOCOBO ||
                    state == MOVE_STATE_AIRSHIP || state == MOVE_STATE_LOWFLYING;
-        }
-
-        /// <summary>
-        /// Announce movement state changes (used by ChangeMoveState patch as backup).
-        /// </summary>
-        public static void AnnounceStateChange(int previousState, int newState)
-        {
-            string announcement = null;
-
-            if (newState == MOVE_STATE_SHIP)
-            {
-                announcement = T("On ship");
-            }
-            else if (newState == MOVE_STATE_CHOCOBO)
-            {
-                announcement = T("On chocobo");
-            }
-            else if (newState == MOVE_STATE_AIRSHIP || newState == MOVE_STATE_LOWFLYING)
-            {
-                announcement = T("On airship");
-            }
-            else if ((previousState == MOVE_STATE_SHIP || previousState == MOVE_STATE_CHOCOBO ||
-                      previousState == MOVE_STATE_AIRSHIP || previousState == MOVE_STATE_LOWFLYING) &&
-                     (newState == MOVE_STATE_WALK || newState == MOVE_STATE_DUSH))
-            {
-                announcement = T("On foot");
-            }
-
-            if (announcement != null)
-            {
-                if (newState == lastAnnouncedState) return;
-                lastAnnouncedState = newState;
-                FFIII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
-            }
         }
 
         /// <summary>
@@ -241,8 +209,6 @@ namespace FFIII_ScreenReader.Utils
         {
             cachedMoveState = MOVE_STATE_WALK;
             cachedTransportationType = 0;
-            cachedDashFlag = false;
-            lastAnnouncedState = -1;
         }
 
         /// <summary>

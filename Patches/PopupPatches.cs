@@ -56,8 +56,9 @@ namespace FFIII_ScreenReader.Patches
         public static int CommandListOffset { get; private set; }
 
         /// <summary>
-        /// True when the popup has its OWN focus reader (CommonPopup.UpdateFocus). The generic cursor
-        /// reader must then not also call ReadCurrentButton, or the button is read twice per move.
+        /// True when the popup has its OWN focus reader (CommonPopup: BattlePausePatches reads it from its
+        /// cursor moves). The generic cursor reader must then not also call ReadCurrentButton, or the
+        /// button is read twice per move.
         /// </summary>
         public static bool HasOwnFocusReader { get; private set; }
 
@@ -384,18 +385,24 @@ namespace FFIII_ScreenReader.Patches
                 {
                     return;
                 }
+
+                // Use TryCast for IL2CPP-safe type detection
+                // KeyInput types first (more common for keyboard/gamepad)
+                var commonPopup = __instance.TryCast<KeyInputCommonPopup>();
+
+                // A CommonPopup's buttons are read from its own cursor moves (BattlePausePatches), in shops
+                // too, as the old per-frame UpdateFocus reader did.
+                if (commonPopup != null)
+                    BattlePausePatches.OnCommonPopupOpened(commonPopup.Pointer);
+
                 if (IsShopActive())
                 {
                     return;
                 }
 
-                // Use TryCast for IL2CPP-safe type detection
-                // KeyInput types first (more common for keyboard/gamepad)
-
                 // CommonPopup - general confirmations. Read the message and the focused button together
-                // (message first); its own UpdateFocus reader (BattlePausePatches) handles navigation, so
-                // the generic cursor reader must not also read the button.
-                var commonPopup = __instance.TryCast<KeyInputCommonPopup>();
+                // (message first); its own cursor reader (BattlePausePatches.TryReadCommonPopupCursor)
+                // handles navigation, so the generic popup button reader must not also read the button.
                 if (commonPopup != null)
                 {
                     BattlePausePatches.BeginCommonPopupRead();
@@ -515,7 +522,7 @@ namespace FFIII_ScreenReader.Patches
 
         /// <summary>
         /// CommonPopup open-read: the message FIRST, then the focused button ("Return to the title
-        /// screen? No"). Primes the UpdateFocus reader with that button so it isn't repeated.
+        /// screen? No"). Primes the cursor reader with that button so it isn't repeated.
         /// </summary>
         private static IEnumerator DelayedCommonPopupRead(IntPtr popupPtr)
         {

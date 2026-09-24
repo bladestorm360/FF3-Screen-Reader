@@ -19,10 +19,32 @@ namespace FFIII_ScreenReader.Patches
     /// Footsteps: PollFootsteps, a per-tile check driven from InputManager.Update (the existing
     /// per-frame input loop, not a Harmony patch). The movement-input hook can't drive them: it only
     /// samples once per wall-check coroutine, which skipped tiles while dashing.
+    /// Allowed polling file (movement sounds). The wall-bump prefix runs on the game's movement-input
+    /// callback, i.e. every frame a direction is held; it is registered manually in ApplyPatches.
     /// </summary>
-    [HarmonyPatch]
     internal static class MovementSoundPatches
     {
+        /// <summary>
+        /// Registers the wall-bump prefix on KeyInput FieldPlayerKeyController.OnTouchPadCallback(Vector2)
+        /// (0x71BE50, unique; attribute patches crash on IL2CPP).
+        /// </summary>
+        public static void ApplyPatches(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                var method = AccessTools.Method(typeof(FieldPlayerKeyController), "OnTouchPadCallback");
+                if (method != null)
+                    harmony.Patch(method, prefix: new HarmonyMethod(
+                        AccessTools.Method(typeof(MovementSoundPatches), nameof(OnTouchPadCallback_Prefix))));
+                else
+                    MelonLogger.Warning("[WallBump] FieldPlayerKeyController.OnTouchPadCallback not found");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[WallBump] Error patching OnTouchPadCallback: {ex.Message}");
+            }
+        }
+
         // Cooldown to prevent sound spam when holding a direction key against a wall
         private static float lastBumpTime = 0f;
         private static readonly float BUMP_COOLDOWN = 0.3f; // 300ms between bump sounds
@@ -56,14 +78,14 @@ namespace FFIII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Prefix patch to capture player position and check after a frame
+        /// Prefix patch to capture player position and check after a frame.
+        /// OnTouchPadCallback(Vector2 axis), positional.
         /// </summary>
-        [HarmonyPatch(typeof(FieldPlayerKeyController), nameof(FieldPlayerKeyController.OnTouchPadCallback))]
-        [HarmonyPrefix]
-        private static void OnTouchPadCallback_Prefix(FieldPlayerKeyController __instance, Vector2 axis)
+        private static void OnTouchPadCallback_Prefix(FieldPlayerKeyController __instance, Vector2 __0)
         {
             try
             {
+                Vector2 axis = __0;
                 // Log once to confirm patch is working
                 if (!hasLoggedPatchActive)
                 {

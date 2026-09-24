@@ -23,6 +23,10 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static void OnBattleStart()
         {
+            // Unconditional: a battle is starting, so the previous battle's end clean-up latch (which
+            // silences status removals) must never carry into it, even if its end was never tracked.
+            BattleConditionController_Remove_Patch.ResetState();
+
             if (IsInBattle) return;
             IsInBattle = true;
 

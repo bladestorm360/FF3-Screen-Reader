@@ -76,9 +76,9 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patch ParameterActFunctionManagment.CreateActFunction to announce actor names with their actions.
+    /// Postfix on ParameterActFunctionManagment.CreateActFunction (static, RVA 0x671DA0, unique) to announce
+    /// actor names with their actions. Registered manually (attribute patches crash on IL2CPP).
     /// </summary>
-    [HarmonyPatch(typeof(ParameterActFunctionManagment), nameof(ParameterActFunctionManagment.CreateActFunction))]
     internal static class ParameterActFunctionManagment_CreateActFunction_Patch
     {
         /// <summary>
@@ -87,11 +87,29 @@ namespace FFIII_ScreenReader.Patches
         /// </summary>
         public static string LastActionName { get; private set; }
 
-        [HarmonyPostfix]
-        public static void Postfix(BattleActData battleActData)
+        public static void ApplyPatch(HarmonyLib.Harmony harmony)
         {
             try
             {
+                var method = AccessTools.Method(typeof(ParameterActFunctionManagment), "CreateActFunction");
+                if (method != null)
+                    harmony.Patch(method, postfix: new HarmonyMethod(
+                        AccessTools.Method(typeof(ParameterActFunctionManagment_CreateActFunction_Patch), nameof(Postfix))));
+                else
+                    MelonLogger.Warning("[Battle] ParameterActFunctionManagment.CreateActFunction not found");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Battle] Error patching CreateActFunction: {ex.Message}");
+            }
+        }
+
+        /// <summary>CreateActFunction(BattleActData battleActData), positional.</summary>
+        public static void Postfix(BattleActData __0)
+        {
+            try
+            {
+                BattleActData battleActData = __0;
                 if (battleActData == null) return;
 
                 string actorName = GetActorName(battleActData);

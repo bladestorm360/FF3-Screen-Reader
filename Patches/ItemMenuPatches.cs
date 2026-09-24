@@ -102,9 +102,14 @@ namespace FFIII_ScreenReader.Patches
                 IsItemMenuActive = false;
         }
 
-        public static void SetNextState_Postfix(int state)
+        /// <summary>
+        /// SetNextState(State state), positional. Its body (0x40BAA0) is shared with 11 other int setters,
+        /// so the native class is checked first.
+        /// </summary>
+        public static void SetNextState_Postfix(KeyInputItemWindowController __instance, int __0)
         {
-            if ((state == IL2CppOffsets.Item.STATE_NONE || state == IL2CppOffsets.Item.STATE_COMMAND_SELECT) && IsItemMenuActive)
+            if (!HarmonyPatchHelper.IsNativeInstanceOf<KeyInputItemWindowController>(__instance)) return;
+            if ((__0 == IL2CppOffsets.Item.STATE_NONE || __0 == IL2CppOffsets.Item.STATE_COMMAND_SELECT) && IsItemMenuActive)
                 IsItemMenuActive = false;
         }
 
@@ -232,27 +237,50 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Patch for item list selection.
-    /// Announces item name: description when navigating items in the menu.
+    /// Manual registration (attribute patches crash on IL2CPP) of the field item list and item-use target
+    /// navigation hooks. KeyInput ItemListController.SelectContent(IEnumerable, int, Cursor,
+    /// WithinRangeType) 0x7BC180 is unique; KeyInput ItemUseController.SelectContent(IEnumerable, Cursor)
+    /// 0x982E80 shares its body only with the same class's SetCursor(IEnumerable, Cursor) (same arguments,
+    /// same job: focus a target), and the announce is deduped on its text.
     /// </summary>
-    [HarmonyPatch(typeof(KeyInputItemListController), "SelectContent",
-        new Type[] {
-            typeof(Il2CppSystem.Collections.Generic.IEnumerable<ItemListContentData>),
-            typeof(int),
-            typeof(GameCursor),
-            typeof(CustomScrollViewWithinRangeType)
-        })]
+    internal static class ItemMenuSelectPatches
+    {
+        public static void ApplyPatches(HarmonyLib.Harmony harmony)
+        {
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(KeyInputItemListController), "SelectContent",
+                typeof(ItemListController_SelectContent_Patch), nameof(ItemListController_SelectContent_Patch.Postfix),
+                "[Item Menu]", new[]
+                {
+                    typeof(Il2CppSystem.Collections.Generic.IEnumerable<ItemListContentData>),
+                    typeof(int),
+                    typeof(GameCursor),
+                    typeof(CustomScrollViewWithinRangeType)
+                });
+            HarmonyPatchHelper.PatchPostfix(harmony, typeof(KeyInputItemUseController), "SelectContent",
+                typeof(ItemUseController_SelectContent_Patch), nameof(ItemUseController_SelectContent_Patch.Postfix),
+                "[Item Menu]", new[]
+                {
+                    typeof(Il2CppSystem.Collections.Generic.IEnumerable<ItemTargetSelectContentController>),
+                    typeof(GameCursor)
+                });
+        }
+    }
+
+    /// <summary>
+    /// Item list selection: announces item name: description when navigating items in the menu.
+    /// </summary>
     internal static class ItemListController_SelectContent_Patch
     {
-        [HarmonyPostfix]
+        /// <summary>SelectContent(IEnumerable targets, int index, Cursor targetCursor, ...), positional.</summary>
         public static void Postfix(
             KeyInputItemListController __instance,
-            Il2CppSystem.Collections.Generic.IEnumerable<ItemListContentData> targets,
-            int index,
-            GameCursor targetCursor)
+            Il2CppSystem.Collections.Generic.IEnumerable<ItemListContentData> __0,
+            int __1)
         {
             try
             {
+                var targets = __0;
+                int index = __1;
                 if (targets == null)
                     return;
 
@@ -284,21 +312,18 @@ namespace FFIII_ScreenReader.Patches
     /// Patch for character target selection when using an item.
     /// Announces character name, HP, and status effects.
     /// </summary>
-    [HarmonyPatch(typeof(KeyInputItemUseController), "SelectContent",
-        new Type[] {
-            typeof(Il2CppSystem.Collections.Generic.IEnumerable<ItemTargetSelectContentController>),
-            typeof(GameCursor)
-        })]
     internal static class ItemUseController_SelectContent_Patch
     {
-        [HarmonyPostfix]
+        /// <summary>SelectContent(IEnumerable targetContents, Cursor targetCursor), positional.</summary>
         public static void Postfix(
             KeyInputItemUseController __instance,
-            Il2CppSystem.Collections.Generic.IEnumerable<ItemTargetSelectContentController> targetContents,
-            GameCursor targetCursor)
+            Il2CppSystem.Collections.Generic.IEnumerable<ItemTargetSelectContentController> __0,
+            GameCursor __1)
         {
             try
             {
+                var targetContents = __0;
+                GameCursor targetCursor = __1;
                 if (targetCursor == null || targetContents == null)
                     return;
 

@@ -107,12 +107,23 @@ namespace FFIII_ScreenReader.Patches
     /// </summary>
     internal static class BestiaryPatches
     {
+        // Last minimap state seen by HabitatSetCursor_Postfix (0 list, 1 enlarged map; -1 none yet)
         private static int lastSelectState = -1;
 
+        /// <summary>Leaving the bestiary: minimap and formation tracking start over.</summary>
         public static void ResetUpdateControllerState()
         {
             lastSelectState = 0;
+            formationActivated = false;
+            formationReadPending = false;
         }
+
+        // Formation screen: the ArBattleTopController last activated, and whether ChangeState(ArTop) is
+        // waiting for it to fill its monster party list (see ArBattleTopController_SetActive_Postfix).
+        private static ArBattleTopController formationController;
+        private static bool formationReadPending;
+        // SetActive(true) ran for the current formation visit (cleared when the ArTop state is left)
+        private static bool formationActivated;
 
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
@@ -194,14 +205,13 @@ namespace FFIII_ScreenReader.Patches
                     }
                 }
 
-                // Patch 6: LibraryMenuController.UpdateController
-                var updateControllerMethod = AccessTools.Method(
-                    typeof(LibraryMenuController_KeyInput), "UpdateController");
-                if (updateControllerMethod != null)
-                {
-                    var postfix = AccessTools.Method(typeof(BestiaryPatches), nameof(UpdateController_Postfix));
-                    harmony.Patch(updateControllerMethod, postfix: new HarmonyMethod(postfix));
-                }
+                // Patch 6: minimap open/close in the list — LibraryMenuHabitatController.SetCursor(bool)
+                // (KeyInput 0x9D42A0, unique). The list's input lambdas call it with true right before
+                // setting selectState = EnlargedMap and with false right before MonsterList; Show calls
+                // it with false. Replaces the per-frame LibraryMenuController.UpdateController (0x9D3110)
+                // hook, which polled selectState (ChangeState, 0x9D15B0, is inlined: no callers).
+                HarmonyPatchHelper.PatchPostfix(harmony, typeof(Il2CppLast.UI.KeyInput.LibraryMenuHabitatController), "SetCursor",
+                    typeof(BestiaryPatches), nameof(HabitatSetCursor_Postfix), "[Bestiary]", new[] { typeof(bool) });
 
                 // Patch 7: ArBattleTopController.ChangeMonsterParty
                 var changeMonsterPartyMethod = AccessTools.Method(
@@ -211,6 +221,13 @@ namespace FFIII_ScreenReader.Patches
                     var postfix = AccessTools.Method(typeof(BestiaryPatches), nameof(ChangeMonsterParty_Postfix));
                     harmony.Patch(changeMonsterPartyMethod, postfix: new HarmonyMethod(postfix));
                 }
+
+                // Patch 7b: ArBattleTopController.SetActive(bool) (0x64AE50, unique; called by the ArTop
+                // scene state's Init/Exit in ExtraArBattleTopUi). It fills monsterPartyList
+                // (InitMonsterPartyList) before returning, so the formation opening read happens here
+                // instead of polling FindObjectOfType every frame for up to 3 s.
+                HarmonyPatchHelper.PatchPostfix(harmony, typeof(ArBattleTopController), "SetActive",
+                    typeof(BestiaryPatches), nameof(ArBattleTopController_SetActive_Postfix), "[Bestiary]", new[] { typeof(bool) });
 
                 // Patch 8: ExtraLibraryField.NextMap / PreviousMap
                 Type extraLibraryFieldType = null;
@@ -283,6 +300,13 @@ namespace FFIII_ScreenReader.Patches
                 int previousState = BestiaryStateTracker.CurrentState;
                 BestiaryStateTracker.CurrentState = state;
 
+                // Leaving the formation screen: its controller's party list belongs to that visit
+                if (previousState == 5 && state != 5)
+                {
+                    formationActivated = false;
+                    formationReadPending = false;
+                }
+
                 // Clear all bestiary menu states first
                 MenuStateRegistry.Reset(
                     MenuStateRegistry.BESTIARY_LIST,
@@ -348,7 +372,11 @@ namespace FFIII_ScreenReader.Patches
                     case 5: // ArTop (Formation)
                         MenuStateRegistry.SetActive(MenuStateRegistry.BESTIARY_FORMATION, true);
                         AnnouncementDeduplicator.Reset(AnnouncementContexts.BESTIARY_FORMATION);
-                        CoroutineManager.StartManaged(AnnounceFormation());
+                        // Read now if the controller was already activated for this visit, otherwise
+                        // when ArBattleTopController.SetActive(true) fills the party list.
+                        formationReadPending = true;
+                        if (formationActivated)
+                            TryReadFormation(fromActivation: false);
                         break;
 
                     case 7: // GotoTitle — leaving bestiary
@@ -441,36 +469,54 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
-        private static IEnumerator AnnounceFormation()
+        /// <summary>
+        /// ArBattleTopController.SetActive(bool active), positional. On activation the party list has
+        /// just been filled: do the pending formation opening read.
+        /// </summary>
+        public static void ArBattleTopController_SetActive_Postfix(ArBattleTopController __instance, bool __0)
         {
-            float elapsed = 0f;
-
-            while (elapsed < 3f)
+            try
             {
-                yield return null;
-                elapsed += Time.deltaTime;
+                if (!__0 || __instance == null) return;
+                formationController = __instance;
+                formationActivated = true;
+                if (formationReadPending && BestiaryStateTracker.IsInFormation)
+                    TryReadFormation(fromActivation: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Bestiary] Error in ArBattleTopController.SetActive patch: {ex.Message}");
+            }
+        }
 
-                try
+        /// <summary>
+        /// Formation opening read: the selected formation, or "Formation view" when the activated
+        /// controller has no formations (the old 3 s poll's fallback).
+        /// </summary>
+        private static void TryReadFormation(bool fromActivation)
+        {
+            try
+            {
+                var controller = formationController;
+                if (controller == null) return; // wait for SetActive(true)
+
+                var partyList = controller.monsterPartyList;
+                if (partyList != null && partyList.Count > 0)
                 {
-                    var controller = UnityEngine.Object.FindObjectOfType<ArBattleTopController>();
-                    if (controller != null)
-                    {
-                        var partyList = controller.monsterPartyList;
-                        if (partyList != null && partyList.Count > 0)
-                        {
-                            ReadCurrentFormation(controller);
-                            yield break;
-                        }
-                    }
+                    formationReadPending = false;
+                    ReadCurrentFormation(controller);
                 }
-                catch (Exception ex)
+                else if (fromActivation)
                 {
-                    MelonLogger.Warning($"[Bestiary] Error polling formation: {ex.Message}");
-                    break;
+                    formationReadPending = false;
+                    FFIII_ScreenReaderMod.SpeakText(T("Formation view"), true);
                 }
             }
-
-            FFIII_ScreenReaderMod.SpeakText(T("Formation view"), true);
+            catch (Exception ex)
+            {
+                formationReadPending = false;
+                MelonLogger.Warning($"[Bestiary] Error reading formation: {ex.Message}");
+            }
         }
 
         private static void ReadCurrentFormation(ArBattleTopController controller)
@@ -511,7 +557,8 @@ namespace FFIII_ScreenReader.Patches
 
             try
             {
-                var controller = UnityEngine.Object.FindObjectOfType<ArBattleTopController>();
+                // The controller activated for this visit; a scene search only if none was seen
+                var controller = formationController ?? UnityEngine.Object.FindObjectOfType<ArBattleTopController>();
                 if (controller != null)
                 {
                     AnnouncementDeduplicator.Reset(AnnouncementContexts.BESTIARY_FORMATION);
@@ -721,13 +768,17 @@ namespace FFIII_ScreenReader.Patches
         // Patch 6: Map change (left/right in list view changes habitat map)
         // ─────────────────────────────────────────────────────────────────────────
 
-        public static void UpdateController_Postfix(LibraryMenuController_KeyInput __instance)
+        /// <summary>
+        /// LibraryMenuHabitatController.SetCursor(bool isActive), positional: true = the minimap is being
+        /// enlarged (selectState EnlargedMap = 1), false = back to the monster list (0).
+        /// </summary>
+        public static void HabitatSetCursor_Postfix(bool __0)
         {
             try
             {
                 if (!BestiaryStateTracker.IsInList) return;
 
-                int currentState = (int)__instance.selectState;
+                int currentState = __0 ? 1 : 0;
 
                 if (currentState != lastSelectState && lastSelectState >= 0)
                 {
@@ -759,7 +810,7 @@ namespace FFIII_ScreenReader.Patches
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Bestiary] Error in UpdateController patch: {ex.Message}");
+                MelonLogger.Warning($"[Bestiary] Error in minimap SetCursor patch: {ex.Message}");
             }
         }
 

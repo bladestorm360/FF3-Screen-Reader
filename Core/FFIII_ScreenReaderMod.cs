@@ -17,6 +17,9 @@ using FieldTresureBox = Il2CppLast.Entity.Field.FieldTresureBox;
 
 [assembly: MelonInfo(typeof(FFIII_ScreenReader.Core.FFIII_ScreenReaderMod), "FFIII Screen Reader", "1.0.0", "Author")]
 [assembly: MelonGame("SQUARE ENIX, Inc.", "FINAL FANTASY III")]
+// Every hook is registered manually in TryManualPatching ([HarmonyPatch] attributes crash on IL2CPP):
+// MelonLoader's automatic attribute scan has nothing to apply.
+[assembly: HarmonyDontPatchAll]
 
 namespace FFIII_ScreenReader.Core
 {
@@ -132,11 +135,12 @@ namespace FFIII_ScreenReader.Core
             ConfigMenuPatches.ApplyPatches(harmony);
             BattleItemPatchesApplier.ApplyPatches(harmony);
             BattleMagicPatchesApplier.ApplyPatches(harmony);
-            BattlePausePatches.ApplyPatches(harmony);
             TryPatchBattleTargetShowWindow(harmony);
             BattleTargetPatches.ApplyPatches(harmony);
             BattleControllerPatches.ApplyPatches(harmony);
             BattleCommandManualPatches.ApplyPatches(harmony);
+            BattleDamagePatches.ApplyPatches(harmony);
+            ParameterActFunctionManagment_CreateActFunction_Patch.ApplyPatch(harmony);
             BattleResultPatches.ApplyPatches(harmony);
             JobMenuPatches.ApplyPatches(harmony);
             ShopPatches.ApplyPatches(harmony);
@@ -144,6 +148,8 @@ namespace FFIII_ScreenReader.Core
             StatusMenuPatches.ApplyPatches(harmony);
             EquipMenuState.ApplyTransitionPatches(harmony);
             ItemMenuState.ApplyTransitionPatches(harmony);
+            ItemMenuSelectPatches.ApplyPatches(harmony);
+            MovementSoundPatches.ApplyPatches(harmony);
             FieldItemReannouncePatches.ApplyPatches(harmony);
             FieldMenuPatches.ApplyPatches(harmony);
             TitleMenuPatches.ApplyPatches(harmony);
@@ -268,6 +274,7 @@ namespace FFIII_ScreenReader.Core
                 // config flag would otherwise leak into the next screen).
                 ConfigMenuState.ResetState();
                 KeyHelpReader.CloseControlsHelp();
+                GameOverPatches.ResetState();
 
                 audioLoopManager.StopWallToneLoop();
                 audioLoopManager.StopBeaconLoop();
@@ -804,6 +811,11 @@ namespace FFIII_ScreenReader.Core
                 var cursor = __instance as GameCursor;
                 if (cursor == null) return;
 
+                // Popups that read their own buttons from their cursor moves (event-driven replacement
+                // for the per-frame UpdateFocus hooks): identified by cursor identity, before anything else.
+                if (Patches.BattlePausePatches.TryReadCommonPopupCursor(cursor)) return;
+                if (Patches.GameOverPatches.TryReadLoadPopupCursor(cursor)) return;
+
                 string cursorPath = "";
                 try
                 {
@@ -824,7 +836,7 @@ namespace FFIII_ScreenReader.Core
                 var suppressionResult = CursorSuppressionCheck.Check();
                 if (suppressionResult.ShouldSuppress)
                 {
-                    // A popup with its own focus reader (CommonPopup.UpdateFocus) already reads the button
+                    // A popup with its own focus reader (CommonPopup, read above) already reads the button
                     if (suppressionResult.IsPopup && !Patches.PopupState.HasOwnFocusReader)
                         Patches.PopupPatches.ReadCurrentButton(cursor);
                     return;

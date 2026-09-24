@@ -120,6 +120,8 @@ namespace FFIII_ScreenReader.Patches
                     case 1: // View — entering music player
                         MusicPlayerStateTracker.IsInMusicPlayer = true;
                         MusicPlayerStateTracker.SuppressContentChange = true;
+                        MusicPlayerStateTracker.CachedFocusedPtr = IntPtr.Zero;
+                        entryHeaderSpoken = false;
                         MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.MUSIC_PLAYER);
                         CoroutineManager.StartManaged(AnnounceMusicPlayerEntry());
                         break;
@@ -135,39 +137,50 @@ namespace FFIII_ScreenReader.Patches
             }
         }
 
+        // "Music Player" has been spoken and the entry song is still to be read (SuppressContentChange on).
+        private static bool entryHeaderSpoken;
+
+        /// <summary>
+        /// Music player entry: "Music Player" one frame after the View state, then the focused song as
+        /// soon as SetFocus has cached it (already, or when it next fires). Replaces a per-frame poll of
+        /// the cached pointer for up to 2 s: the SetFocus postfix is the event that provides it.
+        /// </summary>
         private static IEnumerator AnnounceMusicPlayerEntry()
         {
             yield return null;
+            if (!MusicPlayerStateTracker.IsInMusicPlayer) yield break;
             FFIII_ScreenReaderMod.SpeakText(T("Music Player"), true);
+            entryHeaderSpoken = true;
+            TryAnnounceEntrySong();
+        }
 
-            float elapsed = 0f;
-
-            while (elapsed < 2f)
+        /// <summary>
+        /// Speaks the song cached during the entry and ends the entry suppression; does nothing until
+        /// "Music Player" has been spoken and a song is cached.
+        /// </summary>
+        private static void TryAnnounceEntrySong()
+        {
+            if (!entryHeaderSpoken || !MusicPlayerStateTracker.SuppressContentChange) return;
+            try
             {
-                yield return null;
-                elapsed += Time.deltaTime;
+                IntPtr focusedPtr = MusicPlayerStateTracker.CachedFocusedPtr;
+                if (focusedPtr == IntPtr.Zero) return;
 
-                try
+                entryHeaderSpoken = false;
+                MusicPlayerStateTracker.SuppressContentChange = false;
+                if (MusicPlayerReader.ReadContentFromPointer(focusedPtr, out string name, out int bgmId, out int idx, out int playTime))
                 {
-                    IntPtr focusedPtr = MusicPlayerStateTracker.CachedFocusedPtr;
-                    if (focusedPtr != IntPtr.Zero &&
-                        MusicPlayerReader.ReadContentFromPointer(focusedPtr, out string name, out int bgmId, out int idx, out int playTime))
-                    {
-                        string entry = MusicPlayerReader.ReadSongEntry(name, bgmId, idx, playTime);
-                        if (!string.IsNullOrEmpty(entry))
-                            FFIII_ScreenReaderMod.SpeakText(entry, false);
-                        MusicPlayerStateTracker.SuppressContentChange = false;
-                        yield break;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[MusicPlayer] Error announcing entry song: {ex.Message}");
-                    break;
+                    string entry = MusicPlayerReader.ReadSongEntry(name, bgmId, idx, playTime);
+                    if (!string.IsNullOrEmpty(entry))
+                        FFIII_ScreenReaderMod.SpeakText(entry, false);
                 }
             }
-
-            MusicPlayerStateTracker.SuppressContentChange = false;
+            catch (Exception ex)
+            {
+                entryHeaderSpoken = false;
+                MusicPlayerStateTracker.SuppressContentChange = false;
+                MelonLogger.Warning($"[MusicPlayer] Error announcing entry song: {ex.Message}");
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────────
@@ -188,6 +201,8 @@ namespace FFIII_ScreenReader.Patches
                             MusicPlayerStateTracker.CachedFocusedPtr = __instance.Pointer;
                     }
                     catch { }
+                    // Entry: the song is read after "Music Player" (no-op during a list switch)
+                    TryAnnounceEntrySong();
                     return;
                 }
 
