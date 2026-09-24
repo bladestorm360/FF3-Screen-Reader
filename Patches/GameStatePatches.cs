@@ -41,11 +41,60 @@ namespace FFIII_ScreenReader.Patches
                 {
                     MelonLogger.Warning("[GameState] Could not find SubSceneManagerMainGame.ChangeState method");
                 }
+
+                PatchMenuResumeAfterLibrary(harmony);
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"[GameState] Error applying patches: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Returning from the config-menu bestiary: MenuExtraLibraryUi.GotoMenu passes
+        /// FieldMap.CreateReturnMonsterLibraryArguemtns (its only caller), so FieldMap.InitMenu (0x34D800,
+        /// the Menu-state entry) takes its library-return branch: FadeManager.FadeIn, then the fade-in
+        /// completion callback FieldMap.&lt;InitMenu&gt;b__90_0 (0x352170, unique; the only &lt;InitMenu&gt;
+        /// lambda, stored in the FadeManager callback field 0x58 in that branch only), which switches
+        /// FieldMap's menu state machine (0xD0) to state 1. So its postfix marks exactly "the config menu is
+        /// back on screen after the bestiary".
+        /// </summary>
+        private static void PatchMenuResumeAfterLibrary(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                var target = AccessTools.Method(typeof(Il2Cpp.FieldMap), "_InitMenu_b__90_0");
+                if (target == null)
+                {
+                    // Il2CppInterop's name for a compiler-generated lambda: find it by its parts
+                    foreach (var m in typeof(Il2Cpp.FieldMap).GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                        | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly))
+                    {
+                        if (m.Name.Contains("InitMenu") && m.Name.Contains("b__") && m.ReturnType == typeof(void)
+                            && m.GetParameters().Length == 0)
+                        {
+                            target = m;
+                            break;
+                        }
+                    }
+                }
+                if (target == null)
+                {
+                    MelonLogger.Warning("[GameState] FieldMap InitMenu fade-in callback not found: no config re-read after the bestiary");
+                    return;
+                }
+                harmony.Patch(target, postfix: new HarmonyMethod(AccessTools.Method(typeof(GameStatePatches), nameof(MenuResumedAfterLibrary_Postfix))));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[GameState] Error patching the library-return callback: {ex.Message}");
+            }
+        }
+
+        public static void MenuResumedAfterLibrary_Postfix()
+        {
+            try { ConfigActualDetails_SelectCommand_Patch.OnMenuResumedAfterLibrary(); }
+            catch (Exception ex) { MelonLogger.Warning($"[GameState] Error in library-return postfix: {ex.Message}"); }
         }
 
         /// <summary>
@@ -71,9 +120,9 @@ namespace FFIII_ScreenReader.Patches
                     {
                         BestiaryPatches.ConfigBestiaryStateHandler.HandleExit();
                         // Returning from the bestiary lands back on the config menu, which resumes
-                        // without re-firing SelectCommand; the re-read self-gates on the config menu
-                        // actually being shown, so an exit to the field stays silent.
-                        ConfigActualDetails_SelectCommand_Patch.ReannounceFocusedConfigOption();
+                        // without re-firing SelectCommand: arm the re-read; the library-return fade-in
+                        // callback (below) does it, so an exit to the field stays silent.
+                        ConfigActualDetails_SelectCommand_Patch.ArmReannounceAfterLibrary();
                     }
 
                     // Check for map transition
@@ -93,7 +142,7 @@ namespace FFIII_ScreenReader.Patches
                 else if (BestiaryPatches.ConfigBestiaryStateHandler.WasInConfigBestiary)
                 {
                     BestiaryPatches.ConfigBestiaryStateHandler.HandleExit();
-                    ConfigActualDetails_SelectCommand_Patch.ReannounceFocusedConfigOption();
+                    ConfigActualDetails_SelectCommand_Patch.ArmReannounceAfterLibrary();
                 }
             }
             catch (Exception ex)

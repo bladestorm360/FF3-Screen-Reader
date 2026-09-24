@@ -86,8 +86,9 @@ namespace FFIII_ScreenReader.Patches
         // the cheatSettingsController, which is the same type)
         private const int OFFSET_DETAILS_CONTROLLER = 0x48;
 
-        // Bestiary-return re-announce: max wait for the config menu to come back after the loading screen
-        private const float REANNOUNCE_TIMEOUT_SECONDS = 10f;
+        // Bestiary-return re-announce: frames to retry after the library-return fade-in callback, until
+        // the focused row is active
+        private const int LIBRARY_RETURN_MAX_FRAMES = 10;
 
         public static void Postfix(ConfigActualDetailsControllerBase_KeyInput __instance)
         {
@@ -116,7 +117,13 @@ namespace FFIII_ScreenReader.Patches
                 return null;
 
             var selected = instance.SelectedCommand;
-            if (selected == null || !selected.gameObject.activeInHierarchy)
+            if (selected == null)
+                return null;
+
+            // A slider row: listen to its value changes (once per slider)
+            ConfigSliderValueListener.Attach(selected);
+
+            if (!selected.gameObject.activeInHierarchy)
                 return null;
 
             var view = selected.view;
@@ -180,6 +187,16 @@ namespace FFIII_ScreenReader.Patches
                 return details != null && details.gameObject != null && details.gameObject.activeInHierarchy;
             }
             catch { return false; }
+        }
+
+        /// <summary>The focused row of the config screen last read (null if none).</summary>
+        internal static ConfigCommandController FocusedCommand
+        {
+            get
+            {
+                try { return lastDetailsController?.SelectedCommand; }
+                catch { return null; }
+            }
         }
 
         /// <summary>
@@ -251,27 +268,44 @@ namespace FFIII_ScreenReader.Patches
 
         private static int reannounceGen;
 
+        // Bestiary exit armed the re-read (frame it was armed; -1 = not armed). Consumed by the
+        // library-return fade-in callback, cleared when the config menu closes.
+        private static int libraryReturnArmedFrame = -1;
+
         /// <summary>
-        /// Re-reads the focused config row once the config menu is back after the config-menu bestiary
-        /// (which resumes the menu without firing SelectCommand). Waits out the loading screen, bounded.
-        /// Kept as a timed wait: the return is a sub-scene re-activation (SubSceneManagerMainGame back to
-        /// Menu after MenuLibraryUi / MenuLibraryInfo), and no hooked game method is known to run when the
-        /// config screen is shown again. It stops early if SelectCommand reads the row, and checks the
-        /// details controller last read before any scene search.
+        /// Leaving the config-menu bestiary: arm the focused-row re-read for the moment the config menu is
+        /// back on screen (the menu resumes without firing SelectCommand).
         /// </summary>
-        internal static void ReannounceFocusedConfigOption()
+        internal static void ArmReannounceAfterLibrary()
         {
-            CoroutineManager.StartManaged(ReannounceWhenConfigReady(++reannounceGen, Time.frameCount));
+            libraryReturnArmedFrame = Time.frameCount;
+        }
+
+        /// <summary>Config menu closed: a pending library-return re-read must not leak into the next open.</summary>
+        internal static void CancelReannounceAfterLibrary()
+        {
+            libraryReturnArmedFrame = -1;
+            reannounceGen++;
+        }
+
+        /// <summary>
+        /// Library-return fade-in finished (FieldMap.&lt;InitMenu&gt;b__90_0, see GameStatePatches): the
+        /// config menu is back on screen. Consumes the arm and reads the focused row, retrying a few frames
+        /// until it is active. Replaces a WaitForSeconds(0.1) wait of up to 10 s.
+        /// </summary>
+        internal static void OnMenuResumedAfterLibrary()
+        {
+            int armedFrame = libraryReturnArmedFrame;
+            if (armedFrame < 0) return;
+            libraryReturnArmedFrame = -1;
+            CoroutineManager.StartManaged(ReannounceWhenConfigReady(++reannounceGen, armedFrame));
         }
 
         private static System.Collections.IEnumerator ReannounceWhenConfigReady(int gen, int armedFrame)
         {
-            var wait = new WaitForSeconds(0.1f);
-            float elapsed = 0f;
-            while (elapsed < REANNOUNCE_TIMEOUT_SECONDS)
+            for (int frame = 0; frame < LIBRARY_RETURN_MAX_FRAMES; frame++)
             {
-                yield return wait;
-                elapsed += 0.1f;
+                yield return null;
                 if (gen != reannounceGen) yield break;
                 if (RowSpokenSince(armedFrame)) yield break; // the menu's own SelectCommand read the row
 
@@ -388,50 +422,96 @@ namespace FFIII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// KeyInput SwitchSliderTypeProcess (0x30A740): left/right on a slider row. The game calls it from two
-    /// places: the input lambda of UpdateController with the pressed Key (the value changes), and the tail
-    /// of UpdateController every frame with a null Key while a slider row is focused (re-asserts the
-    /// value; SetSliderValue and Slider.set_value are re-called there too, so no method runs only on a
-    /// change). Both patches return at once on the per-frame call; the value is compared before/after the
-    /// key-driven call and spoken only when it changed. Registered manually in ConfigMenuPatches.
+    /// Slider value changes in the config menu (volumes, brightness), from Unity's own
+    /// Slider.onValueChanged event. Replaces a hook on KeyInput SwitchSliderTypeProcess (0x30A740),
+    /// which the game calls every frame from the tail of UpdateController (key null) while a slider row
+    /// is focused; every value-writing method on that path runs every frame with it (SetSliderValue
+    /// 0x6231B0 → Slider.set_value, ConfigClient.SetVolume / SetBrightness). Only the left/right path
+    /// (the input lambda &lt;UpdateController&gt;b__0, 0x633F80) changes the value, and Slider.onValueChanged
+    /// fires only when the value really changes, so it is the one change-only signal: at either end of
+    /// the range the value does not move and nothing is spoken. A listener is added once per slider, when
+    /// its row first gains focus (AnnounceSelectedConfigCommand). The read waits one frame, so the value
+    /// (and the text SetSliderValue writes after it) has settled.
     /// </summary>
-    internal static class ConfigActualDetails_SwitchSliderType_Patch
+    internal static class ConfigSliderValueListener
     {
-        // Slider percentage before the key-driven call (null: not captured)
-        private static string valueBefore;
+        // Every slider a listener was added to. Holding the wrappers keeps the objects alive, so a
+        // pointer is never reused by a new slider that would then be skipped.
+        private static readonly System.Collections.Generic.List<UnityEngine.UI.Slider> sliders =
+            new System.Collections.Generic.List<UnityEngine.UI.Slider>();
 
-        /// <summary>SwitchSliderTypeProcess(ConfigCommandController controller, Key key), positional.</summary>
-        public static void Prefix(ConfigCommandController __0, Key __1)
+        private static IntPtr lastSliderPtr;
+        private static string lastValue;
+        private static bool readPending;
+        private static bool warned;
+
+        /// <summary>Forgets the last spoken value (config menu closed).</summary>
+        public static void Reset()
         {
-            valueBefore = null;
-            if (__1 == null) return; // per-frame re-assert, no key
-            try
-            {
-                var slider = __0?.view?.Slider;
-                if (slider != null)
-                    valueBefore = ConfigMenuReader.GetSliderPercentage(slider);
-            }
-            catch { }
+            lastSliderPtr = IntPtr.Zero;
+            lastValue = null;
         }
 
-        public static void Postfix(ConfigCommandController __0, Key __1)
+        /// <summary>Adds the value listener to the row's slider, once per slider.</summary>
+        internal static void Attach(ConfigCommandController command)
         {
-            if (__1 == null) return; // per-frame re-assert, no key
             try
             {
-                var slider = __0?.view?.Slider;
+                var slider = command?.view?.Slider;
                 if (slider == null) return;
 
-                // Calculate percentage using proper min/max range
+                IntPtr ptr = slider.Pointer;
+                if (ptr == IntPtr.Zero) return;
+                for (int i = 0; i < sliders.Count; i++)
+                    if (sliders[i].Pointer == ptr) return;
+
+                System.Action<float> handler = _ => OnValueChanged(ptr);
+                slider.onValueChanged.AddListener(handler);
+                sliders.Add(slider);
+            }
+            catch (Exception ex)
+            {
+                if (!warned)
+                {
+                    warned = true;
+                    MelonLogger.Warning($"[Config Menu] Could not listen to a config slider: {ex.Message}");
+                }
+            }
+        }
+
+        private static void OnValueChanged(IntPtr sliderPtr)
+        {
+            if (readPending) return; // several changes in one frame are read once
+            readPending = true;
+            CoroutineManager.StartManaged(ReadNextFrame(sliderPtr));
+        }
+
+        private static System.Collections.IEnumerator ReadNextFrame(IntPtr sliderPtr)
+        {
+            yield return null;
+            readPending = false;
+
+            try
+            {
+                if (!ConfigMenuState.IsActive) yield break;
+
+                // Only the focused row's slider speaks (the one left/right just moved)
+                var slider = ConfigActualDetails_SelectCommand_Patch.FocusedCommand?.view?.Slider;
+                if (slider == null || slider.Pointer != sliderPtr) yield break;
+
+                // Percentage over the slider's own min/max range
                 string percentage = ConfigMenuReader.GetSliderPercentage(slider);
-                if (string.IsNullOrEmpty(percentage) || percentage == valueBefore) return;
+                if (string.IsNullOrEmpty(percentage)) yield break;
+                if (sliderPtr == lastSliderPtr && percentage == lastValue) yield break;
+                lastSliderPtr = sliderPtr;
+                lastValue = percentage;
 
                 MelonLogger.Msg($"[ConfigMenu] Slider value changed: {percentage}");
                 FFIII_ScreenReaderMod.SpeakText(percentage, interrupt: true);
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"Error in SwitchSliderTypeProcess patch: {ex.Message}");
+                MelonLogger.Warning($"[Config Menu] Error reading slider value: {ex.Message}");
             }
         }
     }
@@ -603,12 +683,12 @@ namespace FFIII_ScreenReader.Patches
             PatchOption(harmony, "InitSelectLanguage", nameof(OptionController_InitialFocus_Postfix));
 
             // Value changes on arrow / slider rows (manual: attribute patches crash on IL2CPP).
-            // KeyInput SwitchArrowSelectTypeProcess 0x309430, SwitchSliderTypeProcess 0x30A740; Touch
-            // SwitchArrowTypeProcess 0x8908D0, SwitchSliderTypeProcess 0x890F20. All unique in dump.cs.
+            // KeyInput SwitchArrowSelectTypeProcess 0x309430; Touch SwitchArrowTypeProcess 0x8908D0,
+            // SwitchSliderTypeProcess 0x890F20. All unique in dump.cs. KeyInput slider values come from
+            // Slider.onValueChanged (ConfigSliderValueListener), not from the per-frame
+            // SwitchSliderTypeProcess.
             PatchValueChange(harmony, typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchArrowSelectTypeProcess",
                 null, typeof(ConfigActualDetails_SwitchArrowSelectType_Patch));
-            PatchValueChange(harmony, typeof(Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess",
-                typeof(ConfigActualDetails_SwitchSliderType_Patch), typeof(ConfigActualDetails_SwitchSliderType_Patch));
             PatchValueChange(harmony, typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchArrowTypeProcess",
                 null, typeof(ConfigActualDetailsTouch_SwitchArrowType_Patch));
             PatchValueChange(harmony, typeof(Il2CppLast.UI.Touch.ConfigActualDetailsControllerBase), "SwitchSliderTypeProcess",
@@ -770,6 +850,8 @@ namespace FFIII_ScreenReader.Patches
             else
             {
                 ConfigMenuState.ResetState();
+                ConfigSliderValueListener.Reset();
+                ConfigActualDetails_SelectCommand_Patch.CancelReannounceAfterLibrary();
             }
         }
 
