@@ -121,8 +121,7 @@ On the field:
 - D-pad up and down: previous and next waypoint. D-pad left and right: waypoint category.
 - Right stick up and down: previous and next destination. Right stick left and right: destination category.
 - LT (L2): directions to the last selected destination or waypoint (with audio beacons on, restarts the beacon).
-- R3: toggle pathfinding filter. L3: toggle audio beacons. With Stick Click Normalization on in the mod menu, R3 and L3 go to the game instead and these move to mod mode.
-- L3 + R3 together: toggle Stick Click Normalization, whichever way it is set. Press both sticks in at once; nothing else happens. A single stick click acts when you let go of it, so that it can be part of the L3 + R3 chord.
+- L3 and R3 (stick clicks): see Stick clicks (L3 and R3) below.
 - Start: open the mod menu. D-pad or left stick to move and change values, A to toggle, B or Start to close.
 
 In game menus:
@@ -139,3 +138,13 @@ Mod mode: press Back (Select / View) to enter it, then one of:
 - On the field: X announces Gil, Y the current map, right stick teleports next to the selected destination.
 
 Press Back again to leave mod mode without doing anything.
+
+#### Stick clicks (L3 and R3)
+
+Stick Click Normalization in the mod menu decides what the stick clicks do. It is off by default.
+
+- L3 + R3 together, on the field: turn Stick Click Normalization on or off, whichever way it is set. Press both sticks in at once. You hear "Stick click normalization on" or "off", and nothing else happens.
+- On the field, a single stick click acts when you let go of it, so that it can be part of the L3 + R3 chord.
+- Normalization off: L3 toggles beacon navigation and R3 toggles the pathfinding filter.
+- Normalization on: L3 and R3 go to the game. L3 toggles walk/run and R3 toggles random encounters. The mod toggles move to mod mode: press Back/Select, then L3 for beacon navigation or R3 for the pathfinding filter.
+- Off the field, a stick click goes straight to the game.

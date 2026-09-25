@@ -596,7 +596,7 @@ namespace FFIII_ScreenReader.Core
             PreferencesManager.SaveAudioBeacons(newVal);
             if (newVal) audioLoopManager.StartBeaconLoop();
             else audioLoopManager.StopBeaconLoop();
-            SpeakText(string.Format(T("Audio beacons {0}"), newVal ? T("on") : T("off")));
+            SpeakText(string.Format(T("Beacon navigation {0}"), newVal ? T("on") : T("off")));
         }
 
         #endregion

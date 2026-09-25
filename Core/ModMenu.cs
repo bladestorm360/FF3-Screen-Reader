@@ -169,7 +169,7 @@ namespace FFIII_ScreenReader.Core
                     () => PreferencesManager.FootstepsEnabled
                         ? T("On. A click plays for each tile you walk.")
                         : T("Off. No per-tile movement sound.")),
-                new ToggleItem(T("Audio Beacons"),
+                new ToggleItem(T("Beacon Navigation"),
                     () => PreferencesManager.AudioBeaconsEnabled,
                     () => FFIII_ScreenReaderMod.Instance?.ToggleAudioBeacons(),
                     () => PreferencesManager.AudioBeaconsEnabled

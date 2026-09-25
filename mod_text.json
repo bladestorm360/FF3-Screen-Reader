@@ -1343,6 +1343,34 @@
     "th": "สัญญาณเสียง {0}",
     "pt": "Sinais de áudio {0}"
   },
+  "Beacon navigation {0}": {
+    "en": "Beacon navigation {0}",
+    "ja": "ビーコン誘導 {0}",
+    "fr": "Guidage par balise {0}",
+    "it": "Navigazione con segnale {0}",
+    "de": "Leitsignal-Navigation {0}",
+    "es": "Guía por baliza {0}",
+    "ko": "비콘 안내 {0}",
+    "zht": "信標引導 {0}",
+    "zhc": "信标引导 {0}",
+    "ru": "Навигация по сигналу {0}",
+    "th": "นำทางด้วยบีคอน {0}",
+    "pt": "Navegação por baliza {0}"
+  },
+  "Beacon Navigation": {
+    "en": "Beacon Navigation",
+    "ja": "ビーコン誘導",
+    "fr": "Guidage par balise",
+    "it": "Navigazione con segnale",
+    "de": "Leitsignal-Navigation",
+    "es": "Guía por baliza",
+    "ko": "비콘 안내",
+    "zht": "信標引導",
+    "zhc": "信标引导",
+    "ru": "Навигация по сигналу",
+    "th": "นำทางด้วยบีคอน",
+    "pt": "Navegação por baliza"
+  },
   "Walking": {
     "en": "Walking",
     "ja": "歩行",

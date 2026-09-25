@@ -157,6 +157,7 @@ Technical detail: `debug.md`, section "L3+R3 chord (2026-09-25)". Ported from FF
 | Area | Change | Status |
 |------|--------|--------|
 | Controller | On the field, L3 + R3 together toggle Stick Click Normalization whichever way it is set. A single stick click now acts on release (so it can be part of the chord); with normalization on it still reaches the game as one encounter or walk/run toggle | not yet verified in game |
+| Wording | The beacon toggle says "Beacon navigation on/off" and its mod-menu row is "Beacon Navigation", as in FF1 | not yet verified in game |
 
 ---
 
