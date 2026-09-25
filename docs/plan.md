@@ -150,6 +150,16 @@ Technical detail: `debug.md`, section "Round 2 (2026-09-24)". **None of this is 
 
 ---
 
+## L3+R3 chord (2026-09-25)
+
+Technical detail: `debug.md`, section "L3+R3 chord (2026-09-25)". Ported from FF1.
+
+| Area | Change | Status |
+|------|--------|--------|
+| Controller | On the field, L3 + R3 together toggle Stick Click Normalization whichever way it is set. A single stick click now acts on release (so it can be part of the chord); with normalization on it still reaches the game as one encounter or walk/run toggle | not yet verified in game |
+
+---
+
 ## Architecture
 
 Post-refactoring file organization (~70 C# files):

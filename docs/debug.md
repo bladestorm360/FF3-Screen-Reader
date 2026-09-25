@@ -519,6 +519,23 @@ Status removal, the per-frame / polling sweep, attribute patches, and a double-f
 - Redundant but silent, kept: `MainMenuController.Show` and `InitNone` both arm the field-menu read (`Show` runs `InitNone` inside it; the `fieldMenuGen` latch keeps one read). Removing the `Show` hook would rely on `Change(0)` always re-running `InitNone`, which is not proven.
 - Checked clean: title prompt, title menu reads, field command bars, save list, in-game config open/close, bestiary detail (single `SetData` announcer), shop, battle turn, entity cycling, status "(X of Y)", F1/F3, result-phase EXP stops (idempotent), battle system messages (`GlobalBattleMessageTracker` dedup).
 
+### L3+R3 chord (2026-09-25)
+
+Ported from FF1 (ff1 commit 2e76464). Not yet verified in game. Pressing both stick clicks on the field toggles Stick Click Normalization, whichever way it is set, so the player can switch between the mod functions and the game functions without opening the mod menu.
+
+- **`ControllerRouter.UpdateStickClicks`**, run every frame right after `HandleStateTransitions` (input core, no game hook), replaces the old L3/R3 block in `HandleNormalField`. A click that starts in NORMAL on the active field is tracked in `stickClickButton`. Both stick buttons are consumed from that press until both are up.
+- **Both held** → `ToggleStickClickNormalization` once per press (`stickChordFired`); it speaks the existing "Stick click normalization {0}". Releasing afterwards does nothing.
+- **A lone click resolves on release.** With normalization off, L3 toggles audio beacons and R3 the pathfinding filter, as before but on release instead of press. With it on, the router hands the game a synthetic press: `IsStickPulseDown` for one frame (`GetKeyDown` and `GetKey`), then `IsStickPulseUp` for one frame (`GetKeyUp`). `InputPassthroughPatches.GetSDLKey*` OR these in for `ACTION_STICK_L`/`ACTION_STICK_R` through `StickButtonFor`. Without the deferral the first click of a chord would already toggle encounters or walk/run in the game.
+- A tracked click acts only if the player is still on the field in NORMAL when it resolves: Back (mod mode) or a menu or battle opening mid-press cancels it. Mod mode keeps its own Back + L3/R3 (normalization on). Off the field, stick clicks go to the game unchanged.
+- The no-gamepad branch of `Update` clears the tracked click and any pending pulse (FF3 has no `ReleaseControllerOwnedState`; the clear sits beside its `Reset()` call).
+
+In-game checks:
+1. Field, normalization off: L3 → audio beacons on/off; R3 → "Pathfinding filter on/off", each on release.
+2. L3 + R3 together → "Stick click normalization on". Beacons and the filter do not change. Again → "… off".
+3. Normalization on: L3 alone and R3 alone still toggle the game's encounters and walk/run (one toggle per click, spoken by `GameToggleAnnouncer`).
+4. Normalization on: L3 + R3 → "Stick click normalization off", with no encounter or walk/run toggle.
+5. Back, then L3 or R3 with normalization on → the mod-mode toggles still work.
+
 ---
 
 ## Event-Driven Map Transitions
