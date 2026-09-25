@@ -122,6 +122,7 @@ On the field:
 - Right stick up and down: previous and next destination. Right stick left and right: destination category.
 - LT (L2): directions to the last selected destination or waypoint (with audio beacons on, restarts the beacon).
 - R3: toggle pathfinding filter. L3: toggle audio beacons. With Stick Click Normalization on in the mod menu, R3 and L3 go to the game instead and these move to mod mode.
+- L3 + R3 together: toggle Stick Click Normalization, whichever way it is set. Press both sticks in at once; nothing else happens. A single stick click acts when you let go of it, so that it can be part of the L3 + R3 chord.
 - Start: open the mod menu. D-pad or left stick to move and change values, A to toggle, B or Start to close.
 
 In game menus:
