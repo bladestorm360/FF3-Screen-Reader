@@ -49,6 +49,11 @@ namespace FFIII_ScreenReader.Core.Filters
             if (!IsEntityValid(entity))
                 return false;
 
+            // A vehicle-only trigger hidden for the current vehicle is not a walking target:
+            // it is reached by boarding its vehicle, so the walking path test does not apply.
+            if (FieldEntityState.IsHiddenByVehicle(entity.GameEntity as FieldEntity))
+                return true;
+
             if (context.PlayerController == null)
                 return false;
 
@@ -98,7 +103,7 @@ namespace FFIII_ScreenReader.Core.Filters
                     return false;
 
                 // Check if the GameObject is still active in the hierarchy
-                if (fieldEntity.gameObject == null || !fieldEntity.gameObject.activeInHierarchy)
+                if (fieldEntity.gameObject == null || !FieldEntityState.IsPresent(fieldEntity))
                     return false;
 
                 // Check if the transform is still valid

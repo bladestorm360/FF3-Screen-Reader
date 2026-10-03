@@ -6,7 +6,7 @@ Adds NVDA output, pathfinding, sound queues and other accessibility aides to Fin
 
 ## Known Issues
 
-Secret passages, even when opened, do not show properly on the pathfinder. Can use wall bumps and estimation to find, usually near the opening mechanism.
+The pathfinder leads through secret passages when there is no other way to a destination. Wall tones still sound at the start of a passage, as if it were a wall, so follow the spoken directions into it.
 
 Auto Detail (descriptions read automatically when you move onto an item, spell or piece of equipment) is now on by default for new installs. If you used an earlier version, your saved setting is kept; press F7 or use the mod menu to turn it on.
 

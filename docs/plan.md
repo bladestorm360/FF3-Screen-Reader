@@ -161,6 +161,19 @@ Technical detail: `debug.md`, section "L3+R3 chord (2026-09-25)". Ported from FF
 
 ---
 
+## Hidden passages and event coverage (2026-10-03)
+
+Technical detail: `debug.md`, section "Hidden passages and event coverage (2026-10-03)".
+
+| Area | Change | Status |
+|------|--------|--------|
+| Pathfinding | When no ordinary path exists, the search is retried with the map's hidden passages open, so chests, NPCs and events behind secret passages get directions (85 targets on 59 sub-maps). Paths that were found before are unchanged | not yet verified in game |
+| Events | Vehicle-only events (airship events at the floating continent, the big rock, etc.) are listed while the game hides them for another vehicle; the pathfinding filter does not hide them | not yet verified in game |
+| Events | Scenery (no action, no script, no message) is no longer listed: 227 objects such as pillars, crystals and statues | not yet verified in game |
+| Events | Offline audit of every map object (`FFPR/tools/audit_events.py`): every playable event and interactive object is listed | done (offline) |
+
+---
+
 ## Architecture
 
 Post-refactoring file organization (~70 C# files):

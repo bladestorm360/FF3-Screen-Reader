@@ -599,10 +599,11 @@ namespace FFIII_ScreenReader.Field
                 return null;
             }
 
-            // Skip inactive objects
+            // Skip inactive objects, except vehicle-only triggers the game hides while the
+            // player is in another vehicle (FieldEntityState.IsHiddenByVehicle)
             try
             {
-                if (!fieldEntity.gameObject.activeInHierarchy)
+                if (!FieldEntityState.IsPresent(fieldEntity))
                     return null;
             }
             catch { }
@@ -669,6 +670,10 @@ namespace FFIII_ScreenReader.Field
             {
                 return new SavePointEntity(fieldEntity, position, "Save Point");
             }
+
+            // Scenery: events and map objects with no action, script or message
+            if (FieldEntityState.IsScenery(fieldEntity))
+                return null;
 
             // Check for interactive objects / event triggers
             var eventTrigger = fieldEntity.TryCast<EventTriggerEntity>();

@@ -537,6 +537,29 @@ In-game checks:
 4. Normalization on: L3 + R3 → "Stick click normalization off", with no encounter or walk/run toggle.
 5. Back, then L3 or R3 with normalization on → the mod-mode toggles still work.
 
+### Hidden passages and event coverage (2026-10-03)
+
+Not yet verified in game. The user reported missing pathing to secret passages.
+
+**Why the pathfinder never found them.** Each sub-map can ship a `hidden_passage` asset (Tiled layers `GroundHiddenPassage` etc., listed in the map's `package` beside `collision`); 59 FF3 sub-maps have one. `FieldController.SetupCurrentMappingData` builds `MapModel.CurrentMappingData` as `CombineMappingDataByAnd(CollisionMappingData, HiddenPassageMappingData)`, and `MapUtility.ParseHiddenPassageMappingData` closes every passage cell. `MapRouteSearcher.Search` reads that grid (through `CombinedGotoMapEntityCurrentMappingData` → `GetCombineLandingGroupMappingData`, which returns `currentMappingData` on foot), so NPC routing, and the mod, never enter a passage. The player moves on the collision layer alone, so the passages are open to them. Decompiled from the FF5 Ghidra project; `tools/callees.py` shows the same `SetupCurrentMappingData` → `CombineMappingDataByAnd` in FF3 (0x292940).
+
+**Fix.** `FindPathTo` first runs the usual search (target, then the eight neighbours, on each layer; moved unchanged into `SearchTargetAndNeighbours`). Only if that finds nothing, and only with collision on, `Field/HiddenPassageRouting.SearchWithPassagesOpen` swaps the route grid for `CollisionMappingData` (`MapModel.SetCurrentMappingData`, reached through `FieldController.mapManager.CurrentMapModel`), runs the same search, and restores the grid in a `finally`. The swap lasts one synchronous search on the main thread. Maps whose `HiddenPassageMappingData` is null (no passages) are not touched, so every path the mod found before is found the same way. The wall-tone code is unchanged and reads the game's grid, so a passage entrance still sounds like a wall (README says so).
+
+**Scope.** `tools/find_hidden.py ff3 --passages` lists what sits behind a passage: 75 chests, 7 NPCs, 1 shop NPC and 2 entities, e.g. the four chests in Caanan (Map_20071_8) reached along the bottom wall, the chests in the Vikings' Cove inn (Map_20091_2) and on Castle Argus 2F (Map_20131_2).
+
+**Vehicle-only events were never listed.** `FieldController.ChangeTransportationSwitchEntity` runs for every entity in `entityList` (and `colliderEntityList`) on each `SetEventEntityGroup` and `ChangeTransportation`. When the entity's `Property.TargetTransportationIdList` is non-empty it calls `RestoreCacheActive(4)`, then `CacheActive(4)` (bit 4 of `cacheActiveEnable` / `cacheActiveFlag`, FieldEntity 0xAC / 0xB0, records the object's own active state) and then `Show(0)` if the list holds the current transportation id, else `Hide(0)`, which is `GameObject.SetActive(false)`. Decompiled from `FF5_Analysis`; `tools/callees.py` and the cache-index argument (`lea edx, [r8+4]`) are the same in all five games. So the airship events at the floating continent barrier, the airship ram at the big rock, the Nautilus/Invincible transitions and the like were inactive whenever the player was on foot or in another vehicle, and the scanner's `activeInHierarchy` check dropped them. New `Field/FieldEntityState`: `IsHiddenByVehicle` is true for an inactive entity whose parent is active, whose target list is non-empty, and whose cache bit 4 is set with the cached state active. `IsPresent` = active or hidden by vehicle, used by `ConvertToNavigableEntity`, `NavigableEntity.IsAlive` and the pathfinding filter's validity check. The pathfinding filter lets a vehicle-hidden entity through (it is reached by boarding the vehicle, not by walking).
+
+**Scenery removed.** `FieldEntityState.IsScenery`: an Event, Entity, AnimEntity or TransportationEventAction whose `PropertyEvent` has `ActionId` 0, `ScriptId` 0 and no `PropertyTalk.MessageKey` does nothing when checked or touched; it is skipped right before the event-trigger branch, after vehicles, exits, chests, save points and NPCs are classified. Vehicle map objects (`PropertyTransportation`) are never scenery. Anything with an action, a script or a message stays. In FF3 this drops 227 objects (shop pillars, turnips, crystals, statues, the inert "hidden door" blockers; the openers stay). User decision, 2026-10-03: list an object only if checking or touching it does something, in all five mods.
+
+`tools/audit_events.py ff3` (offline mirror of this classification) finds every playable trigger and interactive object listed.
+
+In-game checks:
+1. A map with a known secret passage (for example the treasure room in Caanan reached along the bottom wall, Map_20071_8): select a chest behind it. Before: "no path" (or hidden by the pathfinding filter). Now: directions that lead into the passage.
+2. Follow them: the player walks into the passage where the wall seems to be.
+3. A normal target on the same map gives the same directions as before.
+4. World map on foot, with the Enterprise or Nautilus available: the airship-only events (for example the floating continent barrier, or the big rock the airship rams) are listed in Events.
+5. Towns and dungeons: decorative objects (pillars, crystals, statues) are no longer in the Events list; levers, switches, signs and anything that reacts are.
+
 ---
 
 ## Event-Driven Map Transitions
